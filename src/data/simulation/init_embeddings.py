@@ -35,6 +35,7 @@ def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dimension: 
 def normalize_embeddings(embeddings_data: dict, embedding_dimension: int) -> dict:
     means = calc_embedding_mean(embeddings_data, embedding_dimension)
     stds = calc_embedding_std(embeddings_data, means, embedding_dimension)
+    save_means_and_stds(means, stds)
     embeddings_data_normalized = copy.deepcopy(embeddings_data)
     for key, value in embeddings_data.items():
         for key_nested, vector in value.items():
@@ -77,6 +78,12 @@ def pca_embeddings(embeddings_data: dict, n_components: int) -> tuple[dict, dict
     return clip_emb, pca_map
 
 
+def save_means_and_stds(means: dict, stds:dict) -> None:
+    with open("embedding_means.pkl", "wb") as f:
+        pickle.dump(means, f)
+
+    with open("embedding_stds.pkl", "wb") as f:
+        pickle.dump(stds, f)
 
 
 def initialize_all_clip_embeddings(
@@ -133,7 +140,7 @@ def initialize_all_clip_embeddings(
 
     finally:
         if embedding_mode == "default":
-            return embedding
+            return embeddings
         elif embedding_mode == "normal":
             return normalize_embeddings(embeddings, embedding_dimension)
         elif embedding_mode == "pca":

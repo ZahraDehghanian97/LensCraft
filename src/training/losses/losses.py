@@ -44,26 +44,11 @@ class CameraTrajectoryLoss:
                     self.clip_weights[embedding] = weight ** self.weight_power
                 self.sum_clip_weights += self.clip_weights[embedding]
 
-        # self.clip_embeddings = clip_embeddings
-        # self.all_categories = {}
-        # if self.contrastive:
-        #     device = next(iter(clip_embeddings['movement'].values())).device
-        #     for cat in ['movement', 'easing', 'angle', 'shot']:
-        #         keys = list(self.clip_embeddings[cat].keys())
-        #         embeds = torch.stack([self.clip_embeddings[cat][k].squeeze(0) for k in keys]).to(device)
-        #         embeds = embeds / embeds.norm(dim=-1, keepdim=True)
-        #         self.all_categories[cat] = (keys, embeds)
 
     def __call__(self, model_output, camera_trajectory, clip_target, batch, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed']
         clip_pred = model_output['embeddings']
         
-        # if tgt_key_padding_mask is not None: TODO: fix dimensions
-        #     # Apply padding mask to both reconstructed and target trajectories
-        #     valid_mask = ~tgt_key_padding_mask
-        #     reconstructed = reconstructed * valid_mask.unsqueeze(-1)
-        #     camera_trajectory = camera_trajectory * valid_mask.unsqueeze(-1)
-
         return self.compute_total_loss(
             reconstructed,
             camera_trajectory,
@@ -90,19 +75,24 @@ class CameraTrajectoryLoss:
             loss_dict["contrastive"] = contrastive_loss.item()
 
         if "clip" in self.losses_list:
-            if self.encoder_loss_function == "clip":
-                total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(clip_target, clip_pred, self.n_clip_embs, self.weighted_clip_loss, self.clip_weights, self.sum_clip_weights)
-                if self.weighted_clip_loss:
-                    total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
-                else:
+            total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(
+                clip_target=clip_target, 
+                clip_pred=clip_pred, 
+                n_clip_embs=self.n_clip_embs, 
+                weighted_clip_loss=self.weighted_clip_loss, 
+                clip_weights=self.clip_weights, 
+                sum_clip_weights=self.sum_clip_weights,
+                encoder_loss_function=self.encoder_loss_function)
+            if self.weighted_clip_loss:
+                total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
+            else:
+                if self.encoder_loss_function == "clip":
                     total_loss += total_clip_loss / clip_pred.shape[1] * self.clip_loss_scaling_factor
-
-            elif self.encoder_loss_function == "mse":
-                total_clip_loss = mse_loss(clip_target, clip_pred)
-                total_loss += total_clip_loss
+                elif self.encoder_loss_function == "mse":
+                    total_loss += total_clip_loss / clip_pred.shape[1] * 12800
 
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
-            loss_dict["average_clip"] = total_clip_loss
+            loss_dict["average_clip"] = total_clip_loss * 200
 
         print("CLIP LOSS: {:.3f}".format(total_clip_loss))
         print("TRAJ LOSS: {:.3f}".format(trajectory_loss))
@@ -199,13 +189,22 @@ class CameraTrajectoryLoss:
 
     
     @staticmethod
-    def compute_clip_loss(clip_target, clip_pred, n_clip_embs, weighted_clip_loss, clip_weights, sum_clip_weights):
+    def compute_clip_loss(clip_target, 
+                          clip_pred, 
+                          n_clip_embs, 
+                          weighted_clip_loss, 
+                          clip_weights, 
+                          sum_clip_weights, 
+                          encoder_loss_function):
         clip_losses = []
         total_clip_loss = 0
         total_clip_loss_weighted = 0
         for i in range(n_clip_embs):
-            similarity = cosine_similarity(clip_target[i], clip_pred[i])
-            current_loss = 1 - similarity.mean()
+            if encoder_loss_function == "clip":
+                similarity = cosine_similarity(clip_target[i], clip_pred[i])
+                current_loss = 1 - similarity.mean()
+            elif encoder_loss_function == "mse":
+                current_loss = mse_loss(clip_target[i], clip_pred[i])
             clip_losses.append(current_loss) 
             if weighted_clip_loss:
                 total_clip_loss_weighted += current_loss * clip_weights[f"clip_{i}"]

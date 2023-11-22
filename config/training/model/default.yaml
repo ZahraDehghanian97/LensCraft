@@ -9,3 +9,4 @@ dropout_rate: 0.3
 seq_length: ${data.dataset._seq_length}
 latent_dim: ${clip.latent_dim}
 use_merged_memory: ${training.use_merged_memory}
+denormalize_memory: false
