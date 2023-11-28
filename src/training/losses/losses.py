@@ -14,7 +14,7 @@ class CameraTrajectoryLoss:
                  weight_power: int=1,
                  clip_weights: dict=None,
                  clip_loss_scaling_factor: float=37500,
-                 trajectory_loss_ratio: float=10,
+                 trajectory_loss_scaling_factor: float=10,
                  contrastive_loss_scaling_factor: float=0.1,
                  angle_loss_scaling_factor: float=180,
                  clip_embeddings: dict=None,
@@ -30,9 +30,11 @@ class CameraTrajectoryLoss:
         self.weight_power = weight_power
         self.clip_weights = clip_weights
         self.sum_clip_weights = 0
+
         self.clip_loss_scaling_factor = clip_loss_scaling_factor
-        self.trajectory_loss_ratio = trajectory_loss_ratio
+        self.trajectory_loss_scaling_factor = trajectory_loss_scaling_factor
         self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
+
         self.encoder_loss_function = encoder_loss_function
         self.clip_embeddings = clip_embeddings
 
@@ -66,7 +68,7 @@ class CameraTrajectoryLoss:
 
         if "trajectory" in self.losses_list:
             trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
-            total_loss += trajectory_loss
+            total_loss += trajectory_loss * self.trajectory_loss_scaling_factor
             loss_dict["trajectory"] = trajectory_loss.item()
         
         if "contrastive" in self.losses_list:
@@ -94,9 +96,9 @@ class CameraTrajectoryLoss:
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
             loss_dict["average_clip"] = total_clip_loss * 200
 
-        print("CLIP LOSS: {:.3f}".format(total_clip_loss))
-        print("TRAJ LOSS: {:.3f}".format(trajectory_loss))
-        # print("CONT Loss:     {:.3f}".format(contrastive_loss))
+        print("CLIP LOSS: {:.3f}   |   {:.3f}".format(total_clip_loss, total_clip_loss * self.clip_loss_scaling_factor / clip_pred.shape[1]))
+        print("TRAJ LOSS: {:.3f}   |   {:.3f}".format(trajectory_loss, trajectory_loss * self.trajectory_loss_scaling_factor))
+        print("CONT Loss: {:.3f}   |   {:.3f}".format(contrastive_loss, contrastive_loss * self.contrastive_loss_scaling_factor))
         print("TOTL LOSS: {:.3f}".format(total_loss))
 
         loss_dict["total"] = total_loss.item()
@@ -117,7 +119,7 @@ class CameraTrajectoryLoss:
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         
-        return relative_loss * self.trajectory_loss_ratio + first_frame_loss
+        return relative_loss * self.trajectory_loss_scaling_factor + first_frame_loss
     
     @staticmethod
     def get_embedding_name(name: str) -> str:
@@ -174,14 +176,16 @@ class CameraTrajectoryLoss:
             
             for _ in range(N_SIMILAR_SAMPLES): # Loop to compute loss of similar samples
                 n_modification = random.randint(MIN_EMB_MOD_SIMILAR, MAX_EMB_MOD_SIMILAR)
-                clip_sample_similar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device)
+                
+                clip_sample_similar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device) # FIXME
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_similar).mean()
                 loss = 1 - similarity
                 total_contrastive_loss += loss
 
             for _ in range(N_DISSIMILAR_SAMPLES): # Loop to compute loss of dissimilar samples
                 n_modification = random.randint(MIN_EMB_MOD_DISSIMILAR, MAX_EMB_MOD_DISSIMILAR)
-                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device)
+                
+                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device) # FIXME
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_dissimilar).mean()
                 loss = -(1 - similarity) # FIXME: possible to get negative loss
                 total_contrastive_loss += loss

@@ -29,5 +29,5 @@ hydra:
       training.mask.initial_ratio: interval(0.05, 0.2)
       training.mask.final_ratio: interval(0.6, 0.9)
       
-      training.loss_module.trajectory_loss_ratio: interval(5, 15)
+      training.loss_module.trajectory_loss_scaling_factor: interval(5, 15)
       training.loss_module.clip_loss_scaling_factor: interval(20000, 50000)
