@@ -11,7 +11,7 @@ from sklearn.decomposition import PCA
 def calc_embedding_mean(embeddings_data: dict, embedding_dimension: int=512) -> dict:
     means = {}
     for key, value in embeddings_data.items():
-        sum = np.zeros(embedding_dimension)
+        sum = np.zeros(embedding_dimension, dtype=np.float32)
         n_emb = 0
         for _, vector in value.items():
             sum += vector.numpy()
@@ -23,7 +23,7 @@ def calc_embedding_mean(embeddings_data: dict, embedding_dimension: int=512) -> 
 def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dimension: int=512) -> dict:
     stds = {}
     for key, value in embeddings_data.items():
-        sum_squared_error = np.zeros(embedding_dimension)
+        sum_squared_error = np.zeros(embedding_dimension, dtype=np.float32)
         n_emb = 0
         for _, vector in value.items():
             sum_squared_error += (vector.numpy() - means[key]) ** 2
@@ -120,7 +120,7 @@ def initialize_all_clip_embeddings(
         all_sentences.extend(bool_sentences)
         metadata.extend([("boolean", str(key)) for key in bool_keys])
 
-        all_embeddings = embedder.get_embeddings(all_sentences).to('cpu')
+        all_embeddings = embedder.extract_clip_embeddings(all_sentences).to('cpu')
 
         embeddings: Dict[str, Dict[Any, torch.Tensor]] = {
             param_type: {} for param_type in enum_descriptions.keys()

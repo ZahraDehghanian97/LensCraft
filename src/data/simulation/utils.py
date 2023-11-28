@@ -16,7 +16,7 @@ def get_enum_index(enum_class, value) -> int:
             
     return -1
 
-def get_parameters(
+def extract_cinematography_parameters(
     data: Dict,
     struct: List,
     clip_embeddings: Optional[Dict] = None,
@@ -52,34 +52,34 @@ def get_parameters(
                 nested_data = data_value
             else:
                 nested_data = {}
-            nested_params = get_parameters(nested_data, value_type, clip_embeddings, current_prefix)
+            nested_params = extract_cinematography_parameters(nested_data, value_type, clip_embeddings, current_prefix)
             parameters.extend(nested_params)
                 
     return parameters
 
-def count_parameters(struct: List) -> int:
+def count_total_parameters_in_struct(struct: List) -> int:
     count = 0
     
     for _, value_type in struct:
         if isinstance(value_type, list):
-            count += count_parameters(value_type)
+            count += count_total_parameters_in_struct(value_type)
         else:
             count += 1
             
     return count
 
 
-def get_struct_parameters(struct: list, last_value=None) -> list:
+def flatten_struct_parameters(struct: list, last_value=None) -> list:
     parameter_list = list()
     for parameter, value_type in struct:
         if isinstance(value_type, list):
-            parameter_list.extend(get_struct_parameters(value_type, parameter))
+            parameter_list.extend(flatten_struct_parameters(value_type, parameter))
         else:
             parameter_list.append((last_value + "_" + parameter, value_type))
     return parameter_list
 
 
-def create_instruction_tensor(parameters: List, struct_size: int) -> torch.Tensor:
+def convert_parameters_to_embedding_tensor(parameters: List, struct_size: int) -> torch.Tensor:
     embedding_dim = len(parameters[0][-1])
     instruction_tensor = torch.full((struct_size, embedding_dim), -1, dtype=torch.float)
     

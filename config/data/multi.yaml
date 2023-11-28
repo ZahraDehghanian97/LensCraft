@@ -1,0 +1,10 @@
+defaults:
+  - dataset: multi
+
+num_workers: 2
+val_size: 0.2
+test_size: 0.2
+batch_size: 64
+
+use_multi_dataset: True
+sim_ratio: 0.5

@@ -1,9 +1,9 @@
 info:
-  max_seq_length: 30
+  max_seq_length: 300
   seq_length: 30
   feature_dim: 7
 
-config:
+simulation_config:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${oc.env:SIMULATION_DATA_PATH}
   embedding_dim: ${clip.latent_dim}
@@ -14,3 +14,11 @@ config:
     embedding_dimension: 512
     embedding_mode: "default" # choose between ["default", "normal", "pca"]
     n_components_pca: 100
+
+ccdm_config:
+  _target_: data.ccdm.CCDMDataset
+  data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
+  clip_model_name: ${clip.model_name}
+  embedding_dim: 512
+  standardize: true
+  seq_len: 30

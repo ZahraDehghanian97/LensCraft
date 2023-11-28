@@ -16,4 +16,4 @@ tensorboard==2.18.0
 psutil==6.1.1
 optuna==4.2.1
 optuna-dashboard==0.17.0
-hydra-optuna-sweeper==1.2.0
+hydra-optuna-sweeper==1.1.2

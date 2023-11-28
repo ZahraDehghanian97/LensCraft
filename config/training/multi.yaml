@@ -1,0 +1,75 @@
+_target_: training.multi_dataset_trainer.MultiDatasetTrainer
+
+defaults:
+  - model: default
+  - optimizer: adamW
+  - lr_scheduler: root_warmup_cosine  
+
+loss_module:
+  _target_: training.losses.losses.CameraTrajectoryLoss
+  contrastive_loss_margin: 5
+  n_clip_embs: 28
+  losses_list:
+    - clip 
+    - trajectory
+  weighted_clip_loss: false
+  weight_power: 1
+  clip_loss_scaling_factor: 37500  
+  trajectory_loss_ratio: 10
+  contrastive_loss_scaling_factor: 0.1
+  angle_loss_scaling_factor: 180
+  clip_weights:    # EMBEDDING
+    clip_0: 6      # initial_cameraAngle
+    clip_1: 7      # initial_shotSize
+    clip_2: 5.5    # initial_subjectView
+    clip_3: 5.5    # initial_subjectFraming
+    clip_4: 7.5    # movement_type
+    clip_5: 5      # movement_speed
+    clip_6: 8      # final_cameraAngle
+    clip_7: 9.5    # final_shotSize
+    clip_8: 6      # final_subjectView
+    clip_9: 10     # final_subjectFraming
+    clip_10: 4     # initialSetup_cameraAngle
+    clip_11: 5     # initialSetup_shotSize
+    clip_12: 5     # initialSetup_subjectView
+    clip_13: 4.5   # initialSetup_subjectFraming_position
+    clip_14: 1     # initialSetup_subjectFraming_dutchAngleScale
+    clip_15: 4.5   # dynamic_easing
+    clip_16: 4.5   # dynamic_endSetup_cameraAngle
+    clip_17: 6.5   # dynamic_endSetup_shotSize
+    clip_18: 3.5   # dynamic_endSetup_subjectView
+    clip_19: 6     # dynamic_endSetup_subjectFraming_position
+    clip_20: 1.5   # dynamic_endSetup_subjectFraming_dutchAngleScale
+    clip_21: 1     # dynamic_endSetup_subjectAwareInterpolation
+    clip_22: 2.5   # dynamic_scale
+    clip_23: 3.5   # dynamic_direction
+    clip_24: 3     # dynamic_movementMode
+    clip_25: 1     # constraints_allFramesVisibility
+    clip_26: 1     # constraints_staticDistance
+    clip_27: 1     # constraints_staticCameraSubjectRotation
+  clip_embeddings:
+    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
+    clip_model_name: ${clip.model_name}
+    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
+    embedding_dimension: 512
+    embedding_mode: "default" # choose between ["default", "normal", "pca"]
+    n_components_pca: 100
+  encoder_loss_function: "clip" # choose between ["clip", "mse"]
+
+noise:
+  initial_std: 1.0
+  final_std: 0.0
+
+mask:
+  initial_ratio: 0.1
+  final_ratio: 0.8
+  memory_ratio: 0.0
+
+teacher_forcing_schedule:
+  initial_ratio: 0.2
+  final_ratio: 0.8
+
+use_merged_memory: true
+
+sim_weight: 0.6
+ccdm_weight: 0.4

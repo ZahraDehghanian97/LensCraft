@@ -53,7 +53,7 @@ class CLIPEmbedder:
         for param in self.text_encoder.parameters():
             param.requires_grad = False
 
-    def get_embeddings(
+    def extract_clip_embeddings(
         self,
         texts: List[str],
         return_seq: bool = False,
@@ -68,7 +68,7 @@ class CLIPEmbedder:
         all_attention_masks = []
         all_valid_lengths = []
 
-        for chunk in tqdm(chunks, desc="Processing text chunks", unit="chunk"):
+        for chunk in chunks: # tqdm(chunks, desc="Processing text chunks", unit="chunk"):
             inputs = self.tokenizer(
                 chunk,
                 padding=True,
@@ -111,52 +111,3 @@ class CLIPEmbedder:
             attention_mask=torch.cat(all_attention_masks, dim=0),
             valid_lengths=torch.cat(all_valid_lengths, dim=0)
         )
-
-    def embed_descriptions(
-        self,
-        descriptions: Dict[str, List[str]],
-        return_seq: bool = False,
-        pad_seq: bool = False
-    ) -> Dict[str, Union[torch.Tensor, CLIPFeatures]]:
-        results = {}
-        for key, value in tqdm(descriptions.items(), desc="Processing descriptions", unit="desc"):
-            results[key] = self.get_embeddings(value, return_seq, pad_seq).squeeze(0)
-        return results
-
-    def get_sequence_embeddings(
-        self,
-        texts: List[str],
-        return_attention_mask: bool = False
-    ) -> Tuple[List[torch.Tensor], Optional[torch.Tensor]]:
-        features = self.get_embeddings(texts, return_seq=True)
-
-        sequences = []
-        for i in range(len(texts)):
-            seq_len = features.valid_lengths[i]
-            seq_features = features.sequence_features[i, :seq_len]
-            sequences.append(seq_features)
-
-        if return_attention_mask:
-            return sequences, features.attention_mask
-        return sequences, None
-
-    def encode_text(
-        self,
-        caption_raws: List[str],
-        max_token_length: Optional[int] = None,
-    ) -> Tuple[List[torch.Tensor], torch.Tensor]:
-        temp_max_length = self.max_length
-        if max_token_length is not None:
-            self.max_length = max_token_length + 2
-
-        features = self.get_embeddings(caption_raws, return_seq=True)
-        sequences = []
-
-        for i in range(len(caption_raws)):
-            seq_len = features.valid_lengths[i]
-            seq_features = features.sequence_features[i, :seq_len]
-            sequences.append(seq_features)
-
-        self.max_length = temp_max_length
-
-        return sequences, features.pooled_features

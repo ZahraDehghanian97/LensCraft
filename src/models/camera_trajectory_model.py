@@ -76,7 +76,7 @@ class MultiTaskAutoencoder(nn.Module):
             "SubjectInFramePosition"
         ]
 
-    def prepare_decoder_memory(
+    def prepare_embedding_memory_for_decoder(
         self,
         camera_embedding: Optional[torch.Tensor] = None,
         caption_embedding: Optional[torch.Tensor] = None,
@@ -155,7 +155,7 @@ class MultiTaskAutoencoder(nn.Module):
             src_key_mask
         )     
 
-        memory = self.prepare_decoder_memory(
+        memory = self.prepare_embedding_memory_for_decoder(
             camera_embedding=camera_embedding.clone(),
             caption_embedding=caption_embedding,
             teacher_forcing_ratio=teacher_forcing_ratio,
@@ -181,7 +181,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         return output
 
-    def inference(
+    def generate_camera_trajectory(
         self,
         caption_embedding: Optional[torch.Tensor] = None,
         camera_trajectory: Optional[torch.Tensor] = None,
@@ -240,7 +240,7 @@ class MultiTaskAutoencoder(nn.Module):
                     [subject_embedding_loc_rot, subject_embedding_vol], 1
                 )
                 
-                memory = self.prepare_decoder_memory(
+                memory = self.prepare_embedding_memory_for_decoder(
                     caption_embedding=caption_embedding
                 )
                 

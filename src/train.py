@@ -5,6 +5,7 @@ from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig, OmegaConf
 import lightning as L
 from data.datamodule import CameraTrajectoryDataModule
+from data.multi_dataset_module import MultiDatasetModule
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -17,13 +18,26 @@ def main(cfg: DictConfig):
 
     L.seed_everything(cfg.seed)
 
-    data_module = CameraTrajectoryDataModule(
-        dataset_config=cfg.data.dataset.module,
-        batch_size=cfg.data.batch_size,
-        num_workers=cfg.data.num_workers,
-        val_size=cfg.data.val_size,
-        test_size=cfg.data.test_size
-    )
+    use_multi_dataset = cfg.data.use_multi_dataset if hasattr(cfg.data, 'use_multi_dataset') else False
+    
+    if use_multi_dataset:
+        data_module = MultiDatasetModule(
+            simulation_config=cfg.data.dataset.simulation_config,
+            ccdm_config=cfg.data.dataset.ccdm_config,
+            batch_size=cfg.data.batch_size,
+            num_workers=cfg.data.num_workers,
+            val_size=cfg.data.val_size,
+            test_size=cfg.data.test_size,
+            sim_ratio=getattr(cfg.data, 'sim_ratio', 0.5)
+        )
+    else:
+        data_module = CameraTrajectoryDataModule(
+            dataset_config=cfg.data.dataset.config,
+            batch_size=cfg.data.batch_size,
+            num_workers=cfg.data.num_workers,
+            val_size=cfg.data.val_size,
+            test_size=cfg.data.test_size
+        )
 
     model = instantiate(cfg.training.model)
 
@@ -48,7 +62,7 @@ def main(cfg: DictConfig):
             teacher_forcing_schedule=cfg.training.teacher_forcing_schedule,
             compile_mode=cfg.compile.mode,
             compile_enabled=cfg.compile.enabled,
-            dataset_mode=data_module.dataset_mode,
+            dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
         )
         print("Checkpoint loaded successfully")
     else:
@@ -59,7 +73,7 @@ def main(cfg: DictConfig):
             lr_scheduler=lr_scheduler,
             compile_mode=cfg.compile.mode,
             compile_enabled=cfg.compile.enabled,
-            dataset_mode=data_module.dataset_mode
+            dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
         )
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]

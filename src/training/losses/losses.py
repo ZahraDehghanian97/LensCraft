@@ -103,6 +103,17 @@ class CameraTrajectoryLoss:
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
+    
+    def compute_trajectory_only_loss(self, model_output, camera_trajectory, tgt_key_padding_mask=None):
+        reconstructed = model_output['reconstructed']
+        trajectory_loss = self.compute_trajectory_loss(reconstructed, camera_trajectory)
+        
+        loss_dict = {
+            "trajectory": trajectory_loss.item(),
+            "total": trajectory_loss.item()
+        }
+        
+        return trajectory_loss, loss_dict
 
     def compute_component_losses(self, pred, target):
         position_loss = mse_loss(
