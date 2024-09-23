@@ -1,0 +1,91 @@
+graph TD
+    subgraph Input
+        A[Camera Trajectory<br>input_dim] --> B[Apply Noise]
+        A --> C[Apply Mask]
+        B & C --> D[Noisy & Masked<br>Trajectory]
+    end
+
+    subgraph Encoder["Encoder (TransformerEncoder)"]
+        E[Input Projection<br>Linear: input_dim → latent_dim]
+        F[Positional Encoding]
+        G[Transformer Encoder Layers<br>num_encoder_layers, nhead]
+        H1[Movement Query Token]
+        H2[Easing Query Token]
+        H3[Camera Angle Query Token]
+        H4[Shot Type Query Token]
+        M1[Encoder Memory<br>latent_dim per token]
+    end
+
+    subgraph LatentSpace["Latent Space Processing"]
+        I1[Movement Embedding<br>latent_dim]
+        I2[Easing Embedding<br>latent_dim]
+        I3[Camera Angle Embedding<br>latent_dim]
+        I4[Shot Type Embedding<br>latent_dim]
+        J[Latent Merger<br>Linear: latent_dim*4 → latent_dim]
+        K[Merged Latent<br>latent_dim]
+    end
+
+    subgraph AutoregressiveDecoding
+        subgraph Decoder["Decoder (TransformerDecoder)"]
+            L[Embedding Layer<br>Linear: input_dim → latent_dim]
+            M[Positional Encoding]
+            N[Transformer Decoder Layers<br>num_decoder_layers, nhead]
+            O[Output Projection<br>Linear: latent_dim → input_dim]
+        end
+        P[Initial Zero Input]
+        Q[Teacher Forcing]
+        R1[Output t]
+        M2[Decoder Memory<br>latent_dim, seq_length]
+    end
+
+    subgraph Output
+        R[Reconstructed Trajectory<br>input_dim, seq_length]
+    end
+
+    subgraph Losses
+        S1[Reconstruction Loss<br>MSE]
+        S2[CLIP Movement Loss<br>1 - CosineSimilarity]
+        S3[CLIP Easing Loss<br>1 - CosineSimilarity]
+        S4[CLIP Camera Angle Loss<br>1 - CosineSimilarity]
+        S5[CLIP Shot Type Loss<br>1 - CosineSimilarity]
+        T[Total Loss<br>Sum of all losses]
+    end
+
+    D --> E --> F --> G
+    H1 & H2 & H3 & H4 --> G
+    G --> M1
+    M1 --> I1 & I2 & I3 & I4
+    I1 & I2 & I3 & I4 --> J --> K
+    K --> M2
+    M2 --> N
+    P --> L
+    L --> M --> N
+    N --> O --> R1
+    R1 --> L
+    Q -.-> L
+    R1 --> R
+    R --> S1
+    I1 --> S2
+    I2 --> S3
+    I3 --> S4
+    I4 --> S5
+    S1 & S2 & S3 & S4 & S5 --> T
+
+    classDef subgraphStyle fill:#f0f0f0,stroke:#333,stroke-width:2px;
+    class Input,Encoder,LatentSpace,AutoregressiveDecoding,Output,Losses subgraphStyle;
+
+    style E fill:#f9e79f
+    style G fill:#f9e79f
+    style J fill:#aed6f1
+    style L fill:#d7bde2
+    style N fill:#d7bde2
+    style O fill:#d7bde2
+    style M1 fill:#fad7a0
+    style M2 fill:#fad7a0
+    style R1 fill:#82e0aa
+    style S1 fill:#f5b7b1
+    style S2 fill:#f5b7b1
+    style S3 fill:#f5b7b1
+    style S4 fill:#f5b7b1
+    style S5 fill:#f5b7b1
+    style T fill:#f5b7b1
