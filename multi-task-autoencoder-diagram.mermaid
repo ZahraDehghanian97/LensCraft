@@ -3,6 +3,7 @@ graph TD
         A[Camera Trajectory<br>input_dim] --> B[Apply Noise]
         A --> C[Apply Mask]
         B & C --> D[Noisy & Masked<br>Trajectory]
+        S[Subject Info<br>subject_dim] --> SP[Subject Projection<br>Linear: subject_dim → latent_dim]
     end
 
     subgraph Encoder["Encoder (TransformerEncoder)"]
@@ -51,6 +52,8 @@ graph TD
         T[Total Loss<br>Sum of all losses]
     end
 
+    S --> SP
+    SP --> G
     D --> E --> F --> G
     H1 & H2 & H3 & H4 --> G
     G --> M1
@@ -70,6 +73,7 @@ graph TD
     I3 --> S4
     I4 --> S5
     S1 & S2 & S3 & S4 & S5 --> T
+    SP --> L
 
     classDef subgraphStyle fill:#f0f0f0,stroke:#333,stroke-width:2px;
     class Input,Encoder,LatentSpace,AutoregressiveDecoding,Output,Losses subgraphStyle;
@@ -89,3 +93,4 @@ graph TD
     style S4 fill:#f5b7b1
     style S5 fill:#f5b7b1
     style T fill:#f5b7b1
+    style SP fill:#f9e79f
