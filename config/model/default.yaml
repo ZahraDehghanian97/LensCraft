@@ -1,9 +1,10 @@
-clip_model_name: "openai/clip-vit-large-patch14"
-dim_feedforward: 2048
-dropout: 0.2
-nhead: 4
-num_decoder_layers: 3
-num_encoder_layers: 3
-seq_length: 30
+_target_: models.camera_trajectory_model.MultiTaskAutoencoder
 input_dim: 7
 subject_dim: 9
+nhead: 4
+num_encoder_layers: 3
+num_decoder_layers: 3
+dim_feedforward: 2048
+dropout_rate: 0.2
+seq_length: 30
+latent_dim: ${clip.latent_dim}

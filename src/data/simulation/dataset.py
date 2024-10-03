@@ -5,8 +5,8 @@ from .constants import CameraMovementType, EasingType, CameraAngle, ShotType
 
 
 class SimulationDataset(Dataset):
-    def __init__(self, json_file_path: str, clip_embeddings: dict):
-        with open(json_file_path, 'r') as file:
+    def __init__(self, data_path: str, clip_embeddings: dict):
+        with open(data_path, 'r') as file:
             raw_data = json.load(file)
         self.simulation_data = [self._process_single_simulation(sim, clip_embeddings)
                                 for sim in raw_data['simulations']

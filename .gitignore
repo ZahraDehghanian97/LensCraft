@@ -114,7 +114,9 @@ venv.bak/
 
 # Project specific
 *.pth
-data/simulation/random_simulation_dataset.json
-
 
 hydra-outputs/
+lightning_logs/
+
+datasets/simulation/random_simulation_dataset_mini.json
+datasets/simulation/random_simulation_dataset.json

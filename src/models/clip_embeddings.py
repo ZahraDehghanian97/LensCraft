@@ -1,5 +1,6 @@
 import torch
 from transformers import CLIPTokenizer, CLIPTextModel
+from data.simulation.constants import movement_descriptions, easing_descriptions, angle_descriptions, shot_descriptions
 
 
 def get_clip_embedding(texts, model_name="openai/clip-vit-large-patch14"):
@@ -23,10 +24,10 @@ def initialize_clip_embeddings(descriptions, model_name="openai/clip-vit-large-p
     return clip_embeddings
 
 
-def get_latent_dim(model_name):
-    if model_name == "openai/clip-vit-large-patch14":
-        return 768
-    elif model_name == "openai/clip-vit-base-patch32":
-        return 512
-    else:
-        raise ValueError(f"Unsupported CLIP model: {model_name}")
+def initialize_all_clip_embeddings(clip_model_name="openai/clip-vit-large-patch14"):
+    return {
+        'movement': initialize_clip_embeddings(movement_descriptions, clip_model_name),
+        'easing': initialize_clip_embeddings(easing_descriptions, clip_model_name),
+        'angle': initialize_clip_embeddings(angle_descriptions, clip_model_name),
+        'shot': initialize_clip_embeddings(shot_descriptions, clip_model_name)
+    }
