@@ -1,0 +1,3 @@
+[submodule "third_parties/DIRECTOR"]
+	path = third_parties/DIRECTOR
+	url = https://github.com/robincourant/DIRECTOR
