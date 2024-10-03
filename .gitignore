@@ -115,3 +115,6 @@ venv.bak/
 # Project specific
 *.pth
 data/simulation/random_simulation_dataset.json
+
+
+hydra-outputs/

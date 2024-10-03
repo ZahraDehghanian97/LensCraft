@@ -1,0 +1,9 @@
+clip_model_name: "openai/clip-vit-large-patch14"
+dim_feedforward: 2048
+dropout: 0.2
+nhead: 4
+num_decoder_layers: 3
+num_encoder_layers: 3
+seq_length: 30
+input_dim: 7
+subject_dim: 9

@@ -1,0 +1,13 @@
+defaults:
+  - model: default
+  - training: default
+  - data: default
+  - output: default
+  - _self_
+
+hydra:
+  run:
+    dir: hydra-outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
