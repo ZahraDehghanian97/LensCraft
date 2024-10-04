@@ -1,12 +1,18 @@
-batch_size: 32
-epochs: 20
-patience: 30
+_target_: training.autoencoder_trainer.LightningMultiTaskAutoencoder
 
-optimizer_config:
-  lr: 0.0001
-  weight_decay: 1e-5
-  init_teacher_forcing_ratio: 0.8
-  initial_noise_std: 0.2
-  final_noise_std: 0.05
-  initial_mask_ratio: 0.3
-  final_mask_ratio: 0.7
+defaults:
+  - model: default
+  - optimizer: adam
+  - lr_scheduler: cosine
+
+noise:
+  initial_std: 0.2
+  final_std: 0.05
+
+mask:
+  initial_ratio: 0.3
+  final_ratio: 0.7
+
+teacher_forcing_schedule:
+  initial_ratio: 0.9
+  final_ratio: 0.1

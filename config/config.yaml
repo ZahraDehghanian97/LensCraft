@@ -1,7 +1,6 @@
 defaults:
-  - model: default
   - training: default
-  - data: mini
+  - data: default
   - output: default
   - clip: default
   - _self_
@@ -13,23 +12,29 @@ hydra:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
 
+seed: 42
+batch_size: 64
+epochs: 100
+patience: 10
+
+accelerator:
+  mode: "auto"
+  devices: 1
+  precision: 32
+
 dataset:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${data.data_path}
   clip_embeddings:
     _target_: models.clip_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
-
-lightning_model:
-  _target_: training.autoencoder_trainer.LightningMultiTaskAutoencoder
-  model: ${model}
-  optimizer_config: ${training.optimizer_config}
+    cache_file: clip_embeddings_cache.pkl
 
 callbacks:
   early_stopping:
     _target_: lightning.pytorch.callbacks.EarlyStopping
     monitor: val_loss
-    patience: ${training.patience}
+    patience: ${patience}
     mode: min
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
@@ -37,9 +42,13 @@ callbacks:
     filename: best-model-{epoch:02d}-{val_loss:.2f}
     save_top_k: 1
     mode: min
+  lr_monitor:
+    _target_: lightning.pytorch.callbacks.LearningRateMonitor
+    logging_interval: "step"
 
 trainer:
   _target_: lightning.Trainer
-  max_epochs: ${training.epochs}
-  accelerator: auto
-  devices: auto
+  max_epochs: ${epochs}
+  accelerator: ${accelerator.mode}
+  devices: ${accelerator.devices}
+  precision: ${accelerator.precision}
