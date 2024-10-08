@@ -44,7 +44,8 @@ def main(cfg: DictConfig):
 
     model = instantiate(cfg.training.model)
 
-    lightning_model = instantiate(cfg.training, model=model)
+    lightning_model = instantiate(
+        cfg.training, model=model, compile_mode=cfg.compile.mode if cfg.compile.enabled else None)
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
 

@@ -5,12 +5,19 @@ from utils.augmentation import apply_mask_and_noise, linear_increase, cosine_dec
 
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule):
+    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default"):
         super().__init__()
         self.model = model
         self.noise = noise
         self.mask = mask
         self.teacher_forcing_schedule = teacher_forcing_schedule
+        self.compile_mode = compile_mode
+        self.compiled = False
+
+    def setup(self, stage=None):
+        if not self.compiled:
+            self.model = torch.compile(self.model, mode=self.compile_mode)
+            self.compiled = True
 
     def training_step(self, batch, batch_idx):
         return self._shared_step(batch, batch_idx, "train")

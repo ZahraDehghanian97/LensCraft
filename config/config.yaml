@@ -13,7 +13,7 @@ hydra:
     subdir: ${hydra.job.num}
 
 seed: 42
-batch_size: 64
+batch_size: 16
 epochs: 100
 patience: 10
 
@@ -52,3 +52,7 @@ trainer:
   accelerator: ${accelerator.mode}
   devices: ${accelerator.devices}
   precision: ${accelerator.precision}
+
+compile:
+  enabled: true
+  mode: "default"
