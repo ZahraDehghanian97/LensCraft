@@ -45,10 +45,10 @@ class SimulationDataset(Dataset):
         return {
             'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
             'subject': torch.tensor(subject_data, dtype=torch.float32),
-            'movement_clip': clip_embeddings['movement'][movement_type.value],
-            'easing_clip': clip_embeddings['easing'][easing_type.value],
-            'angle_clip': clip_embeddings['angle'][camera_angle.value],
-            'shot_clip': clip_embeddings['shot'][shot_type.value]
+            'movement_clip': clip_embeddings['movement'][movement_type.value].to('cpu'),
+            'easing_clip': clip_embeddings['easing'][easing_type.value].to('cpu'),
+            'angle_clip': clip_embeddings['angle'][camera_angle.value].to('cpu'),
+            'shot_clip': clip_embeddings['shot'][shot_type.value].to('cpu')
         }
 
     @staticmethod
