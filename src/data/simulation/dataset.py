@@ -27,8 +27,10 @@ class SimulationDataset(Dataset):
         instruction = simulation['instructions'][0]
         subject = simulation['subjects'][0]
 
-        camera_trajectory = SimulationDataset._extract_camera_frame_data(
+        camera_trajectory = self._extract_camera_frame_data(
             simulation['cameraFrames'])
+        subject_trajectory = self._simulate_subject_trajectory(
+            subject, len(camera_trajectory))
 
         movement_type = CameraMovementType[instruction['cameraMovement']]
         easing_type = EasingType[instruction['movementEasing']]
@@ -36,15 +38,9 @@ class SimulationDataset(Dataset):
             'initialCameraAngle', 'mediumAngle')]
         shot_type = ShotType[instruction.get('initialShotType', 'mediumShot')]
 
-        subject_data = [
-            subject['position']['x'], subject['position']['y'], subject['position']['z'],
-            subject['size']['x'], subject['size']['y'], subject['size']['z'],
-            subject['rotation']['x'], subject['rotation']['y'], subject['rotation']['z']
-        ]
-
         return {
             'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
-            'subject': torch.tensor(subject_data, dtype=torch.float32),
+            'subject_trajectory': torch.tensor(subject_trajectory, dtype=torch.float32),
             'movement_clip': clip_embeddings['movement'][movement_type.value].to('cpu'),
             'easing_clip': clip_embeddings['easing'][easing_type.value].to('cpu'),
             'angle_clip': clip_embeddings['angle'][camera_angle.value].to('cpu'),
@@ -66,11 +62,20 @@ class SimulationDataset(Dataset):
             for frame in camera_frames
         ]
 
+    @staticmethod
+    def _simulate_subject_trajectory(subject, num_frames):
+        subject_data = [
+            subject['position']['x'], subject['position']['y'], subject['position']['z'],
+            subject['size']['x'], subject['size']['y'], subject['size']['z'],
+            subject['rotation']['x'], subject['rotation']['y'], subject['rotation']['z']
+        ]
+        return [subject_data for _ in range(num_frames)]
+
 
 def batch_collate(batch):
     return {
         'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
-        'subject': torch.stack([item['subject'] for item in batch]),
+        'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
         'movement_clip': torch.stack([item['movement_clip'] for item in batch]),
         'easing_clip': torch.stack([item['easing_clip'] for item in batch]),
         'angle_clip': torch.stack([item['angle_clip'] for item in batch]),

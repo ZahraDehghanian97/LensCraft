@@ -1,25 +1,7 @@
 import torch
 import torch.nn as nn
-import math
 
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        position = torch.arange(0, max_len).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(
-            0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        x = x + self.pe[:, :x.size(1)]
-        return self.dropout(x)
+from .positional_encoding import PositionalEncoding
 
 
 class Encoder(nn.Module):
@@ -128,7 +110,7 @@ class MultiTaskAutoencoder(nn.Module):
                 t + 2).to(latent.device)
 
             output = self.decoder(memory, decoder_input,
-                                  subject_embedded, tgt_mask)
+                                  subject_embedded[:, t:t+1, :], tgt_mask)
             outputs.append(output[:, -1:, :])
 
             if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
@@ -145,8 +127,8 @@ class MultiTaskAutoencoder(nn.Module):
                              camera_angle_embedding, shot_type_embedding], dim=-1)
         return self.latent_merger(combined)
 
-    def forward(self, src, subject, src_key_padding_mask=None, target=None, teacher_forcing_ratio=0.5):
-        subject_embedded = self.subject_projection(subject).unsqueeze(1)
+    def forward(self, src, subject_trajectory, src_key_padding_mask=None, target=None, teacher_forcing_ratio=0.5):
+        subject_embedded = self.subject_projection(subject_trajectory)
         movement_embedding, easing_embedding, camera_angle_embedding, shot_type_embedding = self.encoder(
             src, subject_embedded, src_key_padding_mask)
         latent = self.merge_latents(
