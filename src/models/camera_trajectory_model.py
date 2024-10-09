@@ -33,7 +33,7 @@ class Encoder(nn.Module):
 
         if src_key_padding_mask is not None:
             subject_mask = torch.zeros(
-                (src_key_padding_mask.shape[0], 1), dtype=torch.bool, device=src.device)
+                (src_key_padding_mask.shape[0], subject_embedded.shape[1]), dtype=torch.bool, device=src.device)
             src_key_padding_mask = torch.cat(
                 [subject_mask, src_key_padding_mask], dim=1)
             query_mask = torch.zeros((src_key_padding_mask.shape[0], len(
@@ -70,7 +70,7 @@ class Decoder(nn.Module):
         output = self.transformer_decoder(embedded, memory, tgt_mask=tgt_mask)
         output = output.transpose(0, 1)
         output = self.output_projection(
-            output[:, 1:, :])  # Remove subject from output
+            output[:, 1:, :])
 
         return output
 
