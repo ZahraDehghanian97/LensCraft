@@ -1,0 +1,22 @@
+{
+  'traj_filename': '',
+  'traj_feat': tensor([[...], ...]),
+  'padding_mask': tensor([...]),
+  'intrinsics': array([...]),
+  'char_filename': '...',
+  'char_feat': tensor([[...], ...]),
+  'char_raw': {
+    'char_raw_feat': tensor([[...], ...]),
+    'char_centers': tensor([[...], ...])
+  },
+  'char_padding_mask': tensor([...]),
+  'caption_filename': '...',
+  'caption_feat': tensor([[...], ...]),
+  'caption_raw': {
+    'caption': '',
+    'segments': tensor([...]),
+    'clip_seq_caption': tensor([[...], ...]),
+    'clip_seq_mask': tensor([...])
+  },
+  'caption_padding_mask': tensor([...])
+}
