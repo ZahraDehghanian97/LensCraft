@@ -30,7 +30,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
     def _shared_step(self, batch, batch_idx, stage):
         camera_trajectory = batch['camera_trajectory']
-        subject = batch['subject']
+        subject_trajectory = batch['subject_trajectory']
         clip_targets = {
             'movement': batch['movement_clip'],
             'easing': batch['easing_clip'],
@@ -63,10 +63,10 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             noisy_trajectory, mask, src_key_padding_mask = apply_mask_and_noise(
                 camera_trajectory, current_mask_ratio, current_noise_std, self.device)
 
-            output = self.model(noisy_trajectory, subject, src_key_padding_mask,
+            output = self.model(noisy_trajectory, subject_trajectory, src_key_padding_mask,
                                 camera_trajectory, current_teacher_forcing_ratio)
         else:
-            output = self.model(camera_trajectory, subject)
+            output = self.model(camera_trajectory, subject_trajectory)
 
         loss, loss_dict = self.compute_loss(
             output, camera_trajectory, clip_targets)
