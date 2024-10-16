@@ -10,7 +10,7 @@ from data.simulation.dataset import batch_collate
 def main(cfg: DictConfig):
     L.seed_everything(cfg.seed)
 
-    full_dataset = instantiate(cfg.dataset)
+    full_dataset = instantiate(cfg.data.dataset)
     train_size = int(
         (1 - cfg.data.val_size - cfg.data.test_size) * len(full_dataset))
     val_size = int(cfg.data.val_size * len(full_dataset))
@@ -20,7 +20,7 @@ def main(cfg: DictConfig):
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.data.batch_size,
         shuffle=True,
         num_workers=cfg.data.num_workers,
         collate_fn=batch_collate,
@@ -28,7 +28,7 @@ def main(cfg: DictConfig):
     )
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.data.batch_size,
         shuffle=False,
         num_workers=cfg.data.num_workers,
         collate_fn=batch_collate,
@@ -36,7 +36,7 @@ def main(cfg: DictConfig):
     )
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.data.batch_size,
         shuffle=False,
         num_workers=cfg.data.num_workers,
         collate_fn=batch_collate
@@ -45,9 +45,10 @@ def main(cfg: DictConfig):
     model = instantiate(cfg.training.model)
 
     lightning_model = instantiate(
-        cfg.training, model=model, compile_mode=cfg.compile.mode if cfg.compile.enabled else None)
+        cfg.training, model=model, compile_mode=cfg.compile.mode, compile_enabled=cfg.compile.enabled)
 
-    callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
+    callbacks = [instantiate(cb_conf)
+                 for cb_conf in cfg.callbacks.values()]
 
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
 

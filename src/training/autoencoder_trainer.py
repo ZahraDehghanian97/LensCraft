@@ -5,14 +5,14 @@ from utils.augmentation import apply_mask_and_noise, linear_increase, cosine_dec
 
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default"):
+    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True):
         super().__init__()
         self.model = model
         self.noise = noise
         self.mask = mask
         self.teacher_forcing_schedule = teacher_forcing_schedule
         self.compile_mode = compile_mode
-        self.compiled = False
+        self.compiled = not compile_enabled
 
     def setup(self, stage=None):
         if not self.compiled:

@@ -1,34 +1,14 @@
 defaults:
   - training: default
+  - trainer: default
   - data: default
   - output: default
   - clip: default
+  - hydra: default
   - _self_
 
-hydra:
-  run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
-  sweep:
-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}
-
 seed: 42
-batch_size: 16
-epochs: 100
 patience: 10
-
-accelerator:
-  mode: "auto"
-  devices: 1
-  precision: 32
-
-dataset:
-  _target_: data.simulation.dataset.SimulationDataset
-  data_path: ${data.data_path}
-  clip_embeddings:
-    _target_: models.clip_embeddings.initialize_all_clip_embeddings
-    clip_model_name: ${clip.model_name}
-    cache_file: clip_embeddings_cache.pkl
 
 callbacks:
   early_stopping:
@@ -46,13 +26,6 @@ callbacks:
     _target_: lightning.pytorch.callbacks.LearningRateMonitor
     logging_interval: "step"
 
-trainer:
-  _target_: lightning.Trainer
-  max_epochs: ${epochs}
-  accelerator: ${accelerator.mode}
-  devices: ${accelerator.devices}
-  precision: ${accelerator.precision}
-
 compile:
-  enabled: true
+  enabled: false
   mode: "default"

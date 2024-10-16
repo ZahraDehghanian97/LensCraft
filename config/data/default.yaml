@@ -1,4 +1,7 @@
-data_path: "datasets/simulation/random_simulation_dataset.json"
+defaults:
+  - dataset: default
+
 num_workers: 4
 val_size: 0.2
 test_size: 0.1
+batch_size: 16
