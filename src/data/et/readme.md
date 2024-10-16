@@ -5,8 +5,8 @@
      - This format allows for efficient processing of sequential data.
    - `padding_mask`: A tensor of shape [num_cams], a binary mask indicating valid (1) and padded (0) time steps.
      - Enables handling of variable-length sequences within a fixed-size tensor.
-   - `intrinsics`: A numpy array of shape (num_intrinsics_params,), camera intrinsic parameters.
-     - Contains focal length (fx, fy) and principal point (cx, cy) for camera calibration.
+   - `intrinsics`: A numpy array of shape (4,), camera intrinsic parameters.
+     - Contains [fx, fy, cx, cy] focal length and principal point for camera calibration.
 
 2. Character Data:
    - `char_filename`: A string, the name of the character data file. Identifies the character data associated with the trajectory.

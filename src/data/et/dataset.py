@@ -1,10 +1,11 @@
-import sys
+import os
+
 from torch.utils.data import Dataset
-from hydra import initialize, compose
+from hydra import initialize_config_dir, compose
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
-sys.path.append("third_parties/DIRECTOR/")
+from src.utils.path import temporary_sys_path
 
 
 class ETDataset(Dataset):
@@ -29,13 +30,19 @@ def main():
         "data_dir=/Users/reza/Projects/ET/et-data"
     ]
 
-    with initialize(version_base="1.3", config_path="../../../third_parties/DIRECTOR/configs"):
-        cfg = compose(config_name="config.yaml", overrides=overrides)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    director_path = os.path.abspath(os.path.join(
+        current_dir, "..", "..", "..", "third_parties", "DIRECTOR"))
+    config_dir = os.path.join(director_path, "configs")
 
-    if not OmegaConf.has_resolver("eval"):
-        OmegaConf.register_new_resolver("eval", eval)
+    with temporary_sys_path(director_path):
+        with initialize_config_dir(version_base="1.3", config_dir=config_dir):
+            cfg = compose(config_name="config.yaml", overrides=overrides)
 
-    dataset = ETDataset(cfg.dataset)
+        if not OmegaConf.has_resolver("eval"):
+            OmegaConf.register_new_resolver("eval", eval)
+
+        dataset = ETDataset(cfg.dataset)
 
     print(dataset[0])
 
