@@ -1,0 +1,5 @@
+_target_: data.et.dataset.ETDataset
+director_project_config_path: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
+data_dir: ${oc.env:ET_DATA_DIR}
+set_name: mixed
+split: train

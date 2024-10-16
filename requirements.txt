@@ -10,3 +10,4 @@ torchtyping==0.1.5
 lightning==2.4.0
 lightning[extra]
 triton==3.0.0
+python-dotenv==1.0.1
