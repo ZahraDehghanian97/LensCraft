@@ -1,22 +1,40 @@
 {
-  'traj_filename': '',
-  'traj_feat': tensor([[...], ...]),
-  'padding_mask': tensor([...]),
-  'intrinsics': array([...]),
-  'char_filename': '...',
-  'char_feat': tensor([[...], ...]),
-  'char_raw': {
-    'char_raw_feat': tensor([[...], ...]),
-    'char_centers': tensor([[...], ...])
-  },
-  'char_padding_mask': tensor([...]),
-  'caption_filename': '...',
-  'caption_feat': tensor([[...], ...]),
-  'caption_raw': {
-    'caption': '',
-    'segments': tensor([...]),
-    'clip_seq_caption': tensor([[...], ...]),
-    'clip_seq_mask': tensor([...])
-  },
-  'caption_padding_mask': tensor([...])
+  'traj_filename':
+    str(2011_--RFXQ-Xlac_00007_00000.txt)
+  'traj_feat':
+    Tensor(shape=torch.Size([9, 300]), dtype=torch.float32)
+  'padding_mask':
+    Tensor(shape=torch.Size([300]), dtype=torch.float32)
+  'intrinsics':
+    ndarray(shape=(4,), dtype=float16)
+  'char_filename':
+    str(2011_--RFXQ-Xlac_00007_00000.npy)
+  'char_feat':
+    Tensor(shape=torch.Size([3, 300]), dtype=torch.float32)
+  'char_raw':
+    {
+      'char_raw_feat':
+        Tensor(shape=torch.Size([3, 300]), dtype=torch.float32)
+      'char_centers':
+        Tensor(shape=torch.Size([3, 300]), dtype=torch.float32)
+    }
+  'char_padding_mask':
+    Tensor(shape=torch.Size([300]), dtype=torch.float32)
+  'caption_filename':
+    str(2011_--RFXQ-Xlac_00007_00000)
+  'caption_feat':
+    Tensor(shape=torch.Size([512, 77]), dtype=torch.float32)
+  'caption_raw':
+    {
+      'caption':
+        str(While the character moves backward and then left, the camera trucks left. Once the character begins moving forward, the camera pulls out.)
+      'segments':
+        Tensor(shape=torch.Size([300]), dtype=torch.int64)
+      'clip_seq_caption':
+        Tensor(shape=torch.Size([77, 512]), dtype=torch.float32)
+      'clip_seq_mask':
+        Tensor(shape=torch.Size([77]), dtype=torch.float32)
+    }
+  'caption_padding_mask':
+    Tensor(shape=torch.Size([300]), dtype=torch.float32)
 }
