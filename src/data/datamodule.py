@@ -2,6 +2,7 @@ import hydra
 import lightning as L
 from torch.utils.data import random_split, DataLoader
 from data.simulation.dataset import batch_collate
+from data.et.dataset import et_batch_collate
 
 
 class CameraTrajectoryDataModule(L.LightningDataModule):
@@ -12,6 +13,8 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         self.num_workers = num_workers
         self.val_size = val_size
         self.test_size = test_size
+        self.dataset_mode = 'et' if 'ETDataset' in dataset_config['_target_'] else 'simulation'
+        self.batch_collate = et_batch_collate if self.dataset_mode == 'et' else batch_collate
 
     def setup(self, stage=None):
         full_dataset = hydra.utils.instantiate(self.dataset_config)
@@ -28,7 +31,7 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            collate_fn=batch_collate,
+            collate_fn=self.batch_collate,
             persistent_workers=True,
             multiprocessing_context='fork'
         )
@@ -39,7 +42,7 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=batch_collate,
+            collate_fn=self.batch_collate,
             persistent_workers=True,
             multiprocessing_context='fork'
         )
@@ -50,6 +53,6 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=batch_collate,
+            collate_fn=self.batch_collate,
             multiprocessing_context='fork'
         )

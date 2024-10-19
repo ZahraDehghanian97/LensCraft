@@ -3,7 +3,7 @@ from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 import lightning as L
-from CameraTrajectoryDataModule import CameraTrajectoryDataModule
+from data.datamodule import CameraTrajectoryDataModule
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -27,7 +27,7 @@ def main(cfg: DictConfig):
     model = instantiate(cfg.training.model)
 
     lightning_model = instantiate(
-        cfg.training, model=model, compile_mode=cfg.compile.mode, compile_enabled=cfg.compile.enabled)
+        cfg.training, model=model, compile_mode=cfg.compile.mode, compile_enabled=cfg.compile.enabled, dataset_mode=data_module.dataset_mode)
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
 

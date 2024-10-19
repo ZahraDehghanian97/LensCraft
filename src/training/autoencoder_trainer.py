@@ -5,14 +5,30 @@ from utils.augmentation import apply_mask_and_noise, linear_increase, cosine_dec
 
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True):
+    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
         super().__init__()
         self.model = model
+        self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
         self.noise = noise
         self.mask = mask
         self.teacher_forcing_schedule = teacher_forcing_schedule
         self.compile_mode = compile_mode
         self.compiled = not compile_enabled
+        self.dataset_mode = dataset_mode
+
+    def configure_optimizers(self):
+        optimizer = self.optimizer(self.parameters())
+        if self.lr_scheduler is not None:
+            scheduler = self.lr_scheduler(optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                },
+            }
+        return optimizer
 
     def setup(self, stage=None):
         if not self.compiled:
@@ -29,6 +45,14 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         return self._shared_step(batch, batch_idx, "test")
 
     def _shared_step(self, batch, batch_idx, stage):
+        if self.dataset_mode == 'simulation':
+            return self._simulation_step(batch, batch_idx, stage)
+        elif self.dataset_mode == 'et':
+            return self._et_step(batch, batch_idx, stage)
+        else:
+            raise ValueError(f"Unknown dataset mode: {self.dataset_mode}")
+
+    def _simulation_step(self, batch, batch_idx, stage):
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']
         clip_targets = {
@@ -71,6 +95,23 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         loss, loss_dict = self.compute_loss(
             output, camera_trajectory, clip_targets)
 
+        self._log_metrics(stage, loss, loss_dict)
+
+        return loss
+
+    def _et_step(self, batch, batch_idx, stage):
+        traj_feat, char_feat, caption_feat = batch['traj_feat'], batch['char_feat'], batch['caption_feat']
+        padding_mask = batch['padding_mask']
+
+        output = self.model(traj_feat, char_feat, caption_feat, padding_mask)
+
+        loss, loss_dict = self.compute_loss(output, traj_feat, batch)
+
+        self._log_metrics(stage, loss, loss_dict)
+
+        return loss
+
+    def _log_metrics(self, stage, loss, loss_dict):
         self.log(f"{stage}_loss", loss, on_step=True,
                  on_epoch=True, prog_bar=True, logger=True)
         for key, value in loss_dict.items():
@@ -81,8 +122,6 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             else:
                 self.log(f"{stage}_{key}", value, on_step=True,
                          on_epoch=True, logger=True)
-
-        return loss
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=0.001)
