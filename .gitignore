@@ -121,4 +121,4 @@ lightning_logs/
 datasets/simulation/random_simulation_dataset_mini.json
 datasets/simulation/random_simulation_dataset.json
 outputs/
-clip_embeddings_cache.pkl
+clip_embeddings_*_cache.pkl

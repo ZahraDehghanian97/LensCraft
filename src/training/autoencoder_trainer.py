@@ -45,22 +45,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         return self._shared_step(batch, batch_idx, "test")
 
     def _shared_step(self, batch, batch_idx, stage):
-        if self.dataset_mode == 'simulation':
-            return self._simulation_step(batch, batch_idx, stage)
-        elif self.dataset_mode == 'et':
-            return self._et_step(batch, batch_idx, stage)
-        else:
-            raise ValueError(f"Unknown dataset mode: {self.dataset_mode}")
-
-    def _simulation_step(self, batch, batch_idx, stage):
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']
-        clip_targets = {
-            'movement': batch['movement_clip'],
-            'easing': batch['easing_clip'],
-            'camera_angle': batch['angle_clip'],
-            'shot_type': batch['shot_clip']
-        }
 
         if stage == "train":
             current_noise_std = cosine_decay(
@@ -92,20 +78,15 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         else:
             output = self.model(camera_trajectory, subject_trajectory)
 
+        clip_targets = {'cls': batch['caption_feat']} if self.dataset_mode == 'et' else {
+            'movement': batch['movement_clip'],
+            'easing': batch['easing_clip'],
+            'camera_angle': batch['angle_clip'],
+            'shot_type': batch['shot_clip']
+        }
+
         loss, loss_dict = self.compute_loss(
             output, camera_trajectory, clip_targets)
-
-        self._log_metrics(stage, loss, loss_dict)
-
-        return loss
-
-    def _et_step(self, batch, batch_idx, stage):
-        camera_trajectory, subject_trajectory = batch['camera_trajectory'], batch['subject_trajectory']
-        padding_mask, caption_feat = batch['padding_mask'], batch['caption_feat']
-
-        output = self.model(camera_trajectory, subject_trajectory)
-
-        loss, loss_dict = self.compute_loss(output, camera_trajectory, batch)
 
         self._log_metrics(stage, loss, loss_dict)
 

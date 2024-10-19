@@ -6,6 +6,8 @@ import pickle
 
 
 def get_clip_embedding(texts, model_name="openai/clip-vit-large-patch14"):
+    if not model_name.startswith('openai/'):
+        model_name = 'openai/' + model_name
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     tokenizer = CLIPTokenizer.from_pretrained(

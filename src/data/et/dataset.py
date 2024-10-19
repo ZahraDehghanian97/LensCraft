@@ -25,11 +25,20 @@ class ETDataset(Dataset):
         subject_trajectory = self.char_feat_to_subject_trajectory(
             item['char_feat'])
 
+        caption_feat = item['caption_feat']
+        clip_seq_mask = item['caption_raw']['clip_seq_mask']
+
+        clip_seq_mask = clip_seq_mask.bool().unsqueeze(0)
+
+        valid_sum = (caption_feat * clip_seq_mask).sum(dim=1)
+        num_valid_tokens = clip_seq_mask.sum().clamp(min=1)
+        averaged_caption_feat = valid_sum / num_valid_tokens
+
         processed_item = {
             'camera_trajectory': camera_trajectory,
             'subject_trajectory': subject_trajectory,
             'padding_mask': item['padding_mask'],
-            'caption_feat': item['caption_feat'],
+            'caption_feat': averaged_caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32)
         }
         return processed_item

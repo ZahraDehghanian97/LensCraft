@@ -1,6 +1,14 @@
-_target_: data.simulation.dataset.SimulationDataset
-data_path: datasets/simulation/random_simulation_dataset.json
-clip_embeddings:
-  _target_: models.clip_embeddings.initialize_all_clip_embeddings
-  clip_model_name: ${clip.model_name}
-  cache_file: clip_embeddings_cache.pkl
+_query_token_names:
+  - movement
+  - easing
+  - camera_angle
+  - shot_type
+_seq_length: 30
+
+module:
+  _target_: data.simulation.dataset.SimulationDataset
+  data_path: datasets/simulation/random_simulation_dataset.json
+  clip_embeddings:
+    _target_: models.clip_embeddings.initialize_all_clip_embeddings
+    clip_model_name: ${clip.model_name}
+    cache_file: clip_embeddings_${clip.model_name}_cache.pkl

@@ -6,5 +6,6 @@ num_encoder_layers: 6
 num_decoder_layers: 6
 dim_feedforward: 2048
 dropout_rate: 0.1
-seq_length: 30
+seq_length: ${data.dataset._seq_length}
 latent_dim: ${clip.latent_dim}
+query_token_names: ${data.dataset._query_token_names}

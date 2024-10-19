@@ -5,7 +5,7 @@ from .positional_encoding import PositionalEncoding
 
 
 class Encoder(nn.Module):
-    def __init__(self, input_dim, latent_dim, nhead, num_encoder_layers, dim_feedforward, dropout_rate):
+    def __init__(self, input_dim, latent_dim, nhead, num_encoder_layers, dim_feedforward, dropout_rate, query_token_names):
         super(Encoder, self).__init__()
 
         self.input_projection = nn.Linear(input_dim, latent_dim)
@@ -18,7 +18,7 @@ class Encoder(nn.Module):
 
         self.query_tokens = nn.ParameterDict({
             f"{qt}_query": nn.Parameter(torch.randn(1, 1, latent_dim))
-            for qt in ['movement', 'easing', 'camera_angle', 'shot_type']
+            for qt in query_token_names
         })
 
     def forward(self, src, subject_embedded, src_key_padding_mask=None):
@@ -77,19 +77,21 @@ class Decoder(nn.Module):
 
 class MultiTaskAutoencoder(nn.Module):
     def __init__(self, input_dim=7, subject_dim=9, nhead=4, num_encoder_layers=3, num_decoder_layers=3, dim_feedforward=2048,
-                 dropout_rate=0.1, seq_length=30, latent_dim=512):
+                 dropout_rate=0.1, seq_length=30, latent_dim=512, query_token_names=['cls']):
         super(MultiTaskAutoencoder, self).__init__()
 
         self.subject_projection = nn.Linear(subject_dim, latent_dim)
         self.encoder = Encoder(input_dim, latent_dim, nhead,
-                               num_encoder_layers, dim_feedforward, dropout_rate)
+                               num_encoder_layers, dim_feedforward, dropout_rate, query_token_names)
         self.decoder = Decoder(input_dim, latent_dim, nhead,
                                num_decoder_layers, dim_feedforward, dropout_rate)
 
-        self.latent_merger = nn.Linear(latent_dim * 4, latent_dim)
+        self.latent_merger = nn.Linear(
+            latent_dim * len(query_token_names), latent_dim)
 
         self.seq_length = seq_length
         self.input_dim = input_dim
+        self.query_token_names = query_token_names
 
     def generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -122,24 +124,18 @@ class MultiTaskAutoencoder(nn.Module):
 
         return torch.cat(outputs, dim=1)
 
-    def merge_latents(self, movement_embedding, easing_embedding, camera_angle_embedding, shot_type_embedding):
-        combined = torch.cat([movement_embedding, easing_embedding,
-                             camera_angle_embedding, shot_type_embedding], dim=-1)
-        return self.latent_merger(combined)
+    def merge_latents(self, embeddings):
+        reshaped = embeddings.permute(1, 0, 2).reshape(embeddings.shape[1], -1)
+        return self.latent_merger(reshaped)
 
     def forward(self, src, subject_trajectory, src_key_padding_mask=None, target=None, teacher_forcing_ratio=0.5):
         subject_embedded = self.subject_projection(subject_trajectory)
-        movement_embedding, easing_embedding, camera_angle_embedding, shot_type_embedding = self.encoder(
-            src, subject_embedded, src_key_padding_mask)
-        latent = self.merge_latents(
-            movement_embedding, easing_embedding, camera_angle_embedding, shot_type_embedding)
+        embeddings = self.encoder(src, subject_embedded, src_key_padding_mask)
+        latent = self.merge_latents(embeddings)
         reconstructed = self.autoregressive_decode(
             latent, subject_embedded, target, teacher_forcing_ratio)
 
         return {
-            'movement_embedding': movement_embedding,
-            'easing_embedding': easing_embedding,
-            'camera_angle_embedding': camera_angle_embedding,
-            'shot_type_embedding': shot_type_embedding,
+            **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, embeddings)},
             'reconstructed': reconstructed,
         }

@@ -58,7 +58,6 @@ The dataset combines trajectory, character, and caption data for motion capture 
        - If `sequential` is True, the final shape is [num_char_features, num_cams].
        - If `sequential` is False, the final shape is [num_char_features * num_cams].
 
-
 3. Caption Data:
    - `caption_filename`: A string, the name of the caption file. Links textual data to the corresponding trajectory and character data.
    - `caption_feat`: A tensor of shape [num_caption_features, max_feat_length], CLIP embeddings for the caption (num_caption_features-dimensional embeddings for max_feat_length tokens).

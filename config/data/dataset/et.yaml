@@ -1,5 +1,10 @@
-_target_: data.et.dataset.ETDataset
-project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
-dataset_dir: ${oc.env:ET_DATA_DIR}
-set_name: mixed
-split: train
+_query_token_names:
+  - cls
+_seq_length: 300
+
+module:
+  _target_: data.et.dataset.ETDataset
+  project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
+  dataset_dir: ${oc.env:ET_DATA_DIR}
+  set_name: mixed
+  split: train

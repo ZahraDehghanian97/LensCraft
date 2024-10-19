@@ -1,0 +1,2 @@
+model_name: "clip-vit-large-patch14"
+latent_dim: 768
