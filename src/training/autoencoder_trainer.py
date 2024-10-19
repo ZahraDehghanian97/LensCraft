@@ -100,12 +100,12 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         return loss
 
     def _et_step(self, batch, batch_idx, stage):
-        traj_feat, subject_trajectory = batch['traj_feat'], batch['subject_trajectory']
+        camera_trajectory, subject_trajectory = batch['camera_trajectory'], batch['subject_trajectory']
         padding_mask, caption_feat = batch['padding_mask'], batch['caption_feat']
 
-        output = self.model(traj_feat, subject_trajectory)
+        output = self.model(camera_trajectory, subject_trajectory)
 
-        loss, loss_dict = self.compute_loss(output, traj_feat, batch)
+        loss, loss_dict = self.compute_loss(output, camera_trajectory, batch)
 
         self._log_metrics(stage, loss, loss_dict)
 
