@@ -29,7 +29,8 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             collate_fn=batch_collate,
-            persistent_workers=True
+            persistent_workers=True,
+            multiprocessing_context='fork'
         )
 
     def val_dataloader(self):
@@ -39,7 +40,8 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             collate_fn=batch_collate,
-            persistent_workers=True
+            persistent_workers=True,
+            multiprocessing_context='fork'
         )
 
     def test_dataloader(self):
@@ -48,5 +50,6 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=batch_collate
+            collate_fn=batch_collate,
+            multiprocessing_context='fork'
         )

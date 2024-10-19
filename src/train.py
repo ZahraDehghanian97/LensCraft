@@ -1,14 +1,19 @@
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import lightning as L
 from CameraTrajectoryDataModule import CameraTrajectoryDataModule
+from dotenv import load_dotenv
+load_dotenv()
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(cfg: DictConfig):
     GlobalHydra.instance().clear()
+    if not OmegaConf.has_resolver("eval"):
+        OmegaConf.register_new_resolver("eval", eval)
+
     L.seed_everything(cfg.seed)
 
     data_module = CameraTrajectoryDataModule(
