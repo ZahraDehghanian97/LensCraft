@@ -29,14 +29,35 @@ The dataset combines trajectory, character, and caption data for motion capture 
 
 2. Character Data:
    - `char_filename`: A string, the name of the character data file. Identifies the character data associated with the trajectory.
-   - `char_feat`: A tensor of shape [num_char_features, num_cams], representing character features for num_cams time steps, with num_char_features per step.
-     - Processed character features, likely normalized or transformed for model input.
+   - `num_char_features`: int = 3 (x, y, z coordinates of character's center)
+   - `char_feat`: A tensor of shape [num_char_features, num_cams], representing character features for num_cams time steps.
+     - Each column represents a time step, with 3 features for the character's position (x, y, z).
+     - If `velocity` is True, the first row contains the initial position, and subsequent rows contain velocity (change in position).
+     - Processed character features, normalized and potentially transformed for model input.
    - `char_raw`: A dictionary containing:
      - `char_raw_feat`: A tensor of shape [num_char_features, num_cams], raw character features.
+       - Contains the original, unprocessed character positions for each time step.
      - `char_centers`: A tensor of shape [num_char_features, num_cams], character center positions.
+       - Identical to `char_raw_feat`.
+     - If `load_vertices` is True:
+       - `char_vertices`: A tensor of shape [num_cams, num_vertices, 3], representing vertex positions.
+       - `char_faces`: A tensor of shape [num_cams, num_faces, 3], representing face indices.
      - Provides both processed and raw data for flexibility in downstream tasks.
    - `char_padding_mask`: A tensor of shape [num_cams], a binary mask for character data.
      - Aligns with the trajectory padding mask for consistent processing.
+   - Character features are processed as follows:
+     - Raw features are loaded from `.npy` files.
+     - Features are padded to `num_cams` length if necessary.
+     - Velocity information is computed if the `velocity` flag is True:
+       - First row remains the initial position.
+       - Subsequent rows contain the difference between consecutive positions.
+     - Features are standardized using `norm_mean` and `norm_std` if `standardize` is True:
+       - If `velocity` is True and `norm_mean`/`norm_std` have 6 elements, the first 3 are used for the initial position and the last 3 for velocities.
+       - Otherwise, all features are normalized using the same mean and standard deviation.
+     - The data can be reshaped for sequential or non-sequential processing based on the `sequential` flag:
+       - If `sequential` is True, the final shape is [num_char_features, num_cams].
+       - If `sequential` is False, the final shape is [num_char_features * num_cams].
+
 
 3. Caption Data:
    - `caption_filename`: A string, the name of the caption file. Links textual data to the corresponding trajectory and character data.
@@ -62,8 +83,11 @@ The dataset combines trajectory, character, and caption data for motion capture 
 2. Character Parameters:
    - `num_feats`: int = 3 (x, y, z coordinates of character's center)
    - `sequential`: bool, determined by `diffuser.network.module.cond_sequential`
-   - `num_vertices` and `num_faces`: None (not used in this configuration)
-   - `load_vertices`: bool = False (character mesh data is not loaded)
+   - `num_vertices`: int, number of vertices in the character mesh (if `load_vertices` is True)
+   - `num_faces`: int, number of faces in the character mesh (if `load_vertices` is True)
+   - `load_vertices`: bool, determines whether to load character mesh data
+   - `standardize`: bool, whether to standardize the character features
+   - `velocity`: bool, whether to compute velocity information
 
 3. Caption Parameters:
    - `num_segments`: int = 27 (sequence divided into 27 segments)
