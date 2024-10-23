@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import gc
 
 from .positional_encoding import PositionalEncoding
 
@@ -113,14 +114,22 @@ class MultiTaskAutoencoder(nn.Module):
 
             output = self.decoder(memory, decoder_input,
                                   subject_embedded[:, t:t+1, :], tgt_mask)
-            outputs.append(output[:, -1:, :])
+
+            last_prediction = output[:, -1:, :].detach().clone()
+            outputs.append(last_prediction)
 
             if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
                 decoder_input = torch.cat(
                     [decoder_input, target[:, t:t+1, :]], dim=1)
             else:
                 decoder_input = torch.cat(
-                    [decoder_input, output[:, -1:, :]], dim=1)
+                    [decoder_input, last_prediction], dim=1)
+
+            del output
+            del last_prediction
+
+        gc.collect()
+        torch.cuda.empty_cache()
 
         return torch.cat(outputs, dim=1)
 
