@@ -4,6 +4,7 @@ _query_token_names:
   - camera_angle
   - shot_type
 _seq_length: 30
+_feature_dim: 7
 
 module:
   _target_: data.simulation.dataset.SimulationDataset

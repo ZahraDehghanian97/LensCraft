@@ -1,5 +1,5 @@
 import torch
-from typing import Any, Dict, List
+from typing import Any, Dict
 from torch.utils.data import Dataset
 
 from utils.calaculation3d import euler_from_matrix, rotation_6d_to_matrix
@@ -20,8 +20,6 @@ class ETDataset(Dataset):
         return self.process_item(original_item)
 
     def process_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        camera_trajectory = self.traj_feat_to_camera_trajectory(
-            item['traj_feat'])
         subject_trajectory = self.char_feat_to_subject_trajectory(
             item['char_feat'])
 
@@ -35,35 +33,13 @@ class ETDataset(Dataset):
         averaged_caption_feat = valid_sum / num_valid_tokens
 
         processed_item = {
-            'camera_trajectory': camera_trajectory,
+            'camera_trajectory': item['traj_feat'].transpose(0, 1),
             'subject_trajectory': subject_trajectory,
-            'padding_mask': item['padding_mask'],
+            'padding_mask': ~item['padding_mask'].to(torch.bool),
             'caption_feat': averaged_caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32)
         }
         return processed_item
-
-    def traj_feat_to_camera_trajectory(self, traj_feat: torch.Tensor) -> torch.Tensor:
-        camera_trajectory = []
-        for frame in range(traj_feat.shape[1]):
-            rotation_6d = traj_feat[:6, frame]
-            translation = traj_feat[6:, frame]
-
-            rotation_matrix = rotation_6d_to_matrix(rotation_6d)
-            euler_angles = euler_from_matrix(rotation_matrix)
-
-            camera_frame = [
-                translation[0].item(),
-                translation[1].item(),
-                translation[2].item(),
-                self.focal_length,
-                euler_angles[0].item(),
-                euler_angles[1].item(),
-                euler_angles[2].item()
-            ]
-            camera_trajectory.append(camera_frame)
-
-        return torch.tensor(camera_trajectory, dtype=torch.float32)
 
     def char_feat_to_subject_trajectory(self, char_feat: torch.Tensor) -> torch.Tensor:
         subject_trajectory = []

@@ -60,10 +60,14 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             noisy_trajectory, mask, src_key_padding_mask = apply_mask_and_noise(
                 camera_trajectory, current_mask_ratio, current_noise_std, self.device)
 
+            src_key_padding_mask = batch["padding_mask"] if "padding_mask" in batch else src_key_padding_mask
+
             output = self.model(noisy_trajectory, subject_trajectory, src_key_padding_mask,
                                 camera_trajectory, current_teacher_forcing_ratio)
         else:
-            output = self.model(camera_trajectory, subject_trajectory)
+            src_key_padding_mask = batch["padding_mask"] if "padding_mask" in batch else None
+            output = self.model(camera_trajectory,
+                                subject_trajectory, src_key_padding_mask)
 
         clip_targets = {'cls': batch['caption_feat']} if self.dataset_mode == 'et' else {
             'movement': batch['movement_clip'],
