@@ -28,7 +28,8 @@ class Decoder(nn.Module):
 
         output = self.transformer_decoder(embedded, memory, tgt_mask=tgt_mask)
         output = output.transpose(0, 1)
-        output = self.output_projection(output[:, 1:, :])
+        output = self.output_projection(
+            output[:, subject_embedded.size(1):, :])
 
         return output
 
@@ -56,6 +57,17 @@ class MultiTaskAutoencoder(nn.Module):
         mask = mask.float().masked_fill(mask == 0, float(
             '-inf')).masked_fill(mask == 1, float(0.0))
         return mask
+
+    def single_step_decode(self, latent, subject_embedded):
+        memory = latent.unsqueeze(1).repeat(1, self.seq_length, 1)
+        memory = memory.transpose(0, 1)
+
+        decoder_input = torch.zeros(
+            latent.shape[0], self.seq_length, self.input_dim, device=latent.device)
+
+        output = self.decoder(memory, decoder_input, subject_embedded)
+
+        return output
 
     def autoregressive_decode(self, latent, subject_embedded, target=None, teacher_forcing_ratio=0.5):
         memory = latent.unsqueeze(1).repeat(1, self.seq_length, 1)
@@ -92,12 +104,19 @@ class MultiTaskAutoencoder(nn.Module):
         reshaped = embeddings.permute(1, 0, 2).reshape(embeddings.shape[1], -1)
         return self.latent_merger(reshaped)
 
-    def forward(self, src, subject_trajectory, src_key_padding_mask=None, target=None, teacher_forcing_ratio=0.5):
+    def forward(self, src, subject_trajectory, src_key_padding_mask=None, target=None,
+                teacher_forcing_ratio=0.5, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
         embeddings = self.encoder(src, subject_embedded, src_key_padding_mask)
         latent = self.merge_latents(embeddings)
-        reconstructed = self.autoregressive_decode(
-            latent, subject_embedded, target, teacher_forcing_ratio)
+
+        if decode_mode == 'autoregressive':
+            reconstructed = self.autoregressive_decode(
+                latent, subject_embedded, target, teacher_forcing_ratio)
+        elif decode_mode == 'single_step':
+            reconstructed = self.single_step_decode(latent, subject_embedded)
+        else:
+            raise ValueError(f"Unknown decode_mode: {decode_mode}")
 
         return {
             **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, embeddings)},
