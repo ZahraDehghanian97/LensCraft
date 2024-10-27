@@ -115,18 +115,16 @@ class MultiTaskAutoencoder(nn.Module):
             output = self.decoder(memory, decoder_input,
                                   subject_embedded[:, t:t+1, :], tgt_mask)
 
-            last_prediction = output[:, -1:, :].detach().clone()
-            outputs.append(last_prediction)
+            outputs.append(output[:, -1:, :])
 
             if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
                 decoder_input = torch.cat(
                     [decoder_input, target[:, t:t+1, :]], dim=1)
             else:
                 decoder_input = torch.cat(
-                    [decoder_input, last_prediction], dim=1)
+                    [decoder_input, output[:, -1:, :]], dim=1)
 
             del output
-            del last_prediction
 
         gc.collect()
         torch.cuda.empty_cache()
