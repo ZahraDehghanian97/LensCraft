@@ -17,19 +17,6 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self.compiled = not compile_enabled
         self.dataset_mode = dataset_mode
 
-    def configure_optimizers(self):
-        optimizer = self.optimizer(self.parameters())
-        if self.lr_scheduler is not None:
-            scheduler = self.lr_scheduler(optimizer)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "monitor": "val_loss",
-                },
-            }
-        return optimizer
-
     def setup(self, stage=None):
         if not self.compiled:
             self.model = torch.compile(self.model, mode=self.compile_mode)
