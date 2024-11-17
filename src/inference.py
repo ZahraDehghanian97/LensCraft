@@ -3,14 +3,14 @@ import json
 from typing import Dict, Optional
 
 import hydra
+from hydra.core.global_hydra import GlobalHydra
 import numpy as np
 import torch
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from models.clip_embeddings import CLIPEmbedder
-from data.et.dataset import ETDataset
-from utils.calaculation3d import rotation_6d_to_matrix, euler_from_matrix
+from utils.calaculation3d import rotation_6d_to_matrix
 
 
 def export_kitti_poses(positions: np.ndarray, rotations_6d: np.ndarray, output_path: str):
@@ -174,14 +174,13 @@ class ModelInference:
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
 def main(cfg: DictConfig):
+    GlobalHydra.instance().clear()
+    if not OmegaConf.has_resolver("eval"):
+        OmegaConf.register_new_resolver("eval", eval)
+        
     inference = ModelInference(cfg=cfg)
 
-    dataset = ETDataset(
-        project_config_dir=cfg.project_config_dir,
-        dataset_dir=cfg.dataset_dir,
-        set_name=cfg.dataset.set_name,
-        split=cfg.dataset.split
-    )
+    dataset = hydra.utils.instantiate(cfg.data.dataset.module)
 
     if cfg.sample_id:
         sample_indices = [
