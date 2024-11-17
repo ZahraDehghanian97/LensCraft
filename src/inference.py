@@ -13,6 +13,37 @@ from data.et.dataset import ETDataset
 from utils.calaculation3d import rotation_6d_to_matrix, euler_from_matrix
 
 
+def export_kitti_poses(positions: np.ndarray, rotations_6d: np.ndarray, output_path: str):
+    rotation_matrices = rotation_6d_to_matrix(rotations_6d)
+
+    with open(output_path, 'w') as f:
+        for pos, rot_mat in zip(positions, rotation_matrices):
+            pose = np.eye(4)
+            pose[:3, :3] = rot_mat
+            pose[:3, 3] = pos
+
+            line = ' '.join(map(str, pose[:3].flatten()))
+            f.write(line + '\n')
+
+
+def export_character_positions(positions: np.ndarray, output_path: str):
+    np.save(output_path, positions)
+
+
+def load_checkpoint(checkpoint_path, model, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint["state_dict"]
+
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith('model.'):
+            new_key = key[6:]  # Remove 'model.' prefix
+            new_state_dict[new_key] = value
+
+    model.load_state_dict(new_state_dict)
+    return model
+
+
 class ModelInference:
     def __init__(self, cfg: DictConfig):
         self.device = torch.device(
@@ -24,8 +55,8 @@ class ModelInference:
         )
 
         self.model = instantiate(cfg.training.model)
-        checkpoint = torch.load(cfg.checkpoint_path, map_location=self.device)
-        self.model.load_state_dict(checkpoint["state_dict"])
+        self.model = load_checkpoint(
+            cfg.checkpoint_path, self.model, self.device)
         self.model.to(self.device)
         self.model.eval()
 
@@ -42,13 +73,8 @@ class ModelInference:
         position = valid_trajectory[:, :3].cpu().numpy()
         rotation_6d = valid_trajectory[:, 3:9].cpu().numpy()
 
-        rotation_matrices = rotation_6d_to_matrix(rotation_6d)
-        euler_angles = np.array([euler_from_matrix(R)
-                                for R in rotation_matrices])
-
         return {
             "position": position,
-            "rotation_euler": euler_angles,
             "rotation_6d": rotation_6d
         }
 
@@ -74,14 +100,31 @@ class ModelInference:
                 output.get("padding_mask", None)
             )
 
-            self.save_results(
-                trajectory_data,
-                text,
-                output_path,
-                "text_to_trajectory"
-            )
+            # Export trajectory data in KITTI format and character positions
+            timestamp = torch.datetime.now().strftime("%Y%m%d_%H%M%S")
+            poses_file = os.path.join(
+                output_path, f"text_to_trajectory_poses_{timestamp}.txt")
+            char_file = os.path.join(
+                output_path, f"text_to_trajectory_char_{timestamp}.npy")
 
-            return trajectory_data
+            export_kitti_poses(
+                trajectory_data["position"], trajectory_data["rotation_6d"], poses_file)
+            export_character_positions(
+                subject_trajectory.cpu().numpy(), char_file)
+
+            metadata = {
+                "timestamp": timestamp,
+                "type": "text_to_trajectory",
+                "text": text,
+                "poses_file": poses_file,
+                "char_file": char_file
+            }
+            metadata_path = os.path.join(
+                output_path, f"text_to_trajectory_metadata_{timestamp}.json")
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            return trajectory_data, poses_file, char_file
 
     def reconstruct_trajectory(
         self,
@@ -103,40 +146,30 @@ class ModelInference:
                 output.get("padding_mask", None)
             )
 
-            self.save_results(
-                trajectory_data,
-                None,
-                output_path,
-                "reconstruction"
-            )
+            # Export trajectory data in KITTI format and character positions
+            timestamp = torch.datetime.now().strftime("%Y%m%d_%H%M%S")
+            poses_file = os.path.join(
+                output_path, f"reconstruction_poses_{timestamp}.txt")
+            char_file = os.path.join(
+                output_path, f"reconstruction_char_{timestamp}.npy")
 
-            return trajectory_data
+            export_kitti_poses(
+                trajectory_data["position"], trajectory_data["rotation_6d"], poses_file)
+            export_character_positions(
+                subject_trajectory.cpu().numpy(), char_file)
 
-    def save_results(
-        self,
-        trajectory_data: Dict[str, np.ndarray],
-        text: Optional[str],
-        output_path: str,
-        prefix: str
-    ):
-        os.makedirs(output_path, exist_ok=True)
-        timestamp = torch.datetime.now().strftime("%Y%m%d_%H%M%S")
+            metadata = {
+                "timestamp": timestamp,
+                "type": "reconstruction",
+                "poses_file": poses_file,
+                "char_file": char_file
+            }
+            metadata_path = os.path.join(
+                output_path, f"reconstruction_metadata_{timestamp}.json")
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
 
-        for key, data in trajectory_data.items():
-            filename = f"{prefix}_{key}_{timestamp}.npy"
-            filepath = os.path.join(output_path, filename)
-            np.save(filepath, data)
-
-        metadata = {
-            "timestamp": timestamp,
-            "type": prefix,
-            "text": text,
-            "files": [f"{prefix}_{key}_{timestamp}.npy" for key in trajectory_data.keys()]
-        }
-        metadata_path = os.path.join(
-            output_path, f"{prefix}_metadata_{timestamp}.json")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
+            return trajectory_data, poses_file, char_file
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
@@ -160,8 +193,7 @@ def main(cfg: DictConfig):
         sample = dataset[idx]
         sample_id = dataset.original_dataset.root_filenames[idx]
 
-        subject_trajectory = sample['subject_trajectory'].unsqueeze(
-            0)
+        subject_trajectory = sample['subject_trajectory'].unsqueeze(0)
         camera_trajectory = sample['camera_trajectory'].unsqueeze(
             0).transpose(1, 2)
 
@@ -170,7 +202,7 @@ def main(cfg: DictConfig):
 
         print(f"\nProcessing sample {sample_id}")
         print("Running trajectory reconstruction...")
-        reconstructed_trajectory = inference.reconstruct_trajectory(
+        reconstructed_trajectory, rec_poses_file, rec_char_file = inference.reconstruct_trajectory(
             camera_trajectory,
             subject_trajectory,
             output_path=sample_output_dir
@@ -179,7 +211,7 @@ def main(cfg: DictConfig):
         if cfg.text_prompt:
             print("Generating trajectory from text...")
             text_prompt = cfg.text_prompt
-            generated_trajectory = inference.generate_from_text(
+            generated_trajectory, gen_poses_file, gen_char_file = inference.generate_from_text(
                 text_prompt,
                 subject_trajectory,
                 output_path=sample_output_dir
@@ -188,7 +220,7 @@ def main(cfg: DictConfig):
         elif 'caption_raw' in sample and 'caption' in sample['caption_raw']:
             print("Generating trajectory from sample caption...")
             text_prompt = sample['caption_raw']['caption']
-            generated_trajectory = inference.generate_from_text(
+            generated_trajectory, gen_poses_file, gen_char_file = inference.generate_from_text(
                 text_prompt,
                 subject_trajectory,
                 output_path=sample_output_dir

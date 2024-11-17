@@ -4,15 +4,10 @@ defaults:
   - data: default
   - training: default
   - hydra: default
+  - override data/dataset: et
 
 checkpoint_path: lightning_logs/version_3/checkpoints/best-model-epoch=21-val_loss=1.15.ckpt
-project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
-dataset_dir: ${oc.env:ET_DATA_DIR}
 output_dir: inference_results
-
-dataset:
-  set_name: mixed
-  split: demo
 
 sample_id: null # If null, process all samples
 text_prompt: null # If null and sample has caption, will use sample caption
