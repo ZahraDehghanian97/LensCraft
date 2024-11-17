@@ -1,2 +1,2 @@
-model_name: "clip-vit-base-patch16"
+model_name: "clip-vit-base-patch32"
 latent_dim: 512
