@@ -1,5 +1,5 @@
 defaults:
-  - dataset: default
+  - dataset: simulation+et
 
 num_workers: 2
 val_size: 0.2

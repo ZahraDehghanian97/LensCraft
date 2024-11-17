@@ -129,6 +129,9 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         return total_loss, loss_dict
 
     def combined_trajectory_loss(self, pred, target):
+        if self.dataset_mode == 'et':
+            return torch.nn.functional.mse_loss(pred, target)
+
         pred_position = pred[:, :4]
         target_position = target[:, :4]
 
