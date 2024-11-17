@@ -5,9 +5,8 @@ from typing import Dict, Optional
 import hydra
 import numpy as np
 import torch
-from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from models.clip_embeddings import CLIPEmbedder
 from data.et.dataset import ETDataset
@@ -15,30 +14,17 @@ from utils.calaculation3d import rotation_6d_to_matrix, euler_from_matrix
 
 
 class ModelInference:
-    def __init__(
-        self,
-        config_path: str,
-        config_name: str,
-        checkpoint_path: str,
-        device: Optional[str] = None
-    ):
+    def __init__(self, cfg: DictConfig):
         self.device = torch.device(
-            device if device else "cuda" if torch.cuda.is_available() else "cpu")
-
-        GlobalHydra.instance().clear()
-        with hydra.initialize(version_base=None, config_path=config_path):
-            self.cfg = hydra.compose(config_name=config_name)
-
-        if not OmegaConf.has_resolver("eval"):
-            OmegaConf.register_new_resolver("eval", eval)
+            cfg.device if cfg.device else "cuda" if torch.cuda.is_available() else "cpu")
 
         self.clip_embedder = CLIPEmbedder(
-            model_name=self.cfg.clip.model_name,
+            model_name=cfg.clip.model_name,
             device=self.device
         )
 
-        self.model = instantiate(self.cfg.training.model)
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self.model = instantiate(cfg.training.model)
+        checkpoint = torch.load(cfg.checkpoint_path, map_location=self.device)
         self.model.load_state_dict(checkpoint["state_dict"])
         self.model.to(self.device)
         self.model.eval()
@@ -73,7 +59,6 @@ class ModelInference:
         output_path: str
     ) -> Dict[str, np.ndarray]:
         with torch.no_grad():
-
             caption_feat = self.clip_embedder.get_embeddings([text])
 
             caption_feat = caption_feat.to(self.device)
@@ -105,7 +90,6 @@ class ModelInference:
         output_path: str
     ) -> Dict[str, np.ndarray]:
         with torch.no_grad():
-
             camera_trajectory = camera_trajectory.to(self.device)
             subject_trajectory = subject_trajectory.to(self.device)
 
@@ -157,13 +141,7 @@ class ModelInference:
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
 def main(cfg: DictConfig):
-
-    inference = ModelInference(
-        config_path=os.path.join(hydra.utils.get_original_cwd(), "../config"),
-        config_name="config",
-        checkpoint_path=cfg.checkpoint_path,
-        device=cfg.device
-    )
+    inference = ModelInference(cfg=cfg)
 
     dataset = ETDataset(
         project_config_dir=cfg.project_config_dir,
