@@ -2,7 +2,6 @@ import torch
 from typing import Any, Dict
 from torch.utils.data import Dataset
 
-from utils.calaculation3d import euler_from_matrix, rotation_6d_to_matrix
 from .load import load_et_dataset
 
 
