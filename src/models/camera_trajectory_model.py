@@ -30,21 +30,16 @@ class MultiTaskAutoencoder(nn.Module):
             '-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    def single_step_decode(self, latent, subject_embedded):
-        memory = latent.unsqueeze(1).repeat(1, self.seq_length, 1)
-        memory = memory.transpose(0, 1)
-
+    def single_step_decode(self, latent, subject_embedded, tgt_key_padding_mask):
         decoder_input = torch.zeros(
             latent.shape[0], self.seq_length, self.input_dim, device=latent.device)
 
-        output = self.decoder(memory, decoder_input, subject_embedded)
+        output = self.decoder(latent, decoder_input,
+                              subject_embedded, tgt_key_padding_mask)
 
         return output
 
     def autoregressive_decode(self, latent, subject_embedded, target=None, teacher_forcing_ratio=0.5):
-        memory = latent.unsqueeze(1).repeat(1, self.seq_length, 1)
-        memory = memory.transpose(0, 1)
-
         decoder_input = torch.zeros(
             latent.shape[0], 1, self.input_dim, device=latent.device)
         outputs = []
@@ -53,7 +48,7 @@ class MultiTaskAutoencoder(nn.Module):
             tgt_mask = self.generate_square_subsequent_mask(
                 t + 2).to(latent.device)
 
-            output = self.decoder(memory, decoder_input,
+            output = self.decoder(latent, decoder_input,
                                   subject_embedded[:, t:t+1, :], tgt_mask)
 
             outputs.append(output[:, -1:, :])
@@ -73,20 +68,25 @@ class MultiTaskAutoencoder(nn.Module):
         return torch.cat(outputs, dim=1)
 
     def merge_latents(self, embeddings):
-        reshaped = embeddings.permute(1, 0, 2).reshape(embeddings.shape[1], -1)
-        return self.latent_merger(reshaped)
+        if len(self.query_token_names) == 1:
+            return embeddings.squeeze(0)
+        else:
+            reshaped = embeddings.permute(
+                1, 0, 2).reshape(embeddings.shape[1], -1)
+            return self.latent_merger(reshaped)
 
-    def forward(self, src, subject_trajectory, src_key_padding_mask=None, target=None,
+    def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None,
                 teacher_forcing_ratio=0.5, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
-        embeddings = self.encoder(src, subject_embedded, src_key_padding_mask)
+        embeddings = self.encoder(src, subject_embedded, src_key_mask)
         latent = self.merge_latents(embeddings)
 
         if decode_mode == 'autoregressive':
             reconstructed = self.autoregressive_decode(
                 latent, subject_embedded, target, teacher_forcing_ratio)
         elif decode_mode == 'single_step':
-            reconstructed = self.single_step_decode(latent, subject_embedded)
+            reconstructed = self.single_step_decode(
+                latent, subject_embedded, tgt_key_padding_mask)
         else:
             raise ValueError(f"Unknown decode_mode: {decode_mode}")
 

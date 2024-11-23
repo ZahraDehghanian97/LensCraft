@@ -6,12 +6,12 @@ defaults:
   - lr_scheduler: cosine
 
 noise:
-  initial_std: 0.2
+  initial_std: 0.1
   final_std: 0.05
 
 mask:
-  initial_ratio: 0.3
-  final_ratio: 0.7
+  initial_ratio: 0.1
+  final_ratio: 0.5
 
 teacher_forcing_schedule:
   initial_ratio: 0.9

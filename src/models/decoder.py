@@ -18,13 +18,19 @@ class Decoder(nn.Module):
 
         self.output_projection = nn.Linear(latent_dim, output_dim)
 
-    def forward(self, memory, decoder_input, subject_embedded, tgt_mask=None):
+    def forward(self, latent, decoder_input, subject_embedded, tgt_key_padding_mask=None):
         embedded = self.embedding(decoder_input)
         embedded = torch.cat([subject_embedded, embedded], dim=1)
         embedded = self.pos_encoder(embedded)
         embedded = embedded.transpose(0, 1)
+        latent = latent.unsqueeze(0)
 
-        output = self.transformer_decoder(embedded, memory, tgt_mask=tgt_mask)
+        if tgt_key_padding_mask is not None:
+            tgt_key_padding_mask = torch.cat(
+                [tgt_key_padding_mask, tgt_key_padding_mask], dim=1)
+
+        output = self.transformer_decoder(
+            tgt=embedded, memory=latent, tgt_key_padding_mask=tgt_key_padding_mask)
         output = output.transpose(0, 1)
         output = self.output_projection(
             output[:, subject_embedded.size(1):, :])

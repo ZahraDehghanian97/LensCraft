@@ -1,7 +1,7 @@
 import lightning as L
 import torch
-import numpy as np
-from utils.augmentation import apply_mask_and_noise, linear_increase, cosine_decay
+from torch.nn.functional import mse_loss
+from utils.augmentation import apply_mask_and_noise, linear_increase
 
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
@@ -34,9 +34,10 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
     def _shared_step(self, batch, batch_idx, stage):
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']
+        tgt_key_padding_mask = batch["padding_mask"] if "padding_mask" in batch else None
 
         if stage == "train":
-            current_noise_std = cosine_decay(
+            current_noise_std = linear_increase(
                 initial_value=self.noise.initial_std,
                 final_value=self.noise.final_std,
                 current_epoch=self.current_epoch,
@@ -50,24 +51,29 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 total_epochs=self.trainer.max_epochs
             )
 
-            current_teacher_forcing_ratio = cosine_decay(
+            current_teacher_forcing_ratio = linear_increase(
                 initial_value=self.teacher_forcing_schedule.initial_ratio,
                 final_value=self.teacher_forcing_schedule.final_ratio,
                 current_epoch=self.current_epoch,
                 total_epochs=self.trainer.max_epochs
             )
 
-            noisy_trajectory, mask, src_key_padding_mask = apply_mask_and_noise(
-                camera_trajectory, current_mask_ratio, current_noise_std, self.device)
+            valid_len = (~tgt_key_padding_mask).sum(
+                dim=1) if tgt_key_padding_mask is not None else None
 
-            src_key_padding_mask = batch["padding_mask"] if "padding_mask" in batch else src_key_padding_mask
+            noisy_trajectory, src_key_mask = apply_mask_and_noise(
+                camera_trajectory,
+                valid_len,
+                current_mask_ratio,
+                current_noise_std,
+                self.device
+            )
 
-            output = self.model(noisy_trajectory, subject_trajectory, src_key_padding_mask,
+            output = self.model(noisy_trajectory, subject_trajectory, tgt_key_padding_mask, src_key_mask,
                                 camera_trajectory, current_teacher_forcing_ratio)
         else:
-            src_key_padding_mask = batch["padding_mask"] if "padding_mask" in batch else None
             output = self.model(camera_trajectory,
-                                subject_trajectory, src_key_padding_mask)
+                                subject_trajectory, tgt_key_padding_mask)
 
         clip_targets = {'cls': batch['caption_feat']} if self.dataset_mode == 'et' else {
             'movement': batch['movement_clip'],
@@ -77,7 +83,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         }
 
         loss, loss_dict = self.compute_loss(
-            output, camera_trajectory, clip_targets)
+            output, camera_trajectory, clip_targets, tgt_key_padding_mask)
 
         self._log_metrics(stage, loss, loss_dict)
 
@@ -98,14 +104,19 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=0.001)
 
-    def compute_loss(self, model_output, camera_trajectory, clip_targets, mask=None):
-        reconstructed = model_output['reconstructed']
-        if mask is not None:
-            reconstructed = reconstructed[mask]
-            camera_trajectory = camera_trajectory[mask]
+    def compute_loss(self, model_output, camera_trajectory, clip_targets, tgt_key_padding_mask=None):
+        reconstructed = model_output['reconstructed'].flatten(0, 1)
+        camera_trajectory = camera_trajectory.flatten(0, 1)
+
+        if tgt_key_padding_mask is not None:
+            valid_mask = (~tgt_key_padding_mask).reshape(-1)
+            reconstructed = reconstructed[valid_mask]
+            camera_trajectory = camera_trajectory[valid_mask]
 
         clip_embeddings = {
-            k: model_output[f'{k}_embedding'] for k in clip_targets.keys()}
+            k: model_output[f'{k}_embedding'] for k in clip_targets.keys()
+        }
+
         return self.total_loss(reconstructed, camera_trajectory, clip_embeddings, clip_targets)
 
     def total_loss(self, trajectory_pred, trajectory_target, clip_pred, clip_target):
@@ -119,7 +130,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
         total_clip_loss = sum(clip_losses.values())
 
-        total_loss = trajectory_loss + total_clip_loss
+        total_loss = trajectory_loss + total_clip_loss * 0
         loss_dict = {
             'trajectory': trajectory_loss.item(),
             'clip': {k: v.item() for k, v in clip_losses.items()},
@@ -135,21 +146,19 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         pred_angle = pred[:, 4:]
         target_angle = target[:, 4:]
 
-        position_loss = torch.nn.functional.mse_loss(
-            pred_position, target_position)
+        position_loss = mse_loss(pred_position, target_position)
         angle_loss = self.circular_distance_loss(pred_angle, target_angle)
 
         return position_loss + angle_loss
 
     def circular_distance_loss(self, pred, target):
-        pred = torch.clamp(pred, min=-np.pi, max=np.pi)
-        target = torch.clamp(target, min=-np.pi, max=np.pi)
+        pred_rad = pred * torch.pi / 180.0
+        target_rad = target * torch.pi / 180.0
 
-        distance = torch.abs(pred - target)
-        distance = torch.where(distance > np.pi, 2 *
-                               np.pi - distance, distance)
+        sin_diff = torch.sin(target_rad) - torch.sin(pred_rad)
+        cos_diff = torch.cos(target_rad) - torch.cos(pred_rad)
 
-        return torch.mean(distance ** 2)
+        return torch.mean(sin_diff.pow(2) + cos_diff.pow(2))
 
     def clip_similarity_loss(self, pred_embedding, target_embedding):
         similarity = torch.nn.functional.cosine_similarity(

@@ -8,7 +8,7 @@ defaults:
   - _self_
 
 seed: 42
-patience: 10
+patience: 100
 
 callbacks:
   early_stopping:
