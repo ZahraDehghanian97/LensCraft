@@ -27,25 +27,25 @@ class MultiTaskAutoencoder(nn.Module):
             '-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    def single_step_decode(self, latent, subject_embedded, tgt_key_padding_mask):
+    def single_step_decode(self, memory, subject_embedded, tgt_key_padding_mask):
         decoder_input = torch.zeros(
-            latent.shape[1], self.seq_length, self.input_dim, device=latent.device)
+            memory.shape[1], self.seq_length, self.input_dim, device=memory.device)
 
-        output = self.decoder(latent, decoder_input,
+        output = self.decoder(memory, decoder_input,
                               subject_embedded, tgt_key_padding_mask)
 
         return output
 
-    def autoregressive_decode(self, latent, subject_embedded, target=None, teacher_forcing_ratio=0.5):
+    def autoregressive_decode(self, memory, subject_embedded, target=None, teacher_forcing_ratio=0.5):
         decoder_input = torch.zeros(
-            latent.shape[1], 1, self.input_dim, device=latent.device)
+            memory.shape[1], 1, self.input_dim, device=memory.device)
         outputs = []
 
         for t in range(self.seq_length):
             tgt_mask = self.generate_square_subsequent_mask(
-                t + 2).to(latent.device)
+                t + 2).to(memory.device)
 
-            output = self.decoder(latent, decoder_input,
+            output = self.decoder(memory, decoder_input,
                                   subject_embedded[:, t:t+1, :], tgt_mask)
 
             outputs.append(output[:, -1:, :])
@@ -67,18 +67,17 @@ class MultiTaskAutoencoder(nn.Module):
     def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None,
                 teacher_forcing_ratio=0.5, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
-        embeddings = self.encoder(src, subject_embedded, src_key_mask)
-
+        memory = self.encoder(src, subject_embedded, src_key_mask)
+        
         if decode_mode == 'autoregressive':
             reconstructed = self.autoregressive_decode(
-                embeddings, subject_embedded, target, teacher_forcing_ratio)
+                memory, subject_embedded, target, teacher_forcing_ratio)
         elif decode_mode == 'single_step':
-            reconstructed = self.single_step_decode(
-                embeddings, subject_embedded, tgt_key_padding_mask)
+            reconstructed = self.single_step_decode(memory, subject_embedded, tgt_key_padding_mask)
         else:
             raise ValueError(f"Unknown decode_mode: {decode_mode}")
 
         return {
-            **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, embeddings)},
+            **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, memory)},
             'reconstructed': reconstructed,
         }
