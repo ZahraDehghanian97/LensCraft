@@ -23,58 +23,67 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             self.compiled = True
 
     def training_step(self, batch, batch_idx):
-        return self._shared_step(batch, batch_idx, "train")
+        return self._step(batch, batch_idx, "train")
 
     def validation_step(self, batch, batch_idx):
-        return self._shared_step(batch, batch_idx, "val")
+        return self._step(batch, batch_idx, "val")
 
     def test_step(self, batch, batch_idx):
-        return self._shared_step(batch, batch_idx, "test")
+        return self._step(batch, batch_idx, "test")
 
-    def _shared_step(self, batch, batch_idx, stage):
-        camera_trajectory = batch['camera_trajectory']
-        subject_trajectory = batch['subject_trajectory']
-        tgt_key_padding_mask = batch["padding_mask"] if "padding_mask" in batch else None
+    def _forward_step(self, camera_trajectory, subject_trajectory, tgt_key_padding_mask, is_training=False):
+        if not is_training:
+            return self.model(camera_trajectory, subject_trajectory, tgt_key_padding_mask)
 
-        if stage == "train":
-            current_noise_std = linear_increase(
-                initial_value=self.noise.initial_std,
-                final_value=self.noise.final_std,
-                current_epoch=self.current_epoch,
-                total_epochs=self.trainer.max_epochs
-            )
+        current_noise_std = linear_increase(
+            initial_value=self.noise.initial_std,
+            final_value=self.noise.final_std,
+            current_epoch=self.current_epoch,
+            total_epochs=self.trainer.max_epochs
+        )
 
-            current_mask_ratio = linear_increase(
-                initial_value=self.mask.initial_ratio,
-                final_value=self.mask.final_ratio,
-                current_epoch=self.current_epoch,
-                total_epochs=self.trainer.max_epochs
-            )
+        current_mask_ratio = linear_increase(
+            initial_value=self.mask.initial_ratio,
+            final_value=self.mask.final_ratio,
+            current_epoch=self.current_epoch,
+            total_epochs=self.trainer.max_epochs
+        )
 
-            current_teacher_forcing_ratio = linear_increase(
-                initial_value=self.teacher_forcing_schedule.initial_ratio,
-                final_value=self.teacher_forcing_schedule.final_ratio,
-                current_epoch=self.current_epoch,
-                total_epochs=self.trainer.max_epochs
-            )
+        current_teacher_forcing_ratio = linear_increase(
+            initial_value=self.teacher_forcing_schedule.initial_ratio,
+            final_value=self.teacher_forcing_schedule.final_ratio,
+            current_epoch=self.current_epoch,
+            total_epochs=self.trainer.max_epochs
+        )
 
-            valid_len = (~tgt_key_padding_mask).sum(
-                dim=1) if tgt_key_padding_mask is not None else None
+        valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
+        noisy_trajectory, src_key_mask = apply_mask_and_noise(
+            camera_trajectory,
+            valid_len,
+            current_mask_ratio,
+            current_noise_std,
+            self.device
+        )
 
-            noisy_trajectory, src_key_mask = apply_mask_and_noise(
-                camera_trajectory,
-                valid_len,
-                current_mask_ratio,
-                current_noise_std,
-                self.device
-            )
+        return self.model(
+            noisy_trajectory, 
+            subject_trajectory, 
+            tgt_key_padding_mask, 
+            src_key_mask,
+            camera_trajectory, 
+            current_teacher_forcing_ratio
+        )
 
-            output = self.model(noisy_trajectory, subject_trajectory, tgt_key_padding_mask, src_key_mask,
-                                camera_trajectory, current_teacher_forcing_ratio)
-        else:
-            output = self.model(camera_trajectory,
-                                subject_trajectory, tgt_key_padding_mask)
-
+    def _step(self, batch, batch_idx, stage):
+        camera_trajectory, subject_trajectory, tgt_key_padding_mask = batch['camera_trajectory'], batch['subject_trajectory'], batch.get("padding_mask", None)
+        
+        output = self._forward_step(
+            camera_trajectory, 
+            subject_trajectory, 
+            tgt_key_padding_mask, 
+            is_training=(stage == "train")
+        )
+        
         clip_targets = {'cls': batch['caption_feat']} if self.dataset_mode == 'et' else {
             'movement': batch['movement_clip'],
             'easing': batch['easing_clip'],

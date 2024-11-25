@@ -17,9 +17,6 @@ class MultiTaskAutoencoder(nn.Module):
         self.decoder = Decoder(input_dim, latent_dim, nhead,
                                num_decoder_layers, dim_feedforward, dropout_rate)
 
-        self.latent_merger = nn.Linear(
-            latent_dim * len(query_token_names), latent_dim)
-
         self.seq_length = seq_length
         self.input_dim = input_dim
         self.query_token_names = query_token_names
@@ -32,7 +29,7 @@ class MultiTaskAutoencoder(nn.Module):
 
     def single_step_decode(self, latent, subject_embedded, tgt_key_padding_mask):
         decoder_input = torch.zeros(
-            latent.shape[0], self.seq_length, self.input_dim, device=latent.device)
+            latent.shape[1], self.seq_length, self.input_dim, device=latent.device)
 
         output = self.decoder(latent, decoder_input,
                               subject_embedded, tgt_key_padding_mask)
@@ -41,7 +38,7 @@ class MultiTaskAutoencoder(nn.Module):
 
     def autoregressive_decode(self, latent, subject_embedded, target=None, teacher_forcing_ratio=0.5):
         decoder_input = torch.zeros(
-            latent.shape[0], 1, self.input_dim, device=latent.device)
+            latent.shape[1], 1, self.input_dim, device=latent.device)
         outputs = []
 
         for t in range(self.seq_length):
@@ -67,26 +64,17 @@ class MultiTaskAutoencoder(nn.Module):
 
         return torch.cat(outputs, dim=1)
 
-    def merge_latents(self, embeddings):
-        if len(self.query_token_names) == 1:
-            return embeddings.squeeze(0)
-        else:
-            reshaped = embeddings.permute(
-                1, 0, 2).reshape(embeddings.shape[1], -1)
-            return self.latent_merger(reshaped)
-
     def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None,
                 teacher_forcing_ratio=0.5, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
         embeddings = self.encoder(src, subject_embedded, src_key_mask)
-        latent = self.merge_latents(embeddings)
 
         if decode_mode == 'autoregressive':
             reconstructed = self.autoregressive_decode(
-                latent, subject_embedded, target, teacher_forcing_ratio)
+                embeddings, subject_embedded, target, teacher_forcing_ratio)
         elif decode_mode == 'single_step':
             reconstructed = self.single_step_decode(
-                latent, subject_embedded, tgt_key_padding_mask)
+                embeddings, subject_embedded, tgt_key_padding_mask)
         else:
             raise ValueError(f"Unknown decode_mode: {decode_mode}")
 

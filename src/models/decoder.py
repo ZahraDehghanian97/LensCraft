@@ -23,7 +23,6 @@ class Decoder(nn.Module):
         embedded = torch.cat([subject_embedded, embedded], dim=1)
         embedded = self.pos_encoder(embedded)
         embedded = embedded.transpose(0, 1)
-        latent = latent.unsqueeze(0)
 
         if tgt_key_padding_mask is not None:
             tgt_key_padding_mask = torch.cat(
