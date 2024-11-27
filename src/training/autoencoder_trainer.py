@@ -111,7 +111,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                          on_epoch=True, logger=True)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.001)
+        return torch.optim.Adam(self.parameters(), lr=0.0001)
 
     def compute_loss(self, model_output, camera_trajectory, clip_targets, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed'].flatten(0, 1)
@@ -139,7 +139,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
         total_clip_loss = sum(clip_losses.values())
 
-        total_loss = trajectory_loss + total_clip_loss * 0
+        total_loss = trajectory_loss + total_clip_loss
         loss_dict = {
             'trajectory': trajectory_loss.item(),
             'clip': {k: v.item() for k, v in clip_losses.items()},
