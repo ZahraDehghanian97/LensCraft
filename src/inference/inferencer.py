@@ -45,22 +45,33 @@ class ModelInference:
         self,
         caption_feat: torch.Tensor,
         subject_trajectory: torch.Tensor,
+        padding_mask: torch.Tensor,
         output_path: str
     ):
         with torch.no_grad():
             caption_feat = caption_feat.to(self.device)
             subject_trajectory = subject_trajectory.to(self.device)
+            if padding_mask is not None:
+                padding_mask = padding_mask.to(self.device)
             
             subject_embedded = self.model.subject_projection(subject_trajectory)
-            latent = self.model.merge_latents(caption_feat.unsqueeze(0))
-            output = self.model.single_step_decode(latent, subject_embedded).squeeze(0)
+            output = self.model.single_step_decode(
+                caption_feat.unsqueeze(0), 
+                subject_embedded,
+                tgt_key_padding_mask=padding_mask
+            ).squeeze(0)
             
-            self.converter.convert_and_save_outputs(output, os.path.join(output_path, "gen_traj.txt"), is_camera=True)
+            self.converter.convert_and_save_outputs(
+                output, 
+                os.path.join(output_path, "gen_traj.txt"), 
+                is_camera=True
+            )
 
     def reconstruct_trajectory(
         self,
         camera_trajectory: torch.Tensor,
         subject_trajectory: torch.Tensor,
+        padding_mask: torch.Tensor,
         output_path: str
     ):
         with torch.no_grad():
@@ -68,7 +79,17 @@ class ModelInference:
             
             camera_trajectory = camera_trajectory.to(self.device)
             subject_trajectory = subject_trajectory.to(self.device)
+            if padding_mask is not None:
+                padding_mask = padding_mask.to(self.device)
 
-            output = self.model(camera_trajectory, subject_trajectory)['reconstructed'].squeeze(0)
+            output = self.model(
+                camera_trajectory, 
+                subject_trajectory,
+                tgt_key_padding_mask=padding_mask
+            )['reconstructed'].squeeze(0)
             
-            self.converter.convert_and_save_outputs(output, os.path.join(output_path, "rec_traj.txt"), is_camera=True)
+            self.converter.convert_and_save_outputs(
+                output, 
+                os.path.join(output_path, "rec_traj.txt"), 
+                is_camera=True
+            )

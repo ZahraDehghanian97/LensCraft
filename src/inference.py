@@ -31,6 +31,9 @@ def process_sample(cfg: DictConfig, inference: ModelInference, dataset, idx: int
 
     subject_trajectory = sample['subject_trajectory'].unsqueeze(0)
     camera_trajectory = sample['camera_trajectory'].unsqueeze(0).transpose(1, 2)
+    padding_mask = sample.get('padding_mask', None)
+    if padding_mask is not None:
+        padding_mask = padding_mask.unsqueeze(0)
 
     sample_output_dir = os.path.join(cfg.output_dir, sample_id)
     os.makedirs(sample_output_dir, exist_ok=True)
@@ -44,6 +47,7 @@ def process_sample(cfg: DictConfig, inference: ModelInference, dataset, idx: int
     inference.reconstruct_trajectory(
         camera_trajectory,
         subject_trajectory,
+        padding_mask,
         output_path=sample_output_dir
     )
     
@@ -51,6 +55,7 @@ def process_sample(cfg: DictConfig, inference: ModelInference, dataset, idx: int
         inference.generate_from_caption_feat(
             sample['caption_feat'].unsqueeze(0),
             subject_trajectory,
+            padding_mask,
             output_path=sample_output_dir
         )
 
