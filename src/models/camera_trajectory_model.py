@@ -27,12 +27,11 @@ class MultiTaskAutoencoder(nn.Module):
             '-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    def single_step_decode(self, memory, subject_embedded, tgt_key_padding_mask):
+    def single_step_decode(self, memory, subject_embedded, tgt_key_padding_mask=None):
         decoder_input = torch.zeros(
             memory.shape[1], self.seq_length, self.input_dim, device=memory.device)
 
-        output = self.decoder(memory, decoder_input,
-                              subject_embedded, tgt_key_padding_mask)
+        output = self.decoder(memory, decoder_input, subject_embedded, tgt_key_padding_mask)
 
         return output
 

@@ -6,7 +6,7 @@ defaults:
   - hydra: default
   - override data/dataset: et
 
-checkpoint_path: lightning_logs/version_3/checkpoints/best-model-epoch=21-val_loss=1.15.ckpt
+checkpoint_path: lightning_logs/version_101/checkpoints/best-model-epoch=07-val_loss=0.12.ckpt
 output_dir: inference_results
 
 sample_id: null # If null, process all samples
