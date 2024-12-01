@@ -111,7 +111,22 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                          on_epoch=True, logger=True)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.0001)
+        optimizer = self.optimizer(self.parameters())
+        
+        if self.lr_scheduler is not None:
+            scheduler = self.lr_scheduler(optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                    "strict": True,
+                }
+            }
+        
+        return optimizer
 
     def compute_loss(self, model_output, camera_trajectory, clip_targets, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed'].flatten(0, 1)
