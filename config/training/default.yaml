@@ -2,8 +2,8 @@ _target_: training.autoencoder_trainer.LightningMultiTaskAutoencoder
 
 defaults:
   - model: default
-  - optimizer: adam
-  - lr_scheduler: cosine
+  - optimizer: adamW
+  - lr_scheduler: linear_warmup_cosine
 
 noise:
   initial_std: 0.1

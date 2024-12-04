@@ -1,0 +1,6 @@
+_target_: training.lr_schedulers.linear_wamup_cosine.LinearWarmupCosineAnnealingLR
+_partial_: true
+warmup_epochs: 10
+max_epochs: ${trainer.max_epochs}
+warmup_start_lr: 1e-8
+eta_min: 1e-8

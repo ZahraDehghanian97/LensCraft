@@ -4,9 +4,8 @@ defaults:
   - data: default
   - training: default
   - hydra: default
-  - override data/dataset: et
 
-checkpoint_path: lightning_logs/version_101/checkpoints/best-model-epoch=07-val_loss=0.12.ckpt
+checkpoint_path: lightning_logs/version_8/checkpoints/best-val-model-epoch=049-val_loss=0.022.ckpt
 output_dir: inference_results
 
 sample_id: null # If null, process all samples
