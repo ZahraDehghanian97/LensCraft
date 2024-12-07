@@ -12,10 +12,10 @@ class ETDataset(Dataset):
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
 
     def __len__(self) -> int:
-        return len(self.original_dataset)
+        return 10
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
-        original_item = self.original_dataset[index]
+        original_item = self.original_dataset[0]
         return self.process_item(original_item)
 
     def process_item(self, item: Dict[str, Any]) -> Dict[str, Any]:

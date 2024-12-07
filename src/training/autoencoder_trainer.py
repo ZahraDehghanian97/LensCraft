@@ -160,7 +160,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
         total_clip_loss = sum(clip_losses.values())
 
-        total_loss = trajectory_loss + speed_loss + total_clip_loss
+        total_loss = trajectory_loss + total_clip_loss + speed_loss
         loss_dict = {
             'trajectory': trajectory_loss.item(),
             'speed': speed_loss.item(),
