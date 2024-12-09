@@ -114,19 +114,16 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         optimizer = self.optimizer(self.parameters())
         
         if self.lr_scheduler is not None:
-            scheduler = self.lr_scheduler(optimizer)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "monitor": "val_loss",
-                    "interval": "epoch",
-                    "frequency": 1,
-                    "strict": True,
-                }
-            }
+            total_steps = self.trainer.max_epochs * len(
+                self.trainer.datamodule.train_dataloader()
+            )
+            scheduler = self.lr_scheduler(optimizer=optimizer, total_steps=total_steps)
+            return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
         
         return optimizer
+    
+    def lr_scheduler_step(self, scheduler, metric):
+        scheduler.step(self.global_step)
 
     def on_train_epoch_end(self):
         optimizer = self.trainer.optimizers[0]
