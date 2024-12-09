@@ -1,8 +1,7 @@
 import lightning as L
 import torch
-from torch.nn.functional import mse_loss
 from utils.augmentation import apply_mask_and_noise, linear_increase
-
+from .losses.losses import CameraTrajectoryLoss
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
     def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
@@ -16,6 +15,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self.compile_mode = compile_mode
         self.compiled = not compile_enabled
         self.dataset_mode = dataset_mode
+        self.loss_module = CameraTrajectoryLoss()
 
     def setup(self, stage=None):
         if not self.compiled:
@@ -90,8 +90,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             'camera_angle': batch['angle_clip'],
             'shot_type': batch['shot_clip']
         }
-
-        loss, loss_dict = self.compute_loss(
+        
+        loss, loss_dict = self.loss_module(
             output, camera_trajectory, clip_targets, tgt_key_padding_mask)
 
         self._log_metrics(stage, loss, loss_dict)
@@ -127,90 +127,6 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             }
         
         return optimizer
-
-    def compute_loss(self, model_output, camera_trajectory, clip_targets, tgt_key_padding_mask=None):
-        reconstructed = model_output['reconstructed']
-        
-        reconstructed_flat = reconstructed.flatten(0, 1)
-        camera_trajectory_flat = camera_trajectory.flatten(0, 1)
-
-        if tgt_key_padding_mask is not None:
-            valid_mask = (~tgt_key_padding_mask).reshape(-1)
-            reconstructed_flat = reconstructed_flat[valid_mask]
-            camera_trajectory_flat = camera_trajectory_flat[valid_mask]
-
-        clip_embeddings = {
-            k: model_output[f'{k}_embedding'] for k in clip_targets.keys()
-        }
-
-        return self.total_loss(reconstructed, camera_trajectory, reconstructed_flat, 
-                             camera_trajectory_flat, clip_embeddings, clip_targets)
-
-    def total_loss(self, trajectory_pred, trajectory_target, trajectory_pred_flat, 
-                   trajectory_target_flat, clip_pred, clip_target):
-        trajectory_loss = self.combined_trajectory_loss(
-            trajectory_pred_flat, trajectory_target_flat)
-        
-        speed_loss = self.speed_loss(trajectory_pred, trajectory_target)
-
-        clip_losses = {}
-        for key in clip_pred.keys():
-            clip_losses[key] = self.clip_similarity_loss(
-                clip_pred[key], clip_target[key])
-
-        total_clip_loss = sum(clip_losses.values())
-
-        total_loss = trajectory_loss + total_clip_loss + speed_loss
-        loss_dict = {
-            'trajectory': trajectory_loss.item(),
-            'speed': speed_loss.item(),
-            'clip': {k: v.item() for k, v in clip_losses.items()},
-            'total': total_loss.item()
-        }
-
-        return total_loss, loss_dict
-
-    def speed_loss(self, pred, target):
-        pred_velocity = pred[:, 1:] - pred[:, :-1]
-        target_velocity = target[:, 1:] - target[:, :-1]
-        
-        pred_pos_velocity = pred_velocity[..., :4]
-        target_pos_velocity = target_velocity[..., :4]
-        
-        pred_rot_velocity = pred_velocity[..., 4:]
-        target_rot_velocity = target_velocity[..., 4:]
-        
-        pos_velocity_loss = mse_loss(pred_pos_velocity, target_pos_velocity)
-        
-        rot_velocity_loss = self.circular_distance_loss(pred_rot_velocity, target_rot_velocity)
-        
-        return pos_velocity_loss + rot_velocity_loss
-
-    def combined_trajectory_loss(self, pred, target):
-        pred_position = pred[:, :4]
-        target_position = target[:, :4]
-
-        pred_angle = pred[:, 4:]
-        target_angle = target[:, 4:]
-
-        position_loss = mse_loss(pred_position, target_position)
-        angle_loss = self.circular_distance_loss(pred_angle, target_angle)
-
-        return position_loss + angle_loss
-
-    def circular_distance_loss(self, pred, target):
-        pred_rad = pred * torch.pi / 180.0
-        target_rad = target * torch.pi / 180.0
-
-        sin_diff = torch.sin(target_rad) - torch.sin(pred_rad)
-        cos_diff = torch.cos(target_rad) - torch.cos(pred_rad)
-
-        return torch.mean(sin_diff.pow(2) + cos_diff.pow(2))
-
-    def clip_similarity_loss(self, pred_embedding, target_embedding):
-        similarity = torch.nn.functional.cosine_similarity(
-            pred_embedding, target_embedding)
-        return 1 - similarity.mean()
 
     def on_train_epoch_end(self):
         optimizer = self.trainer.optimizers[0]
