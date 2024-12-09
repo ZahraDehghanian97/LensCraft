@@ -4,11 +4,13 @@ from .angle_loss import AngleLoss
 class CameraTrajectoryLoss:
     def __init__(self):
         self.angle_loss = AngleLoss()
+        self.position_slice = slice(0, 4)
+        self.rotation_slice = slice(4, None)
 
     def __call__(self, model_output, camera_trajectory, clip_targets, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed']
-
-        # if tgt_key_padding_mask is not None: TODO: fix dimentions
+        
+        # if tgt_key_padding_mask is not None: TODO: fix dimensions
         #     valid_mask = (~tgt_key_padding_mask).reshape(-1)
         #     reconstructed_flat = reconstructed_flat[valid_mask]
         #     camera_trajectory_flat = camera_trajectory_flat[valid_mask]
@@ -21,14 +23,12 @@ class CameraTrajectoryLoss:
 
     def compute_total_loss(self, trajectory_pred, trajectory_target, clip_pred, clip_target):
         trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
-        
         speed_loss = self.compute_speed_loss(trajectory_pred, trajectory_target)
-
-        clip_losses = {}
-        for key in clip_pred.keys():
-            clip_losses[key] = self.compute_clip_loss(
-                clip_pred[key], clip_target[key])
-
+        
+        clip_losses = {
+            key: self.compute_clip_loss(clip_pred[key], clip_target[key])
+            for key in clip_pred.keys()
+        }
         total_clip_loss = sum(clip_losses.values())
 
         total_loss = trajectory_loss + total_clip_loss + speed_loss
@@ -41,32 +41,27 @@ class CameraTrajectoryLoss:
 
         return total_loss, loss_dict
 
+    def compute_component_losses(self, pred, target):
+        position_loss = mse_loss(
+            pred[..., self.position_slice], 
+            target[..., self.position_slice]
+        )
+        rotation_loss = self.angle_loss(
+            pred[..., self.rotation_slice], 
+            target[..., self.rotation_slice]
+        )
+        return position_loss + rotation_loss
+
+    def compute_velocity(self, trajectory):
+        return trajectory[:, 1:] - trajectory[:, :-1]
+
     def compute_speed_loss(self, pred, target):
-        pred_velocity = pred[:, 1:] - pred[:, :-1]
-        target_velocity = target[:, 1:] - target[:, :-1]
-        
-        pred_pos_velocity = pred_velocity[..., :4]
-        target_pos_velocity = target_velocity[..., :4]
-        
-        pred_rot_velocity = pred_velocity[..., 4:]
-        target_rot_velocity = target_velocity[..., 4:]
-        
-        pos_velocity_loss = mse_loss(pred_pos_velocity, target_pos_velocity)
-        rot_velocity_loss = self.angle_loss(pred_rot_velocity, target_rot_velocity)
-        
-        return pos_velocity_loss + rot_velocity_loss
+        pred_velocity = self.compute_velocity(pred)
+        target_velocity = self.compute_velocity(target)
+        return self.compute_component_losses(pred_velocity, target_velocity)
 
     def compute_trajectory_loss(self, pred, target):
-        pred_position = pred[..., :4]
-        target_position = target[..., :4]
-
-        pred_angle = pred[..., 4:]
-        target_angle = target[..., 4:]
-
-        position_loss = mse_loss(pred_position, target_position)
-        angle_loss = self.angle_loss(pred_angle, target_angle)
-                
-        return position_loss + angle_loss
+        return self.compute_component_losses(pred, target)
 
     @staticmethod
     def compute_clip_loss(pred_embedding, target_embedding):
