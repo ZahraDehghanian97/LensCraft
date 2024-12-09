@@ -61,7 +61,10 @@ class CameraTrajectoryLoss:
         return self.compute_component_losses(pred_velocity, target_velocity)
 
     def compute_trajectory_loss(self, pred, target):
-        return self.compute_component_losses(pred, target)
+        relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
+        first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
+        
+        return relative_loss + first_frame_loss
 
     @staticmethod
     def compute_clip_loss(pred_embedding, target_embedding):
