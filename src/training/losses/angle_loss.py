@@ -9,8 +9,8 @@ class AngleLoss(torch.nn.Module):
         sin_angles = torch.sin(angles)
         cos_angles = torch.cos(angles)
         
-        sx, sy, sz = sin_angles[:, 0], sin_angles[:, 1], sin_angles[:, 2]
-        cx, cy, cz = cos_angles[:, 0], cos_angles[:, 1], cos_angles[:, 2]
+        sx, sy, sz = sin_angles[..., 0], sin_angles[..., 1], sin_angles[..., 2]
+        cx, cy, cz = cos_angles[..., 0], cos_angles[..., 1], cos_angles[..., 2]
         
         normal = torch.stack([
             sx * sz - cx * cz * sy,
