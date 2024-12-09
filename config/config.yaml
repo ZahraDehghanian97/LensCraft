@@ -9,6 +9,7 @@ defaults:
 
 seed: 42
 patience: 100
+resume_checkpoint: None
 
 callbacks:
   early_stopping:

@@ -32,7 +32,7 @@ def main(cfg: DictConfig):
 
     LightningModuleClass = get_class(cfg.training._target_)
 
-    if hasattr(cfg, 'resume_checkpoint') and cfg.resume_checkpoint:
+    if hasattr(cfg, 'resume_checkpoint') and cfg.resume_checkpoint != "None":
         checkpoint_path = cfg.resume_checkpoint
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
