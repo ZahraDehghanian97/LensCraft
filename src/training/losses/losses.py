@@ -23,7 +23,6 @@ class CameraTrajectoryLoss:
 
     def compute_total_loss(self, trajectory_pred, trajectory_target, clip_pred, clip_target):
         trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
-        speed_loss = self.compute_speed_loss(trajectory_pred, trajectory_target)
         
         clip_losses = {
             key: self.compute_clip_loss(clip_pred[key], clip_target[key])
@@ -31,10 +30,9 @@ class CameraTrajectoryLoss:
         }
         total_clip_loss = sum(clip_losses.values())
 
-        total_loss = trajectory_loss + total_clip_loss + speed_loss
+        total_loss = trajectory_loss + total_clip_loss
         loss_dict = {
             'trajectory': trajectory_loss.item(),
-            'speed': speed_loss.item(),
             'clip': {k: v.item() for k, v in clip_losses.items()},
             'total': total_loss.item()
         }
@@ -52,17 +50,9 @@ class CameraTrajectoryLoss:
         )
         return position_loss + rotation_loss
 
-    def compute_velocity(self, trajectory):
-        return trajectory[:, 1:] - trajectory[:, :-1]
-
-    def compute_speed_loss(self, pred, target):
-        pred_velocity = self.compute_velocity(pred)
-        target_velocity = self.compute_velocity(target)
-        return self.compute_component_losses(pred_velocity, target_velocity)
-
     def compute_trajectory_loss(self, pred, target):
-        relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
+        relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         
         return relative_loss + first_frame_loss
 
