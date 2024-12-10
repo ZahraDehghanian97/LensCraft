@@ -16,7 +16,12 @@ class SimulationDataset(Dataset):
         return len(self.simulation_data)
 
     def __getitem__(self, index):
-        return self.simulation_data[index]
+        original_item = self.simulation_data[index]
+        positions = original_item['camera_trajectory'][:, :3]
+        velocity = positions[1:] - positions[:-1]       
+        original_item['camera_trajectory'][1:, :3] = velocity
+        original_item['camera_trajectory'][0, :3] = positions[0]
+        return original_item
 
     def _is_simulation_valid(self, simulation):
         return (len(simulation['instructions']) == 1 and
