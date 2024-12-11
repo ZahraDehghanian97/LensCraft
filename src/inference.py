@@ -1,4 +1,4 @@
-import os
+import torch
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
@@ -16,7 +16,7 @@ def main(cfg: DictConfig):
     
     inference = ModelInference(cfg=cfg)
     data_module = setup_data_module(cfg)
-    dataset = data_module.train_dataset.dataset
+    dataset = data_module.test_dataset.dataset
     
     sample_indices = get_sample_indices(cfg, dataset)
     
@@ -60,52 +60,43 @@ def process_samples(
                 subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
                 camera_trajectory=sample['camera_trajectory'].unsqueeze(0),
                 padding_mask=sample.get('padding_mask', None),
-                caption_feat=sample.get('caption_feat', None)
+                caption_feat=sample.get('caption_feat', None).unsqueeze(0)
             )
-            process_et_sample(
-                inference=inference,
-                data=data,
-                sample_id=dataset.original_dataset.root_filenames[idx],
-                processor=processor
-            )
+            sample_id = dataset.original_dataset.root_filenames[idx]
+            output_dir = processor.prepare_output_directory(sample_id)
+            processor.copy_dataset_files(sample_id, Path(output_dir))
+            inference.reconstruct_trajectory(data, output_dir)
+            
+            if data.caption_feat is not None:
+                inference.generate_from_caption_feat(data, output_dir)
     else:
-        data = TrajectoryData(
-            subject_trajectory=dataset[0]['subject_trajectory'].unsqueeze(0),
-            camera_trajectory=dataset[0]['camera_trajectory'].unsqueeze(0),
-            padding_mask=dataset[0].get('padding_mask', None),
-            caption_feat=dataset[0].get('caption_feat', None)
-        )
-        process_simulation_sample(
-            inference=inference,
-            data=data,
-            processor=processor
-        )
+        simulations = []
+        for idx in sample_indices:
+            sample = dataset[idx]
+            data = TrajectoryData(
+                subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
+                camera_trajectory=sample['camera_trajectory'].unsqueeze(0),
+                padding_mask=sample.get('padding_mask', None),
+                caption_feat=torch.stack([
+                    sample['movement_clip'],
+                    sample['easing_clip'],
+                    sample['angle_clip'],
+                    sample['shot_clip']
+                ]).unsqueeze(1)
+            )
+            data.teacher_forcing_ratio = 0.0
+            rec = inference.reconstruct_trajectory(data)   
+            data.teacher_forcing_ratio = 0.5         
+            gen = inference.reconstruct_trajectory(data)
+            simulations.append({ 
+                "subject": dataset[idx]['subject_trajectory'], 
+                "camera": dataset[idx]['camera_trajectory'], 
+                "rec": rec, 
+                "gen": gen
+            })
+        output_dir = processor.prepare_output_directory()
+        processor.save_simulation_format(simulations, output_dir)
 
-def process_et_sample(
-    inference: ModelInference,
-    data: TrajectoryData,
-    sample_id: str,
-    processor: TrajectoryProcessor
-):
-    output_dir = processor.prepare_output_directory(sample_id)
-    processor.copy_dataset_files(sample_id, Path(output_dir))
-    
-    data.camera_trajectory = data.camera_trajectory.transpose(1, 2)
-    inference.reconstruct_trajectory(data, output_dir)
-    
-    if data.caption_feat is not None:
-        inference.generate_from_caption_feat(data, output_dir)
-
-def process_simulation_sample(
-    inference: ModelInference,
-    data: TrajectoryData,
-    processor: TrajectoryProcessor
-):
-    output_dir = processor.prepare_output_directory()
-    output = inference.reconstruct_trajectory(data, output_dir, is_simulation=True)
-    
-    output_path = os.path.join(output_dir, 'simulation-out.json')
-    processor.save_simulation_format(output, data.subject_trajectory, output_path)
 
 if __name__ == "__main__":
     main()

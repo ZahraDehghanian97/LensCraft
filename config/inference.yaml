@@ -5,7 +5,7 @@ defaults:
   - training: default
   - hydra: default
 
-checkpoint_path: lightning_logs/version_35/checkpoints/best-val-model-epoch=024-val_loss=0.777.ckpt
+checkpoint_path: lightning_logs/version_33/checkpoints/best-train-model-epoch=079-train_loss=0.164.ckpt
 output_dir: inference_results
 
 sample_id: null # If null, process all samples

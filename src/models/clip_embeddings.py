@@ -101,7 +101,7 @@ class CLIPEmbedder:
         pad_seq: bool = False
     ) -> Dict[str, Union[torch.Tensor, CLIPFeatures]]:
         return {
-            key: self.get_embeddings(value, return_seq, pad_seq)
+            key: self.get_embeddings(value, return_seq, pad_seq).squeeze(0)
             for key, value in descriptions.items()
         }
 

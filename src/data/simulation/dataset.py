@@ -6,9 +6,10 @@ from .constants import CameraMovementType, EasingType, CameraAngle, ShotType
 
 class SimulationDataset(Dataset):
     def __init__(self, data_path: str, clip_embeddings: dict):
+        self.clip_embeddings = clip_embeddings
         with open(data_path, 'r') as file:
             raw_data = json.load(file)
-        self.simulation_data = [self._process_single_simulation(sim, clip_embeddings)
+        self.simulation_data = [self._process_single_simulation(sim)
                                 for sim in raw_data['simulations']
                                 if self._is_simulation_valid(sim)]
 
@@ -17,10 +18,10 @@ class SimulationDataset(Dataset):
 
     def __getitem__(self, index):
         original_item = self.simulation_data[index]
-        positions = original_item['camera_trajectory'][:, :3]
-        velocity = positions[1:] - positions[:-1]       
-        original_item['camera_trajectory'][1:, :3] = velocity
-        original_item['camera_trajectory'][0, :3] = positions[0]
+        # positions = original_item['camera_trajectory'][:, :3]
+        # velocity = positions[1:] - positions[:-1]       
+        # original_item['camera_trajectory'][1:, :3] = velocity
+        # original_item['camera_trajectory'][0, :3] = positions[0]
         return original_item
 
     def _is_simulation_valid(self, simulation):
@@ -28,7 +29,7 @@ class SimulationDataset(Dataset):
                 simulation['instructions'][0]['frameCount'] == 30 and
                 len(simulation['cameraFrames']) == 30)
 
-    def _process_single_simulation(self, simulation, clip_embeddings):
+    def _process_single_simulation(self, simulation):
         instruction = simulation['instructions'][0]
         subject = simulation['subjects'][0]
 
@@ -46,10 +47,10 @@ class SimulationDataset(Dataset):
         return {
             'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
             'subject_trajectory': torch.tensor(subject_trajectory, dtype=torch.float32),
-            'movement_clip': clip_embeddings['movement'][movement_type.value].to('cpu'),
-            'easing_clip': clip_embeddings['easing'][easing_type.value].to('cpu'),
-            'angle_clip': clip_embeddings['angle'][camera_angle.value].to('cpu'),
-            'shot_clip': clip_embeddings['shot'][shot_type.value].to('cpu')
+            'movement_clip': self.clip_embeddings['movement'][movement_type.value].to('cpu'),
+            'easing_clip': self.clip_embeddings['easing'][easing_type.value].to('cpu'),
+            'angle_clip': self.clip_embeddings['angle'][camera_angle.value].to('cpu'),
+            'shot_clip': self.clip_embeddings['shot'][shot_type.value].to('cpu')
         }
 
     @staticmethod

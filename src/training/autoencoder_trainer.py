@@ -1,10 +1,9 @@
 import lightning as L
 import torch
 from utils.augmentation import apply_mask_and_noise, linear_increase
-from .losses.losses import CameraTrajectoryLoss
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
+    def __init__(self, model, optimizer, lr_scheduler, loss_module, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
         super().__init__()
         self.model = model
         self.optimizer = optimizer
@@ -15,7 +14,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self.compile_mode = compile_mode
         self.compiled = not compile_enabled
         self.dataset_mode = dataset_mode
-        self.loss_module = CameraTrajectoryLoss()
+        self.loss_module = loss_module
 
     def setup(self, stage=None):
         if not self.compiled:
@@ -31,7 +30,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
     def test_step(self, batch, batch_idx):
         return self._step(batch, batch_idx, "test")
 
-    def _forward_step(self, camera_trajectory, subject_trajectory, tgt_key_padding_mask, is_training=False):
+    def _forward_step(self, camera_trajectory, subject_trajectory, clip_embeddings, tgt_key_padding_mask, is_training=False):
         if not is_training:
             return self.model(camera_trajectory, subject_trajectory, tgt_key_padding_mask)
 
@@ -57,7 +56,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         )
 
         valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
-        noisy_trajectory, src_key_mask = apply_mask_and_noise(
+        noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
             camera_trajectory,
             valid_len,
             current_mask_ratio,
@@ -66,30 +65,47 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         )
 
         return self.model(
-            noisy_trajectory, 
-            subject_trajectory, 
-            tgt_key_padding_mask, 
+            noisy_masked_trajectory,
+            subject_trajectory,
+            tgt_key_padding_mask,
             src_key_mask,
-            camera_trajectory, 
+            camera_trajectory,
+            clip_embeddings,
             current_teacher_forcing_ratio
         )
 
     def _step(self, batch, batch_idx, stage):
-        camera_trajectory, subject_trajectory, tgt_key_padding_mask = batch['camera_trajectory'], batch['subject_trajectory'], batch.get("padding_mask", None)
+        camera_trajectory = batch['camera_trajectory']
+        subject_trajectory = batch['subject_trajectory']
+        tgt_key_padding_mask = batch.get("padding_mask", None)
         
+        if self.dataset_mode == 'et':
+            clip_embeddings = torch.stack([batch['caption_feat']])
+        else:
+            clip_embeddings = torch.stack([
+                batch['movement_clip'],
+                batch['easing_clip'],
+                batch['angle_clip'],
+                batch['shot_clip']
+            ])
+
         output = self._forward_step(
             camera_trajectory, 
-            subject_trajectory, 
+            subject_trajectory,
+            clip_embeddings,
             tgt_key_padding_mask, 
             is_training=(stage == "train")
         )
         
-        clip_targets = {'cls': batch['caption_feat']} if self.dataset_mode == 'et' else {
-            'movement': batch['movement_clip'],
-            'easing': batch['easing_clip'],
-            'camera_angle': batch['angle_clip'],
-            'shot_type': batch['shot_clip']
-        }
+        if self.dataset_mode == 'et':
+            clip_targets = {'cls': batch['caption_feat']}
+        else:
+            clip_targets = {
+                'movement': batch['movement_clip'],
+                'easing': batch['easing_clip'],
+                'angle': batch['angle_clip'],
+                'shot': batch['shot_clip']
+            }
         
         loss, loss_dict = self.loss_module(
             output, camera_trajectory, clip_targets, tgt_key_padding_mask)

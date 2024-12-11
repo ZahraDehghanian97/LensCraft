@@ -35,56 +35,61 @@ class ModelInference:
         self,
         text: str,
         data: TrajectoryData,
-        output_path: str
+        output_path: str = '',
     ):
         with torch.no_grad():
             caption_feat = self.clip_embedder.get_embeddings([text])
             data.caption_feat = caption_feat
-            self.generate_from_caption_feat(data, output_path)
+            return self.generate_from_caption_feat(data, output_path)
     
     def generate_from_caption_feat(
         self,
         data: TrajectoryData,
-        output_path: str
+        output_path: str = '',
     ):
         with torch.no_grad():
             caption_feat = data.caption_feat.to(self.device)
+            subject_trajectory = data.subject_trajectory.to(self.device)
+            padding_mask = data.padding_mask.to(self.device) if data.padding_mask is not None else None
             
-            subject_embedded = self.model.subject_projection(data['subject_trajectory'])
+            
+            subject_embedded = self.model.subject_projection(subject_trajectory)
             output = self.model.single_step_decode(
-                caption_feat.unsqueeze(0), 
+                caption_feat,
                 subject_embedded,
-                tgt_key_padding_mask=data['padding_mask']
+                tgt_key_padding_mask=padding_mask
             ).squeeze(0)
             
-            self.converter.convert_and_save_outputs(
-                output, 
-                os.path.join(output_path, "gen_traj.txt"), 
-                is_camera=True
-            )
+            if output_path:
+                self.converter.convert_and_save_outputs(
+                    output, 
+                    os.path.join(output_path, "gen_traj.txt"), 
+                    is_camera=True
+                )
+            return output
 
     def reconstruct_trajectory(
         self,
         data: TrajectoryData,
-        output_path: str,
-        is_simulation: bool = False
+        output_path: str = '',
     ) -> Optional[torch.Tensor]:
         with torch.no_grad():
-            if not is_simulation:
-                data['camera_trajectory'] = data['camera_trajectory'].transpose(1, 2)
-            
             padding_mask = data.padding_mask.to(self.device) if data.padding_mask is not None else None
+            caption_feat = data.caption_feat.to(self.device)
+                        
             output = self.model(
                 data.camera_trajectory.to(self.device),
                 data.subject_trajectory.to(self.device),
+                clip_embeddings=caption_feat,
+                teacher_forcing_ratio=data.teacher_forcing_ratio,
                 tgt_key_padding_mask=padding_mask
             )['reconstructed'].squeeze(0)
             
-            if is_simulation:
-                return output
+            if output_path:
+                self.converter.convert_and_save_outputs(
+                    output,
+                    os.path.join(output_path, "rec_traj.txt"),
+                    is_camera=True
+                )
             
-            self.converter.convert_and_save_outputs(
-                output,
-                os.path.join(output_path, "rec_traj.txt"),
-                is_camera=True
-            )
+            return output

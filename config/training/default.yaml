@@ -5,14 +5,21 @@ defaults:
   - optimizer: adamW
   - lr_scheduler: linear_warmup_cosine
 
+loss_module:
+  _target_: training.losses.losses.CameraTrajectoryLoss
+  clip_embeddings:
+    _target_: data.simulation.init_captions.initialize_all_clip_embeddings
+    clip_model_name: ${clip.model_name}
+    cache_file: clip_embeddings_${clip.model_name}_cache.pkl
+
 noise:
   initial_std: 0.1
   final_std: 0.05
 
 mask:
   initial_ratio: 0.1
-  final_ratio: 0.5
+  final_ratio: 0.8
 
 teacher_forcing_schedule:
-  initial_ratio: 0.9
-  final_ratio: 0.1
+  initial_ratio: 0.8
+  final_ratio: 0.4

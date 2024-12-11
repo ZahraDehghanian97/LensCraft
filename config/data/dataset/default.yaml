@@ -1,14 +1,14 @@
 _query_token_names:
   - movement
   - easing
-  - camera_angle
-  - shot_type
+  - angle
+  - shot
 _seq_length: 30
 _feature_dim: 7
 
 module:
   _target_: data.simulation.dataset.SimulationDataset
-  data_path: /media/external_2T/abolghasemi/random_simulation_dataset.json
+  data_path: datasets/simulation/random_simulation_dataset.json
   clip_embeddings:
     _target_: data.simulation.init_captions.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}

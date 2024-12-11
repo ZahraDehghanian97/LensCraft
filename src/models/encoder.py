@@ -34,6 +34,7 @@ class Encoder(nn.Module):
         if src_key_padding_mask is not None:
             query_mask = torch.zeros((src_key_padding_mask.shape[0], len(
                 self.query_tokens)), dtype=torch.bool, device=src.device)
+            # subject_padding_mask = torch.zeros_like(src_key_padding_mask)
             src_key_padding_mask = torch.cat(
                 [query_mask, src_key_padding_mask, src_key_padding_mask], dim=1)
 
