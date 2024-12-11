@@ -123,3 +123,5 @@ datasets/simulation/random_simulation_dataset.json
 outputs/
 clip_embeddings*_cache.pkl
 inference_results/
+datasets/simulation/to-merge
+datasets/simulation/merged_dataset.json
