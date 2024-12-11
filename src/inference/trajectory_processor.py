@@ -12,7 +12,7 @@ class TrajectoryData:
     camera_trajectory: torch.Tensor
     padding_mask: Optional[torch.Tensor] = None
     caption_feat: Optional[torch.Tensor] = None
-    teacher_forcing_ratio: Optional[int] = 0.5
+    teacher_forcing_ratio: Optional[int] = 0.0
 
 class TrajectoryProcessor:
     def __init__(self, output_dir: str, dataset_dir: Optional[Path] = None):
@@ -80,7 +80,8 @@ class TrajectoryProcessor:
             simulation_data = {
                 "simulations": [self.generate_simulation_format(item['camera'], item['subject']),
                                 self.generate_simulation_format(item['rec'], item['subject']),
-                                self.generate_simulation_format(item['gen'], item['subject'])]
+                                self.generate_simulation_format(item['full_key_gen'], item['subject']),
+                                self.generate_simulation_format(item['prompt_gen'], item['subject'])]
             }
             
             with open(output_path, 'w') as f:

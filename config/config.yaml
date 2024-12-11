@@ -8,7 +8,7 @@ defaults:
   - _self_
 
 seed: 42
-patience: 100
+patience: 10
 resume_checkpoint: None
 
 callbacks:

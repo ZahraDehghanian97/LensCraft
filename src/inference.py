@@ -85,14 +85,17 @@ def process_samples(
                 ]).unsqueeze(1)
             )
             data.teacher_forcing_ratio = 0.0
-            rec = inference.reconstruct_trajectory(data)   
-            data.teacher_forcing_ratio = 0.5         
-            gen = inference.reconstruct_trajectory(data)
+            rec = inference.reconstruct_trajectory(data)
+            data.teacher_forcing_ratio = 0.4
+            full_key_gen = inference.reconstruct_trajectory(data)
+            data.teacher_forcing_ratio = 1.0
+            prompt_gen = inference.reconstruct_trajectory(data)
             simulations.append({ 
                 "subject": dataset[idx]['subject_trajectory'], 
                 "camera": dataset[idx]['camera_trajectory'], 
                 "rec": rec, 
-                "gen": gen
+                "full_key_gen": full_key_gen,
+                "prompt_gen": prompt_gen
             })
         output_dir = processor.prepare_output_directory()
         processor.save_simulation_format(simulations, output_dir)

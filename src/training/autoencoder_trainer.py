@@ -32,7 +32,13 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
     def _forward_step(self, camera_trajectory, subject_trajectory, clip_embeddings, tgt_key_padding_mask, is_training=False):
         if not is_training:
-            return self.model(camera_trajectory, subject_trajectory, tgt_key_padding_mask)
+            return self.model(
+                camera_trajectory, 
+                subject_trajectory, 
+                tgt_key_padding_mask,
+                clip_embeddings=clip_embeddings,
+                teacher_forcing_ratio=0.5
+            )
 
         current_noise_std = linear_increase(
             initial_value=self.noise.initial_std,
