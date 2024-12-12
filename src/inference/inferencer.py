@@ -75,13 +75,15 @@ class ModelInference:
     ) -> Optional[torch.Tensor]:
         with torch.no_grad():
             padding_mask = data.padding_mask.to(self.device) if data.padding_mask is not None else None
+            src_key_mask = data.src_key_mask.to(self.device) if data.src_key_mask is not None else None
             caption_feat = data.caption_feat.to(self.device)
-                        
+            
             output = self.model(
                 data.camera_trajectory.to(self.device),
                 data.subject_trajectory.to(self.device),
                 clip_embeddings=caption_feat,
                 teacher_forcing_ratio=data.teacher_forcing_ratio,
+                src_key_mask=src_key_mask,
                 tgt_key_padding_mask=padding_mask
             )['reconstructed'].squeeze(0)
             

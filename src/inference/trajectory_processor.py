@@ -11,6 +11,7 @@ class TrajectoryData:
     subject_trajectory: torch.Tensor
     camera_trajectory: torch.Tensor
     padding_mask: Optional[torch.Tensor] = None
+    src_key_mask: Optional[torch.Tensor] = None
     caption_feat: Optional[torch.Tensor] = None
     teacher_forcing_ratio: Optional[int] = 0.0
 
@@ -30,8 +31,8 @@ class TrajectoryProcessor:
             shutil.copy2(self.dataset_dir / 'traj' / f"{sample_id}.txt", output_dir / "traj.txt")
             
             
-    def generate_simulation_format(self, camera, subject, instruction):
-        return {
+    def generate_simulation_format(self, camera, subject, instruction, helper_keyframes=None):
+        res = {
             "subjects": [{
                 "position": {
                     "x": subject[0, 0].item(),
@@ -65,18 +66,39 @@ class TrajectoryProcessor:
                 }
                 for i in range(camera.size(0))
             ],
-            "instructions": [instruction]
+            "instructions": [instruction],
         }
-
+        
+        if helper_keyframes is not None:
+            res['helper_keyframes'] = [
+                {
+                    "position": {
+                        "x": helper_keyframes[i, 0].item(),
+                        "y": helper_keyframes[i, 1].item(),
+                        "z": helper_keyframes[i, 2].item()
+                    },
+                    "focalLength": helper_keyframes[i, 3].item(),
+                    "angle": {
+                        "x": helper_keyframes[i, 4].item(),
+                        "y": helper_keyframes[i, 5].item(),
+                        "z": helper_keyframes[i, 6].item()
+                    }
+                }
+                for i in range(helper_keyframes.size(0))
+            ]
+        
+        return res
     def save_simulation_format(self, data, output_dir):
-        for i, item in enumerate(data):
-            output_path = os.path.join(output_dir, f'simulation-out-{i}.json')
-            simulation_data = {
-                "simulations": [self.generate_simulation_format(item['camera'], item['subject'], item['instruction']),
-                                self.generate_simulation_format(item['rec'], item['subject'], item['instruction']),
-                                self.generate_simulation_format(item['full_key_gen'], item['subject'], item['instruction']),
-                                self.generate_simulation_format(item['prompt_gen'], item['subject'], item['instruction'])]
-            }
+        output_path = os.path.join(output_dir, f'simulation-out.json')
+        simulations = []
+        for item in data:
+            simulations += [
+                self.generate_simulation_format(item['camera'], item['subject'], item['instruction']),
+                self.generate_simulation_format(item['rec'], item['subject'], item['instruction']),
+                self.generate_simulation_format(item['full_key_gen'], item['subject'], item['instruction']),
+                self.generate_simulation_format(item['prompt_gen'], item['subject'], item['instruction']),
+                self.generate_simulation_format(item['key_frames_gen'], item['subject'], item['instruction'], item['camera'][~item['src_key_mask']])
+            ]
             
-            with open(output_path, 'w') as f:
-                json.dump(simulation_data, f, indent=2)
+        with open(output_path, 'w') as f:
+            json.dump({"simulations": simulations}, f, indent=2)
