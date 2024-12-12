@@ -30,7 +30,7 @@ class TrajectoryProcessor:
             shutil.copy2(self.dataset_dir / 'traj' / f"{sample_id}.txt", output_dir / "traj.txt")
             
             
-    def generate_simulation_format(self, camera, subject):
+    def generate_simulation_format(self, camera, subject, instruction):
         return {
             "subjects": [{
                 "position": {
@@ -65,23 +65,17 @@ class TrajectoryProcessor:
                 }
                 for i in range(camera.size(0))
             ],
-            "instructions": [{
-                "frameCount": camera.size(0),
-                "cameraMovement": "",
-                "movementEasing": "",
-                "initialCameraAngle": "",
-                "initialShotType": ""
-            }]
+            "instructions": [instruction]
         }
 
     def save_simulation_format(self, data, output_dir):
         for i, item in enumerate(data):
             output_path = os.path.join(output_dir, f'simulation-out-{i}.json')
             simulation_data = {
-                "simulations": [self.generate_simulation_format(item['camera'], item['subject']),
-                                self.generate_simulation_format(item['rec'], item['subject']),
-                                self.generate_simulation_format(item['full_key_gen'], item['subject']),
-                                self.generate_simulation_format(item['prompt_gen'], item['subject'])]
+                "simulations": [self.generate_simulation_format(item['camera'], item['subject'], item['instruction']),
+                                self.generate_simulation_format(item['rec'], item['subject'], item['instruction']),
+                                self.generate_simulation_format(item['full_key_gen'], item['subject'], item['instruction']),
+                                self.generate_simulation_format(item['prompt_gen'], item['subject'], item['instruction'])]
             }
             
             with open(output_path, 'w') as f:

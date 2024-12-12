@@ -50,7 +50,8 @@ class SimulationDataset(Dataset):
             'movement_clip': self.clip_embeddings['movement'][movement_type.value].to('cpu'),
             'easing_clip': self.clip_embeddings['easing'][easing_type.value].to('cpu'),
             'angle_clip': self.clip_embeddings['angle'][camera_angle.value].to('cpu'),
-            'shot_clip': self.clip_embeddings['shot'][shot_type.value].to('cpu')
+            'shot_clip': self.clip_embeddings['shot'][shot_type.value].to('cpu'),
+            'instruction': instruction
         }
 
     @staticmethod
@@ -85,5 +86,6 @@ def batch_collate(batch):
         'movement_clip': torch.stack([item['movement_clip'] for item in batch]),
         'easing_clip': torch.stack([item['easing_clip'] for item in batch]),
         'angle_clip': torch.stack([item['angle_clip'] for item in batch]),
-        'shot_clip': torch.stack([item['shot_clip'] for item in batch])
+        'shot_clip': torch.stack([item['shot_clip'] for item in batch]),
+        'instruction': [item['instruction'] for item in batch]
     }
