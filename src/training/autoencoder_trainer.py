@@ -53,13 +53,22 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             current_epoch=self.current_epoch,
             total_epochs=self.trainer.max_epochs
         )
-
-        current_teacher_forcing_ratio = linear_increase(
-            initial_value=self.teacher_forcing_schedule.initial_ratio,
-            final_value=self.teacher_forcing_schedule.final_ratio,
-            current_epoch=self.current_epoch,
-            total_epochs=self.trainer.max_epochs
-        )
+        
+        current_teacher_forcing_ratio = 0
+        current_memory_mask_ratio = 0
+        if self.current_epoch % 2 == 1:
+            current_memory_mask_ratio = linear_increase(
+                initial_value=0,
+                final_value=0.5,
+                current_epoch=self.current_epoch,
+                total_epochs=self.trainer.max_epochs
+            )
+            current_teacher_forcing_ratio = linear_increase(
+                initial_value=self.teacher_forcing_schedule.initial_ratio,
+                final_value=self.teacher_forcing_schedule.final_ratio,
+                current_epoch=self.current_epoch,
+                total_epochs=self.trainer.max_epochs
+            )
 
         valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
@@ -77,7 +86,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             src_key_mask,
             camera_trajectory,
             clip_embeddings,
-            current_teacher_forcing_ratio
+            current_teacher_forcing_ratio,
+            current_memory_mask_ratio,
         )
 
     def _step(self, batch, batch_idx, stage):
@@ -121,16 +131,18 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         return loss
 
     def _log_metrics(self, stage, loss, loss_dict):
-        self.log(f"{stage}_loss", loss, on_step=True,
-                 on_epoch=True, prog_bar=True, logger=True)
+        batch_size = self.trainer.datamodule.batch_size
+        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, 
+                 prog_bar=True, logger=True, batch_size=batch_size)
+        
         for key, value in loss_dict.items():
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
-                    self.log(f"{stage}_{key}_{subkey}", subvalue,
-                             on_step=True, on_epoch=True, logger=True)
+                    self.log(f"{stage}_{key}_{subkey}", subvalue, on_step=True, 
+                            on_epoch=True, logger=True, batch_size=batch_size)
             else:
-                self.log(f"{stage}_{key}", value, on_step=True,
-                         on_epoch=True, logger=True)
+                self.log(f"{stage}_{key}", value, on_step=True, 
+                        on_epoch=True, logger=True, batch_size=batch_size)
 
     def configure_optimizers(self):
         optimizer = self.optimizer(self.parameters())

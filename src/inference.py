@@ -91,7 +91,7 @@ def process_samples(
             data.teacher_forcing_ratio = 1.0
             prompt_gen = inference.reconstruct_trajectory(data)
             
-            data.teacher_forcing_ratio = 0.8
+            data.teacher_forcing_ratio = 0.5
             data.src_key_mask = torch.ones([1, 30], dtype=torch.bool)
             data.src_key_mask[0, 0] = data.src_key_mask[0, 14] = data.src_key_mask[0, 29] = False
             key_frames_gen = inference.reconstruct_trajectory(data)

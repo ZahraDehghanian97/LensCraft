@@ -64,12 +64,16 @@ class MultiTaskAutoencoder(nn.Module):
         return torch.cat(outputs, dim=1)
 
     def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, clip_embeddings=None,
-                teacher_forcing_ratio=0.5, decode_mode='single_step'):
+                teacher_forcing_ratio=0.5, mask_memory_prob=0.0, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
         memory = self.encoder(src, subject_embedded, src_key_mask)
         
         if teacher_forcing_ratio > 0 and clip_embeddings is not None:
             memory = (1-teacher_forcing_ratio) * memory + teacher_forcing_ratio * clip_embeddings
+        
+        if mask_memory_prob > 0.0:
+            memory_mask = (torch.rand(memory.shape[0], device=memory.device) > mask_memory_prob).float().unsqueeze(1).unsqueeze(2)
+            memory = memory * memory_mask
         
         if decode_mode == 'autoregressive':
             reconstructed = self.autoregressive_decode(

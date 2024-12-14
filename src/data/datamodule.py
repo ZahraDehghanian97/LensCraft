@@ -33,7 +33,9 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=self.batch_collate,
             persistent_workers=True,
-            multiprocessing_context='fork'
+            multiprocessing_context='fork',
+            pin_memory=True,
+            prefetch_factor=2
         )
 
     def val_dataloader(self):
