@@ -7,6 +7,7 @@ from pathlib import Path
 from data.datamodule import CameraTrajectoryDataModule
 from inference.inferencer import ModelInference
 from inference.trajectory_processor import TrajectoryData, TrajectoryProcessor
+from data.simulation.constants import ShotType, CameraMovementType, CameraAngle, EasingType
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
 def main(cfg: DictConfig):
@@ -71,7 +72,8 @@ def process_samples(
                 inference.generate_from_caption_feat(data, output_dir)
     else:
         simulations = []
-        for idx in sample_indices:
+        sample_indices = [(4, {'cameraMovement': 'shortArcShotLeft'})]
+        for (idx, modification) in sample_indices:
             sample = dataset[idx]
             data = TrajectoryData(
                 subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
@@ -92,19 +94,69 @@ def process_samples(
             prompt_gen = inference.reconstruct_trajectory(data)
             
             data.teacher_forcing_ratio = 0.5
-            data.src_key_mask = torch.ones([1, 30], dtype=torch.bool)
-            data.src_key_mask[0, 0] = data.src_key_mask[0, 14] = data.src_key_mask[0, 29] = False
+            src_key_mask = torch.ones(30, dtype=torch.bool)
+            src_key_mask[0] = src_key_mask[14] = src_key_mask[29] = False
+            data.src_key_mask = src_key_mask.unsqueeze(0)
             key_frames_gen = inference.reconstruct_trajectory(data)
+            data.src_key_mask = None
+            
+            modified_sample = sample.copy()
+            modified_instruction = modified_sample['instruction'].copy()
+            
+            for key, value in modification.items():
+                modified_instruction[key] = value
+            modified_sample['instruction'] = modified_instruction
+            
+            if 'initialShotType' in modification:
+                modified_sample['shot_clip'] = dataset.clip_embeddings['shot'][ShotType[value].value].to('cpu')
+            if 'cameraMovement' in modification:
+                modified_sample['movement_clip'] = dataset.clip_embeddings['movement'][CameraMovementType[value].value].to('cpu')
+            if 'initialCameraAngle' in modification:
+                modified_sample['angle_clip'] = dataset.clip_embeddings['angle'][CameraAngle[value].value].to('cpu')
+            if 'movementEasing' in modification:
+                modified_sample['easing_clip'] = dataset.clip_embeddings['easing'][EasingType[value].value].to('cpu')
+            
+            modified_data = TrajectoryData(
+                subject_trajectory=modified_sample['subject_trajectory'].unsqueeze(0),
+                camera_trajectory=modified_sample['camera_trajectory'].unsqueeze(0),
+                padding_mask=sample.get('padding_mask', None),
+                caption_feat=torch.stack([
+                    modified_sample['movement_clip'],
+                    modified_sample['easing_clip'],
+                    modified_sample['angle_clip'],
+                    modified_sample['shot_clip']
+                ]).unsqueeze(1)
+            )
+            modified_data.teacher_forcing_ratio = 1.0
+            modified_gen = inference.reconstruct_trajectory(modified_data)
+            
+            regen_data = TrajectoryData(
+                subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
+                camera_trajectory=modified_gen.unsqueeze(0),
+                padding_mask=sample.get('padding_mask', None),
+                caption_feat=torch.stack([
+                    sample['movement_clip'],
+                    sample['easing_clip'],
+                    sample['angle_clip'],
+                    sample['shot_clip']
+                ]).unsqueeze(1)
+            )
+            regen_data.teacher_forcing_ratio = 0.1
+            regen = inference.reconstruct_trajectory(regen_data)
+            
             simulations.append({
-                "subject": dataset[idx]['subject_trajectory'],
-                "camera": dataset[idx]['camera_trajectory'],
+                "subject": sample['subject_trajectory'],
+                "camera": sample['camera_trajectory'],
                 "rec": rec,
                 "full_key_gen": full_key_gen,
                 "prompt_gen": prompt_gen,
                 "key_frames_gen": key_frames_gen,
-                "instruction": dataset[idx]['instruction'],
-                "src_key_mask": data.src_key_mask[0],
+                "modified_gen": modified_gen,
+                "regen": regen,
+                "instruction": sample['instruction'],
+                "src_key_mask": src_key_mask,
             })
+            
         output_dir = processor.prepare_output_directory()
         processor.save_simulation_format(simulations, output_dir)
 

@@ -97,7 +97,9 @@ class TrajectoryProcessor:
                 self.generate_simulation_format(item['rec'], item['subject'], item['instruction']),
                 self.generate_simulation_format(item['full_key_gen'], item['subject'], item['instruction']),
                 self.generate_simulation_format(item['prompt_gen'], item['subject'], item['instruction']),
-                self.generate_simulation_format(item['key_frames_gen'], item['subject'], item['instruction'], item['camera'][~item['src_key_mask']])
+                self.generate_simulation_format(item['key_frames_gen'], item['subject'], item['instruction'], item['camera'][~item['src_key_mask']]),
+                self.generate_simulation_format(item['modified_gen'], item['subject'], item['instruction']),
+                self.generate_simulation_format(item['regen'], item['subject'], item['instruction']),
             ]
             
         with open(output_path, 'w') as f:
