@@ -2,8 +2,8 @@ _target_: models.camera_trajectory_model.MultiTaskAutoencoder
 input_dim: ${data.dataset._feature_dim}
 subject_dim: 9
 nhead: 8
-num_encoder_layers: 8
-num_decoder_layers: 8
+num_encoder_layers: 12
+num_decoder_layers: 12
 dim_feedforward: 2048
 dropout_rate: 0.3
 seq_length: ${data.dataset._seq_length}

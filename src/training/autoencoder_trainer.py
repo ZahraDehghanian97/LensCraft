@@ -54,21 +54,21 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             total_epochs=self.trainer.max_epochs
         )
         
-        current_teacher_forcing_ratio = 0
-        current_memory_mask_ratio = 0
-        if self.current_epoch % 2 == 1:
-            current_memory_mask_ratio = linear_increase(
-                initial_value=0,
-                final_value=0.5,
-                current_epoch=self.current_epoch,
-                total_epochs=self.trainer.max_epochs
-            )
-            current_teacher_forcing_ratio = linear_increase(
-                initial_value=self.teacher_forcing_schedule.initial_ratio,
-                final_value=self.teacher_forcing_schedule.final_ratio,
-                current_epoch=self.current_epoch,
-                total_epochs=self.trainer.max_epochs
-            )
+        current_memory_mask_ratio = linear_increase(
+            initial_value=0,
+            final_value=0.5,
+            current_epoch=self.current_epoch,
+            total_epochs=self.trainer.max_epochs
+        )
+        current_teacher_forcing_ratio = linear_increase(
+            initial_value=self.teacher_forcing_schedule.initial_ratio,
+            final_value=self.teacher_forcing_schedule.final_ratio,
+            current_epoch=self.current_epoch,
+            total_epochs=self.trainer.max_epochs
+        )
+        if self.current_epoch % 2:
+            current_teacher_forcing_ratio /= 2
+            current_memory_mask_ratio /= 2
 
         valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
