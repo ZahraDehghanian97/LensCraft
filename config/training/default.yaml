@@ -22,4 +22,4 @@ mask:
 
 teacher_forcing_schedule:
   initial_ratio: 0.8
-  final_ratio: 0.4
+  final_ratio: 0.2

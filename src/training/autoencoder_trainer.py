@@ -1,9 +1,13 @@
 import lightning as L
 import torch
+import functools
+from src.metrics.callback import MetricCallback
 from utils.augmentation import apply_mask_and_noise, linear_increase
 
+
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, loss_module, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
+    def __init__(self, model, optimizer, lr_scheduler, loss_module, noise, mask, teacher_forcing_schedule,
+                 metric_callback: MetricCallback, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
         super().__init__()
         self.model = model
         self.optimizer = optimizer
@@ -15,6 +19,10 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self.compiled = not compile_enabled
         self.dataset_mode = dataset_mode
         self.loss_module = loss_module
+        self.metric_callback = metric_callback
+
+    def on_fit_start(self):
+        self.metric_callback = self.metric_callback(device=self.device)
 
     def setup(self, stage=None):
         if not self.compiled:
@@ -70,7 +78,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             current_teacher_forcing_ratio /= 2
             current_memory_mask_ratio /= 2
 
-        valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
+        valid_len = (~tgt_key_padding_mask).sum(
+            dim=1) if tgt_key_padding_mask is not None else None
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
             camera_trajectory,
             valid_len,
@@ -94,7 +103,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']
         tgt_key_padding_mask = batch.get("padding_mask", None)
-        
+
         if self.dataset_mode == 'et':
             clip_embeddings = torch.stack([batch['caption_feat']])
         else:
@@ -106,13 +115,13 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             ])
 
         output = self._forward_step(
-            camera_trajectory, 
+            camera_trajectory,
             subject_trajectory,
             clip_embeddings,
-            tgt_key_padding_mask, 
+            tgt_key_padding_mask,
             is_training=(stage == "train")
         )
-        
+
         if self.dataset_mode == 'et':
             clip_targets = {'cls': batch['caption_feat']}
         else:
@@ -122,9 +131,17 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 'angle': batch['angle_clip'],
                 'shot': batch['shot_clip']
             }
-        
+
         loss, loss_dict = self.loss_module(
             output, camera_trajectory, clip_targets, tgt_key_padding_mask)
+
+        self.metric_callback.update_clatr_metrics(
+            "test", gen_clatr, ref_clatr, text_clatr
+        )
+
+        self.metric_callback.update_caption_metrics(
+            "test", p_gen_matrices, conds["segments"]
+        )
 
         self._log_metrics(stage, loss, loss_dict)
 
@@ -146,16 +163,17 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
     def configure_optimizers(self):
         optimizer = self.optimizer(self.parameters())
-        
+
         if self.lr_scheduler is not None:
             total_steps = self.trainer.max_epochs * len(
                 self.trainer.datamodule.train_dataloader()
             )
-            scheduler = self.lr_scheduler(optimizer=optimizer, total_steps=total_steps)
+            scheduler = self.lr_scheduler(
+                optimizer=optimizer, total_steps=total_steps)
             return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
-        
+
         return optimizer
-    
+
     def lr_scheduler_step(self, scheduler, metric):
         scheduler.step(self.global_step)
 
@@ -164,3 +182,21 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
             self.log('learning_rate', lr, on_step=False, on_epoch=True)
+
+    def on_test_start(self):
+        if isinstance(self.metric_callback, functools.partial):
+            self.metric_callback = self.metric_callback(device=self.device)
+
+    def on_test_epoch_end(self):
+        metrics_dict = {}
+        metrics_dict.update(self.metric_callback.compute_clatr_metrics("test"))
+        metrics_dict.update(
+            self.metric_callback.compute_caption_metrics("test"))
+
+        for k, v in metrics_dict.items():
+            if isinstance(v, torch.Tensor):
+                metrics_dict[k] = [v.item()]
+            else:
+                metrics_dict[k] = [v]
+
+        self.metrics_dict = metrics_dict
