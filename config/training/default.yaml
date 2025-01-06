@@ -11,6 +11,7 @@ loss_module:
     _target_: data.simulation.init_captions.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
     cache_file: clip_embeddings_${clip.model_name}_cache.pkl
+    data_path: ${data.dataset.module.data_path}
 
 noise:
   initial_std: 0.1

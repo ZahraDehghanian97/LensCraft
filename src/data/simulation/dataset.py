@@ -9,8 +9,8 @@ class SimulationDataset(Dataset):
         self.clip_embeddings = clip_embeddings
         with open(data_path, 'r') as file:
             raw_data = json.load(file)
-        self.simulation_data = [self._process_single_simulation(sim)
-                                for sim in raw_data['simulations']
+        self.simulation_data = [self._process_single_simulation(sim, i)
+                                for i, sim in enumerate(raw_data['simulations'])
                                 if self._is_simulation_valid(sim)]
 
     def __len__(self):
@@ -29,7 +29,7 @@ class SimulationDataset(Dataset):
                 simulation['instructions'][0]['frameCount'] == 30 and
                 len(simulation['cameraFrames']) == 30)
 
-    def _process_single_simulation(self, simulation):
+    def _process_single_simulation(self, simulation, index):
         instruction = simulation['instructions'][0]
         subject = simulation['subjects'][0]
 
@@ -47,6 +47,7 @@ class SimulationDataset(Dataset):
         return {
             'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
             'subject_trajectory': torch.tensor(subject_trajectory, dtype=torch.float32),
+            'caption_feat': self.clip_embeddings['caption_feat'][index].to('cpu'),
             'movement_clip': self.clip_embeddings['movement'][movement_type.value].to('cpu'),
             'easing_clip': self.clip_embeddings['easing'][easing_type.value].to('cpu'),
             'angle_clip': self.clip_embeddings['angle'][camera_angle.value].to('cpu'),
@@ -83,6 +84,7 @@ def batch_collate(batch):
     return {
         'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
         'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
+        'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
         'movement_clip': torch.stack([item['movement_clip'] for item in batch]),
         'easing_clip': torch.stack([item['easing_clip'] for item in batch]),
         'angle_clip': torch.stack([item['angle_clip'] for item in batch]),
