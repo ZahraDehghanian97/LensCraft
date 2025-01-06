@@ -16,6 +16,12 @@ class MultiTaskAutoencoder(nn.Module):
                                num_encoder_layers, dim_feedforward, dropout_rate, query_token_names)
         self.decoder = Decoder(input_dim, latent_dim, nhead,
                                num_decoder_layers, dim_feedforward, dropout_rate)
+                               
+        self.embedding_merger = nn.Sequential(
+            nn.Linear(len(query_token_names) * latent_dim, latent_dim),
+            nn.ReLU(),
+            nn.Linear(latent_dim, latent_dim)
+        )
 
         self.seq_length = seq_length
         self.input_dim = input_dim
@@ -68,22 +74,25 @@ class MultiTaskAutoencoder(nn.Module):
         subject_embedded = self.subject_projection(subject_trajectory)
         memory = self.encoder(src, subject_embedded, src_key_mask)
         
+        _, B, _ = memory.shape
+        merged_memory = self.embedding_merger(memory.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
+        
         if teacher_forcing_ratio > 0 and clip_embeddings is not None:
-            memory = (1-teacher_forcing_ratio) * memory + teacher_forcing_ratio * clip_embeddings
+            merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * clip_embeddings
         
         if mask_memory_prob > 0.0:
-            memory_mask = (torch.rand(memory.shape[0], device=memory.device) > mask_memory_prob).float().unsqueeze(1).unsqueeze(2)
-            memory = memory * memory_mask
+            memory_mask = (torch.rand(merged_memory.shape[0], device=merged_memory.device) > mask_memory_prob).float().unsqueeze(1).unsqueeze(2)
+            merged_memory = merged_memory * memory_mask
         
         if decode_mode == 'autoregressive':
-            reconstructed = self.autoregressive_decode(
-                memory, subject_embedded, target, teacher_forcing_ratio)
+            reconstructed = self.autoregressive_decode(merged_memory, subject_embedded, target, teacher_forcing_ratio)
         elif decode_mode == 'single_step':
-            reconstructed = self.single_step_decode(memory, subject_embedded, tgt_key_padding_mask)
+            reconstructed = self.single_step_decode(merged_memory, subject_embedded, tgt_key_padding_mask)
         else:
             raise ValueError(f"Unknown decode_mode: {decode_mode}")
 
         return {
             **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, memory)},
+            'cls_embedding': merged_memory[0],
             'reconstructed': reconstructed,
         }

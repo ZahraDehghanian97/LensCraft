@@ -95,15 +95,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         subject_trajectory = batch['subject_trajectory']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
-        if self.dataset_mode == 'et':
-            clip_embeddings = torch.stack([batch['caption_feat']])
-        else:
-            clip_embeddings = torch.stack([
-                batch['movement_clip'],
-                batch['easing_clip'],
-                batch['angle_clip'],
-                batch['shot_clip']
-            ])
+        clip_embeddings = torch.stack([batch['caption_feat']])
 
         output = self._forward_step(
             camera_trajectory, 
@@ -117,6 +109,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             clip_targets = {'cls': batch['caption_feat']}
         else:
             clip_targets = {
+                'cls': batch['caption_feat'],
                 'movement': batch['movement_clip'],
                 'easing': batch['easing_clip'],
                 'angle': batch['angle_clip'],
