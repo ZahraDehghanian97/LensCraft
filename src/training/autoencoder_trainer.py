@@ -3,7 +3,9 @@ import torch
 from utils.augmentation import apply_mask_and_noise, linear_increase
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, loss_module, noise, mask, teacher_forcing_schedule, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
+    def __init__(self, model, optimizer, lr_scheduler, loss_module, noise, mask, 
+                 teacher_forcing_schedule, compile_mode="default", compile_enabled=True, 
+                 dataset_mode='simulation', use_merged_memory=True):
         super().__init__()
         self.model = model
         self.optimizer = optimizer
@@ -15,6 +17,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self.compiled = not compile_enabled
         self.dataset_mode = dataset_mode
         self.loss_module = loss_module
+        self.use_merged_memory = use_merged_memory
 
     def setup(self, stage=None):
         if not self.compiled:
@@ -66,9 +69,9 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             current_epoch=self.current_epoch,
             total_epochs=self.trainer.max_epochs
         )
-        if self.current_epoch % 2:
-            current_teacher_forcing_ratio /= 2
-            current_memory_mask_ratio /= 2
+        # if self.current_epoch % 2:
+        #     current_teacher_forcing_ratio /= 2
+        #     current_memory_mask_ratio /= 2
 
         valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
@@ -95,7 +98,16 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         subject_trajectory = batch['subject_trajectory']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
-        clip_embeddings = torch.stack([batch['caption_feat']])
+        if self.dataset_mode == 'et' or self.use_merged_memory:
+            clip_embeddings = torch.stack([batch['caption_feat']])
+        else:
+            clip_embeddings = torch.stack([
+                batch['movement_clip'],
+                batch['easing_clip'],
+                batch['angle_clip'],
+                batch['shot_clip']
+            ])
+        
 
         output = self._forward_step(
             camera_trajectory, 
@@ -105,16 +117,18 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             is_training=(stage == "train")
         )
         
-        if self.dataset_mode == 'et':
-            clip_targets = {'cls': batch['caption_feat']}
-        else:
-            clip_targets = {
-                'cls': batch['caption_feat'],
+        clip_targets = {}
+        
+        if self.dataset_mode == 'et' or self.use_merged_memory:
+            clip_targets.update({'cls': batch['caption_feat']})
+        
+        if self.dataset_mode == 'simulation':
+            clip_targets.update({
                 'movement': batch['movement_clip'],
                 'easing': batch['easing_clip'],
                 'angle': batch['angle_clip'],
                 'shot': batch['shot_clip']
-            }
+            })
         
         loss, loss_dict = self.loss_module(
             output, camera_trajectory, clip_targets, tgt_key_padding_mask)

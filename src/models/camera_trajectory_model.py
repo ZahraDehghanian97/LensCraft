@@ -8,7 +8,7 @@ from .decoder import Decoder
 
 class MultiTaskAutoencoder(nn.Module):
     def __init__(self, input_dim=7, subject_dim=9, nhead=4, num_encoder_layers=3, num_decoder_layers=3, dim_feedforward=2048,
-                 dropout_rate=0.1, seq_length=30, latent_dim=512, query_token_names=['cls']):
+                 dropout_rate=0.1, seq_length=30, latent_dim=512, query_token_names=['cls'], use_merged_memory=True):
         super(MultiTaskAutoencoder, self).__init__()
 
         self.subject_projection = nn.Linear(subject_dim, latent_dim)
@@ -26,6 +26,7 @@ class MultiTaskAutoencoder(nn.Module):
         self.seq_length = seq_length
         self.input_dim = input_dim
         self.query_token_names = query_token_names
+        self.use_merged_memory = use_merged_memory
 
     def generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -74,8 +75,11 @@ class MultiTaskAutoencoder(nn.Module):
         subject_embedded = self.subject_projection(subject_trajectory)
         memory = self.encoder(src, subject_embedded, src_key_mask)
         
-        _, B, _ = memory.shape
-        merged_memory = self.embedding_merger(memory.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
+        if self.use_merged_memory:
+            _, B, _ = memory.shape
+            merged_memory = self.embedding_merger(memory.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
+        else:
+            merged_memory = memory
         
         if teacher_forcing_ratio > 0 and clip_embeddings is not None:
             merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * clip_embeddings
@@ -91,8 +95,12 @@ class MultiTaskAutoencoder(nn.Module):
         else:
             raise ValueError(f"Unknown decode_mode: {decode_mode}")
 
-        return {
+        output = {
             **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, memory)},
-            'cls_embedding': merged_memory[0],
             'reconstructed': reconstructed,
         }
+        
+        if self.use_merged_memory:
+            output['cls_embedding'] = merged_memory[0]
+
+        return output
