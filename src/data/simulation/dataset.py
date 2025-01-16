@@ -1,93 +1,86 @@
 import json
 import torch
 from torch.utils.data import Dataset
-from .constants import CameraMovementType, EasingType, CameraAngle, ShotType
+from typing import Any, Dict, List
 
 
 class SimulationDataset(Dataset):
-    def __init__(self, data_path: str, clip_embeddings: dict):
+    def __init__(self, data_path: str, clip_embeddings: Dict[str, Any]):
         self.clip_embeddings = clip_embeddings
+        
         with open(data_path, 'r') as file:
             raw_data = json.load(file)
-        self.simulation_data = [self._process_single_simulation(sim, i)
-                                for i, sim in enumerate(raw_data['simulations'])
-                                if self._is_simulation_valid(sim)]
+        
+        self.simulations = [
+            sim for sim in raw_data
+            if self._is_simulation_valid(sim)
+        ]
+        
+        self.simulation_data = [
+            self._process_single_simulation(sim_idx)
+            for sim_idx in range(len(self.simulations))
+        ]
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.simulation_data)
 
-    def __getitem__(self, index):
-        original_item = self.simulation_data[index]
-        # positions = original_item['camera_trajectory'][:, :3]
-        # velocity = positions[1:] - positions[:-1]       
-        # original_item['camera_trajectory'][1:, :3] = velocity
-        # original_item['camera_trajectory'][0, :3] = positions[0]
-        return original_item
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        return self.simulation_data[index]
 
-    def _is_simulation_valid(self, simulation):
-        return (len(simulation['instructions']) == 1 and
-                simulation['instructions'][0]['frameCount'] == 30 and
-                len(simulation['cameraFrames']) == 30)
+    def _is_simulation_valid(self, simulation: Dict[str, Any]) -> bool:
+        instructions = simulation.get("simulationInstructions", [])
+        frames = simulation.get("subjectFrames", [])
+        
+        if len(instructions) < 1:
+            return False
+        if instructions[0].get("frameCount", 0) != 30:
+            return False
+        
+        
+        if not frames or len(frames[0]) != 30:
+            return False
+        
+        return True
 
-    def _process_single_simulation(self, simulation, index):
-        instruction = simulation['instructions'][0]
-        subject = simulation['subjects'][0]
-
-        camera_trajectory = self._extract_camera_frame_data(
-            simulation['cameraFrames'])
-        subject_trajectory = self._simulate_subject_trajectory(
-            subject, len(camera_trajectory))
-
-        movement_type = CameraMovementType[instruction['cameraMovement']]
-        easing_type = EasingType[instruction['movementEasing']]
-        camera_angle = CameraAngle[instruction.get(
-            'initialCameraAngle', 'mediumAngle')]
-        shot_type = ShotType[instruction.get('initialShotType', 'mediumShot')]
-
+    def _process_single_simulation(self, sim_idx: int) -> Dict[str, Any]:
+        simulation = self.simulations[sim_idx]
+        
+        instruction = simulation["simulationInstructions"][0]
+        subject_frames = simulation["subjectFrames"][0]
+        
+        subject_trajectory = self._extract_subject_trajectory(subject_frames)
+        
+        sim_emb_entry = self.clip_embeddings["simulations"][sim_idx]["simulation"][0]
+        
+        caption_feat = sim_emb_entry["init_setup"]  
+        if caption_feat is None:
+            
+            caption_feat = torch.zeros((1, 768))  
+        
+        
         return {
-            'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
-            'subject_trajectory': torch.tensor(subject_trajectory, dtype=torch.float32),
-            'caption_feat': self.clip_embeddings['caption_feat'][index].to('cpu'),
-            'movement_clip': self.clip_embeddings['movement'][movement_type.value].to('cpu'),
-            'easing_clip': self.clip_embeddings['easing'][easing_type.value].to('cpu'),
-            'angle_clip': self.clip_embeddings['angle'][camera_angle.value].to('cpu'),
-            'shot_clip': self.clip_embeddings['shot'][shot_type.value].to('cpu'),
-            'instruction': instruction
+            "subject_trajectory": torch.tensor(subject_trajectory, dtype=torch.float32),
+            "caption_feat": caption_feat.cpu() if hasattr(caption_feat, "cpu") else caption_feat,
+            "instruction": instruction,   
         }
 
     @staticmethod
-    def _extract_camera_frame_data(camera_frames):
-        return [
-            [
-                frame['position']['x'],
-                frame['position']['y'],
-                frame['position']['z'],
-                frame['focalLength'],
-                frame['angle']['x'],
-                frame['angle']['y'],
-                frame['angle']['z']
-            ]
-            for frame in camera_frames
-        ]
-
-    @staticmethod
-    def _simulate_subject_trajectory(subject, num_frames):
-        subject_data = [
-            subject['position']['x'], subject['position']['y'], subject['position']['z'],
-            subject['size']['x'], subject['size']['y'], subject['size']['z'],
-            subject['rotation']['x'], subject['rotation']['y'], subject['rotation']['z']
-        ]
-        return [subject_data for _ in range(num_frames)]
+    def _extract_subject_trajectory(frames: List[Dict[str, Any]]) -> List[List[float]]:
+        trajectory = []
+        for frame in frames:
+            px = frame["position"]["x"]
+            py = frame["position"]["y"]
+            pz = frame["position"]["z"]
+            rx = frame["rotation"]["x"]
+            ry = frame["rotation"]["y"]
+            rz = frame["rotation"]["z"]
+            trajectory.append([px, py, pz, rx, ry, rz])
+        return trajectory
 
 
-def batch_collate(batch):
+def batch_collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
-        'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
-        'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
-        'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
-        'movement_clip': torch.stack([item['movement_clip'] for item in batch]),
-        'easing_clip': torch.stack([item['easing_clip'] for item in batch]),
-        'angle_clip': torch.stack([item['angle_clip'] for item in batch]),
-        'shot_clip': torch.stack([item['shot_clip'] for item in batch]),
-        'instruction': [item['instruction'] for item in batch]
+        "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
+        "caption_feat": torch.stack([item["caption_feat"] for item in batch]),
+        "instruction": [item["instruction"] for item in batch],
     }

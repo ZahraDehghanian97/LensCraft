@@ -8,9 +8,9 @@ _feature_dim: 7
 
 module:
   _target_: data.simulation.dataset.SimulationDataset
-  data_path: /media/external_2T/abolghasemi/random_simulation_dataset.json
+  data_path: /media/external_2T/abolghasemi/random_simulation_dataset_v2.json
   clip_embeddings:
-    _target_: data.simulation.init_captions.initialize_all_clip_embeddings
+    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
     cache_file: clip_embeddings_${clip.model_name}_cache.pkl
     data_path: ${data.dataset.module.data_path}
