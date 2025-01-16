@@ -1,4 +1,4 @@
-# LenseCraft
+# LensCraft
 
 This project implements an autoencoder model for camera trajectories using a multi-task architecture. The model learns to reconstruct camera movements based on subject information and initial trajectory data. In addition to producing accurate trajectory reconstructions, it generates embeddings for movement types, easing functions, camera angles, and shot types. These generated embeddings are designed to be aligned with CLIP (Contrastive Language-Image Pre-training) embeddings, allowing for better integration with language-based interfaces and multi-modal applications.
 
@@ -108,8 +108,8 @@ graph TD
 
 1. Clone the repository:
    ```
-   git clone https://github.com/ZahraDehghanian97/LenseCraft.git
-   cd LenseCraft
+   git clone https://github.com/ZahraDehghanian97/LensCraft.git
+   cd LensCraft
    ```
 
 2. Create a virtual environment (optional but recommended):
