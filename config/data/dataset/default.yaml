@@ -1,8 +1,11 @@
 _query_token_names:
-  - movement
-  - easing
-  - angle
-  - shot
+  - cinematography_init_setup
+  - cinematography_movement
+  - cinematography_end_setup
+  - simulation_init_setup
+  - simulation_movement
+  - simulation_end_setup
+  - simulation_constraints
 _seq_length: 30
 _feature_dim: 7
 

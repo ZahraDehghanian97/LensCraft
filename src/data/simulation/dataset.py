@@ -29,10 +29,10 @@ class SimulationDataset(Dataset):
         return {
             'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
             'subject_trajectory': torch.tensor(subject_trajectory, dtype=torch.float32),
-            'simulations_init_setup_embedding': get_embedding('simulation', 'init_setup'),
-            'simulations_movement_embedding': get_embedding('simulation', 'movement'),
-            'simulations_end_setup_embedding': get_embedding('simulation', 'end_setup'),
-            'simulations_constraints_embedding': get_embedding('simulation', 'constraints'),
+            'simulation_init_setup_embedding': get_embedding('simulation', 'init_setup'),
+            'simulation_movement_embedding': get_embedding('simulation', 'movement'),
+            'simulation_end_setup_embedding': get_embedding('simulation', 'end_setup'),
+            'simulation_constraints_embedding': get_embedding('simulation', 'constraints'),
             'cinematography_init_setup_embedding': get_embedding('cinematography', 'init_setup'),
             'cinematography_movement_embedding': get_embedding('cinematography', 'movement'),
             'cinematography_end_setup_embedding': get_embedding('cinematography', 'end_setup'),
@@ -59,55 +59,42 @@ class SimulationDataset(Dataset):
                 frame['rotation']['x'],
                 frame['rotation']['y'],
                 frame['rotation']['z'],
-                frame['focalLength'],
                 frame['aspectRatio']
             ]
             for frame in camera_frames
         ]
 
     def _extract_subject_trajectory(self, subjects_info: List[Dict]) -> List[List[float]]:
-        subject = subjects_info[0]
-        frames = subject.get('frames', [])
-        if not frames:
-            static_frame = {
-                'position': subject['subject'].get('attentionBox', {}).get('position', {'x': 0, 'y': 0, 'z': 0}),
-                'rotation': {'x': 0, 'y': 0, 'z': 0}
-            }
-            frames = [static_frame] * len(self.camera_frames)
-
-        return [
-            [
-                frame['position']['x'],
-                frame['position']['y'],
-                frame['position']['z'],
-                frame['rotation']['x'],
-                frame['rotation']['y'],
-                frame['rotation']['z']
-            ]
-            for frame in frames
-        ]
+        subject_info = subjects_info[0]
+        subject = subject_info['subject']
+        
+        return [[
+                frame['position']['x'], frame['position']['y'], frame['position']['z'],
+                subject['dimensions']['width'], subject['dimensions']['height'], subject['dimensions']['depth'],
+                frame['rotation']['x'], frame['rotation']['y'], frame['rotation']['z']
+            ] for frame in subject_info['frames']]
 
 def collate_fn(batch):
     return {
         'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
         'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
-        'simulations_init_setup_embedding': torch.stack([item['simulations_init_setup_embedding'] for item in batch]),
-        'simulations_movement_embedding': torch.stack([item['simulations_movement_embedding'] for item in batch]),
-        'simulations_end_setup_embedding': torch.stack([item['simulations_end_setup_embedding'] for item in batch]),
-        'simulations_constraints_embedding': torch.stack([item['simulations_constraints_embedding'] for item in batch]),
+        'simulation_init_setup_embedding': torch.stack([item['simulation_init_setup_embedding'] for item in batch]),
+        'simulation_movement_embedding': torch.stack([item['simulation_movement_embedding'] for item in batch]),
+        'simulation_end_setup_embedding': torch.stack([item['simulation_end_setup_embedding'] for item in batch]),
+        'simulation_constraints_embedding': torch.stack([item['simulation_constraints_embedding'] for item in batch]),
         'cinematography_init_setup_embedding': torch.stack([item['cinematography_init_setup_embedding'] for item in batch]),
         'cinematography_movement_embedding': torch.stack([item['cinematography_movement_embedding'] for item in batch]),
         'cinematography_end_setup_embedding': torch.stack([item['cinematography_end_setup_embedding'] for item in batch]),
         'simulation_instructions': [item['simulation_instructions'] for item in batch],
         'cinematography_prompts': [item['cinematography_prompts'] for item in batch],
         'embedding_masks': {
-            'simulation': {
-                key: torch.tensor([item['embedding_masks']['simulation'][key] for item in batch])
+            'simulation': [
+                torch.tensor([item['embedding_masks']['simulation'][key] for item in batch])
                 for key in ['init_setup', 'movement', 'end_setup', 'constraints']
-            },
-            'cinematography': {
-                key: torch.tensor([item['embedding_masks']['cinematography'][key] for item in batch])
+            ],
+            'cinematography': [
+                torch.tensor([item['embedding_masks']['cinematography'][key] for item in batch])
                 for key in ['init_setup', 'movement', 'end_setup']
-            }
+            ]
         }
     }

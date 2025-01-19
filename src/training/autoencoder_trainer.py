@@ -80,22 +80,30 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             )
         }
 
-    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]):
         if self.dataset_mode == 'et' or self.use_merged_memory:
-            return torch.stack([batch['caption_feat']])
+            return [torch.stack([batch['caption_feat']]), torch.stack([])]
         
-        return torch.stack([
-            batch['movement_clip'],
-            batch['easing_clip'],
-            batch['angle_clip'],
-            batch['shot_clip']
-        ])
+        return [
+            torch.stack([
+                batch['cinematography_init_setup_embedding'],
+                batch['cinematography_movement_embedding'],
+                batch['cinematography_end_setup_embedding']
+            ]),
+            torch.stack([
+                batch['simulation_init_setup_embedding'],
+                batch['simulation_movement_embedding'],
+                batch['simulation_end_setup_embedding'],
+                batch['simulation_constraints_embedding']
+            ]),
+        ]
 
     def _forward_step(
         self,
         camera_trajectory: torch.Tensor,
         subject_trajectory: torch.Tensor,
-        clip_embeddings: torch.Tensor,
+        dec_embeddings: torch.Tensor,
+        embedding_masks: Dict[str, Dict[str, torch.Tensor]],
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False
     ) -> Dict[str, torch.Tensor]:
@@ -104,7 +112,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 camera_trajectory,
                 subject_trajectory,
                 tgt_key_padding_mask,
-                clip_embeddings=clip_embeddings,
+                dec_embeddings=dec_embeddings,
+                embedding_masks=embedding_masks,
                 teacher_forcing_ratio=0.0
             )
 
@@ -125,7 +134,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             tgt_key_padding_mask,
             src_key_mask,
             camera_trajectory,
-            clip_embeddings,
+            dec_embeddings,
+            embedding_masks,
             ratios['teacher_forcing_ratio'],
             ratios['memory_mask_ratio'],
         )
@@ -135,11 +145,12 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         subject_trajectory = batch['subject_trajectory']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
-        clip_embeddings = self._prepare_clip_embeddings(batch)
+        [dec_embeddings, additional_embeddings] = self._prepare_clip_embeddings(batch)
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
-            clip_embeddings,
+            dec_embeddings,
+            batch['embedding_masks']['cinematography'],
             tgt_key_padding_mask,
             is_training=(stage == "train")
         )
@@ -148,16 +159,27 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         
         if self.dataset_mode == 'et' or self.use_merged_memory:
             clip_targets['cls'] = batch['caption_feat']
+        
+        embedding_masks = {}
         if self.dataset_mode == 'simulation':
-            clip_targets.update({
-                'movement': batch['movement_clip'],
-                'easing': batch['easing_clip'],
-                'angle': batch['angle_clip'],
-                'shot': batch['shot_clip']
-            })
+            labels = ['cinematography_init_setup', 'cinematography_movement', 'cinematography_end_setup']
+            for i, embedding in enumerate(dec_embeddings):
+                clip_targets[labels[i]] = embedding
+                embedding_masks[labels[i]] = batch['embedding_masks']['cinematography'][i]
+            
+            labels = ['simulation_init_setup', 'simulation_movement', 'simulation_end_setup', 'simulation_constraints']
+            for i, embedding in enumerate(additional_embeddings):
+                clip_targets[labels[i]] = embedding
+                embedding_masks[labels[i]] = batch['embedding_masks']['simulation'][i]
+        
         
         loss, loss_dict = self.loss_module(
-            output, camera_trajectory, clip_targets, tgt_key_padding_mask)
+            output, 
+            camera_trajectory, 
+            clip_targets,
+            embedding_masks,
+            tgt_key_padding_mask
+        )
 
         self._log_metrics(stage, loss, loss_dict)
 

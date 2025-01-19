@@ -70,7 +70,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         return torch.cat(outputs, dim=1)
 
-    def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, clip_embeddings=None,
+    def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, dec_embeddings=None, embedding_masks=None,
                 teacher_forcing_ratio=0.5, mask_memory_prob=0.0, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
         memory = self.encoder(src, subject_embedded, src_key_mask)
@@ -79,10 +79,15 @@ class MultiTaskAutoencoder(nn.Module):
             _, B, _ = memory.shape
             merged_memory = self.embedding_merger(memory.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
         else:
-            merged_memory = memory
+            merged_memory = memory[:3]
         
-        if teacher_forcing_ratio > 0 and clip_embeddings is not None:
-            merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * clip_embeddings
+        if teacher_forcing_ratio > 0 and dec_embeddings is not None and embedding_masks is not None:
+            masked_dec_embeddings = dec_embeddings.clone()
+            for i, embedding_mask in enumerate(embedding_masks):
+                mask = embedding_mask.unsqueeze(-1).to(torch.float32)
+                masked_dec_embeddings[i] = dec_embeddings[i] * mask + merged_memory[i] * (1.0 - mask)
+            
+            merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * masked_dec_embeddings
         
         if mask_memory_prob > 0.0:
             memory_mask = (torch.rand(merged_memory.shape[0], device=merged_memory.device) > mask_memory_prob).float().unsqueeze(1).unsqueeze(2)
