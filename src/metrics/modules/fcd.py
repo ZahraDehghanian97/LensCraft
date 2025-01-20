@@ -8,7 +8,7 @@ from torchmetrics import Metric
 class FrechetCLaTrDistance(Metric):
     """ Implementation of Frechet CLaTr Distance (FCD) metric. """
 
-    def __init__(self, num_features: Union[int, Module] = 256, **kwargs):
+    def __init__(self, num_features: Union[int, Module] = 512, **kwargs):
         super().__init__(**kwargs)
         self._initialize_states(num_features)
 

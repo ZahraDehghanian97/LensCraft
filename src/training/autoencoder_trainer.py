@@ -3,12 +3,42 @@ import torch
 import functools
 from src.metrics.callback import MetricCallback
 from utils.augmentation import apply_mask_and_noise, linear_increase
+from typing import Optional, Dict, Any, Tuple, List, Union
+from dataclasses import dataclass
 
+@dataclass
+class NoiseConfig:
+    initial_std: float
+    final_std: float
+
+@dataclass
+class MaskConfig:
+    initial_ratio: float
+    final_ratio: float
+
+@dataclass
+class TeacherForcingConfig:
+    initial_ratio: float
+    final_ratio: float
 
 class LightningMultiTaskAutoencoder(L.LightningModule):
-    def __init__(self, model, optimizer, lr_scheduler, loss_module, noise, mask, teacher_forcing_schedule,
-                 metric_callback: MetricCallback, compile_mode="default", compile_enabled=True, dataset_mode='simulation'):
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
+        loss_module: torch.nn.Module,
+        noise: NoiseConfig,
+        mask: MaskConfig,
+        teacher_forcing_schedule: TeacherForcingConfig,
+        compile_mode: str = "default",
+        compile_enabled: bool = True,
+        dataset_mode: str = 'simulation',
+        use_merged_memory: bool = True
+    ):
         super().__init__()
+        self.save_hyperparameters(ignore=['model', 'loss_module'])
+        
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
@@ -19,72 +49,84 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self.compiled = not compile_enabled
         self.dataset_mode = dataset_mode
         self.loss_module = loss_module
-        self.metric_callback = metric_callback
+        self.use_merged_memory = use_merged_memory
 
-    def on_fit_start(self):
-        self.metric_callback = self.metric_callback(device=self.device)
-
-    def setup(self, stage=None):
+    def setup(self, stage: Optional[str] = None) -> None:
         if not self.compiled:
             self.model = torch.compile(self.model, mode=self.compile_mode)
             self.compiled = True
 
-    def training_step(self, batch, batch_idx):
-        return self._step(batch, batch_idx, "train")
+    def _get_current_ratios(self) -> Dict[str, float]:
+        current_epoch = self.current_epoch
+        max_epochs = self.trainer.max_epochs
 
-    def validation_step(self, batch, batch_idx):
-        return self._step(batch, batch_idx, "val")
+        return {
+            'noise_std': linear_increase(
+                self.noise.initial_std,
+                self.noise.final_std,
+                current_epoch,
+                max_epochs
+            ),
+            'mask_ratio': linear_increase(
+                self.mask.initial_ratio,
+                self.mask.final_ratio,
+                current_epoch,
+                max_epochs
+            ),
+            'memory_mask_ratio': 0, #linear_increase(0, 0.5, current_epoch, max_epochs),
+            'teacher_forcing_ratio': linear_increase(
+                self.teacher_forcing_schedule.initial_ratio,
+                self.teacher_forcing_schedule.final_ratio,
+                current_epoch,
+                max_epochs
+            )
+        }
 
-    def test_step(self, batch, batch_idx):
-        return self._step(batch, batch_idx, "test")
+    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]):
+        if self.dataset_mode == 'et' or self.use_merged_memory:
+            return [torch.stack([batch['caption_feat']]), torch.stack([])]
+        
+        return [
+            torch.stack([
+                batch['cinematography_init_setup_embedding'],
+                batch['cinematography_movement_embedding'],
+                batch['cinematography_end_setup_embedding']
+            ]),
+            torch.stack([
+                batch['simulation_init_setup_embedding'],
+                batch['simulation_movement_embedding'],
+                batch['simulation_end_setup_embedding'],
+                batch['simulation_constraints_embedding']
+            ]),
+        ]
 
-    def _forward_step(self, camera_trajectory, subject_trajectory, clip_embeddings, tgt_key_padding_mask, is_training=False):
+    def _forward_step(
+        self,
+        camera_trajectory: torch.Tensor,
+        subject_trajectory: torch.Tensor,
+        dec_embeddings: torch.Tensor,
+        embedding_masks: Dict[str, Dict[str, torch.Tensor]],
+        tgt_key_padding_mask: Optional[torch.Tensor],
+        is_training: bool = False
+    ) -> Dict[str, torch.Tensor]:
         if not is_training:
             return self.model(
-                camera_trajectory, 
-                subject_trajectory, 
+                camera_trajectory,
+                subject_trajectory,
                 tgt_key_padding_mask,
-                clip_embeddings=clip_embeddings,
-                teacher_forcing_ratio=0.5
+                dec_embeddings=dec_embeddings,
+                embedding_masks=embedding_masks,
+                teacher_forcing_ratio=0.0
             )
 
-        current_noise_std = linear_increase(
-            initial_value=self.noise.initial_std,
-            final_value=self.noise.final_std,
-            current_epoch=self.current_epoch,
-            total_epochs=self.trainer.max_epochs
-        )
-
-        current_mask_ratio = linear_increase(
-            initial_value=self.mask.initial_ratio,
-            final_value=self.mask.final_ratio,
-            current_epoch=self.current_epoch,
-            total_epochs=self.trainer.max_epochs
-        )
+        ratios = self._get_current_ratios()
         
-        current_memory_mask_ratio = linear_increase(
-            initial_value=0,
-            final_value=0.5,
-            current_epoch=self.current_epoch,
-            total_epochs=self.trainer.max_epochs
-        )
-        current_teacher_forcing_ratio = linear_increase(
-            initial_value=self.teacher_forcing_schedule.initial_ratio,
-            final_value=self.teacher_forcing_schedule.final_ratio,
-            current_epoch=self.current_epoch,
-            total_epochs=self.trainer.max_epochs
-        )
-        if self.current_epoch % 2:
-            current_teacher_forcing_ratio /= 2
-            current_memory_mask_ratio /= 2
-
-        valid_len = (~tgt_key_padding_mask).sum(
-            dim=1) if tgt_key_padding_mask is not None else None
+        valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
             camera_trajectory,
             valid_len,
-            current_mask_ratio,
-            current_noise_std,
+            ratios['mask_ratio'],
+            ratios['noise_std'],
             self.device
         )
 
@@ -94,74 +136,83 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             tgt_key_padding_mask,
             src_key_mask,
             camera_trajectory,
-            clip_embeddings,
-            current_teacher_forcing_ratio,
-            current_memory_mask_ratio,
+            dec_embeddings,
+            embedding_masks,
+            ratios['teacher_forcing_ratio'],
+            ratios['memory_mask_ratio'],
         )
 
-    def _step(self, batch, batch_idx, stage):
+    def _step(self, batch: Dict[str, Any], batch_idx: int, stage: str) -> torch.Tensor:
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']
         tgt_key_padding_mask = batch.get("padding_mask", None)
-
-        if self.dataset_mode == 'et':
-            clip_embeddings = torch.stack([batch['caption_feat']])
-        else:
-            clip_embeddings = torch.stack([
-                batch['movement_clip'],
-                batch['easing_clip'],
-                batch['angle_clip'],
-                batch['shot_clip']
-            ])
-
+        
+        [dec_embeddings, additional_embeddings] = self._prepare_clip_embeddings(batch)
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
-            clip_embeddings,
+            dec_embeddings,
+            batch['embedding_masks']['cinematography'],
             tgt_key_padding_mask,
             is_training=(stage == "train")
         )
-
-        if self.dataset_mode == 'et':
-            clip_targets = {'cls': batch['caption_feat']}
-        else:
-            clip_targets = {
-                'movement': batch['movement_clip'],
-                'easing': batch['easing_clip'],
-                'angle': batch['angle_clip'],
-                'shot': batch['shot_clip']
-            }
-
+        
+        clip_targets = {}
+        
+        if self.dataset_mode == 'et' or self.use_merged_memory:
+            clip_targets['cls'] = batch['caption_feat']
+        
+        embedding_masks = {}
+        if self.dataset_mode == 'simulation':
+            labels = ['cinematography_init_setup', 'cinematography_movement', 'cinematography_end_setup']
+            for i, embedding in enumerate(dec_embeddings):
+                clip_targets[labels[i]] = embedding
+                embedding_masks[labels[i]] = batch['embedding_masks']['cinematography'][i]
+            
+            labels = ['simulation_init_setup', 'simulation_movement', 'simulation_end_setup', 'simulation_constraints']
+            for i, embedding in enumerate(additional_embeddings):
+                clip_targets[labels[i]] = embedding
+                embedding_masks[labels[i]] = batch['embedding_masks']['simulation'][i]
+        
+        
         loss, loss_dict = self.loss_module(
-            output, camera_trajectory, clip_targets, tgt_key_padding_mask)
-
-        self.metric_callback.update_clatr_metrics(
-            "test", gen_clatr, ref_clatr, text_clatr
-        )
-
-        self.metric_callback.update_caption_metrics(
-            "test", p_gen_matrices, conds["segments"]
+            output,
+            camera_trajectory,
+            clip_targets,
+            embedding_masks,
+            tgt_key_padding_mask
         )
 
         self._log_metrics(stage, loss, loss_dict)
 
         return loss
 
-    def _log_metrics(self, stage, loss, loss_dict):
+    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        return self._step(batch, batch_idx, "train")
+
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        return self._step(batch, batch_idx, "val")
+
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        return self._step(batch, batch_idx, "test")
+
+    def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any]) -> None:
         batch_size = self.trainer.datamodule.batch_size
-        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, 
-                 prog_bar=True, logger=True, batch_size=batch_size)
+        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True,
+                prog_bar=True, logger=True, batch_size=batch_size)
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
-                    self.log(f"{stage}_{key}_{subkey}", subvalue, on_step=True, 
-                            on_epoch=True, logger=True, batch_size=batch_size)
+                    self.log(f"{stage}_{key}_{subkey}", subvalue,
+                            on_step=True, on_epoch=True,
+                            logger=True, batch_size=batch_size)
             else:
-                self.log(f"{stage}_{key}", value, on_step=True, 
-                        on_epoch=True, logger=True, batch_size=batch_size)
+                self.log(f"{stage}_{key}", value,
+                        on_step=True, on_epoch=True,
+                        logger=True, batch_size=batch_size)
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Union[torch.optim.Optimizer, Tuple[List, List]]:
         optimizer = self.optimizer(self.parameters())
 
         if self.lr_scheduler is not None:
@@ -173,8 +224,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
         return optimizer
-
-    def lr_scheduler_step(self, scheduler, metric):
+    
+    def lr_scheduler_step(self, scheduler: torch.optim.lr_scheduler._LRScheduler, metric: Any) -> None:
         scheduler.step(self.global_step)
 
     def on_train_epoch_end(self):

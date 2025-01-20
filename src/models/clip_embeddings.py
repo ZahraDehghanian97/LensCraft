@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from transformers import CLIPTokenizer, CLIPTextModel
 from dataclasses import dataclass
+from tqdm import tqdm
 
 
 @dataclass
@@ -26,7 +27,8 @@ class CLIPEmbedder:
         self,
         model_name: str = "openai/clip-vit-large-patch14",
         max_length: Optional[int] = None,
-        device: Optional[Union[str, torch.device]] = None
+        device: Optional[Union[str, torch.device]] = None,
+        chunk_size: int = 100
     ):
         if not model_name.startswith('openai/'):
             model_name = 'openai/' + model_name
@@ -46,6 +48,7 @@ class CLIPEmbedder:
         self.text_encoder.eval()
 
         self.max_length = max_length or self.tokenizer.model_max_length
+        self.chunk_size = chunk_size
 
         for param in self.text_encoder.parameters():
             param.requires_grad = False
@@ -56,42 +59,57 @@ class CLIPEmbedder:
         return_seq: bool = False,
         pad_seq: bool = False
     ) -> Union[torch.Tensor, CLIPFeatures]:
-        inputs = self.tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt"
-        ).to(self.device)
+        num_texts = len(texts)
+        chunks = [texts[i:i + self.chunk_size] 
+                 for i in range(0, num_texts, self.chunk_size)]
+        
+        all_sequence_features = []
+        all_pooled_features = []
+        all_attention_masks = []
+        all_valid_lengths = []
 
-        with torch.no_grad():
-            outputs = self.text_encoder(**inputs)
-            sequence_features = outputs.last_hidden_state
-            pooled_features = outputs.pooler_output
+        for chunk in tqdm(chunks, desc="Processing text chunks", unit="chunk"):
+            inputs = self.tokenizer(
+                chunk,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt"
+            ).to(self.device)
 
-        if not return_seq:
-            return pooled_features
+            with torch.no_grad():
+                outputs = self.text_encoder(**inputs)
+                sequence_features = outputs.last_hidden_state
+                pooled_features = outputs.pooler_output
 
-        attention_mask = inputs.attention_mask
-        valid_lengths = attention_mask.sum(dim=1)
+            if not return_seq:
+                all_pooled_features.append(pooled_features)
+                continue
 
-        if pad_seq:
-            padded_seq_features = sequence_features
-            if sequence_features.size(1) < self.max_length:
+            attention_mask = inputs.attention_mask
+            valid_lengths = attention_mask.sum(dim=1)
+
+            if pad_seq and sequence_features.size(1) < self.max_length:
                 pad_size = self.max_length - sequence_features.size(1)
-                padded_seq_features = F.pad(
+                sequence_features = F.pad(
                     sequence_features,
                     (0, 0, 0, pad_size),
                     mode='constant',
                     value=0
                 )
-            sequence_features = padded_seq_features
+
+            all_sequence_features.append(sequence_features)
+            all_attention_masks.append(attention_mask)
+            all_valid_lengths.append(valid_lengths)
+
+        if not return_seq:
+            return torch.cat(all_pooled_features, dim=0)
 
         return CLIPFeatures(
-            sequence_features=sequence_features,
-            pooled_features=pooled_features,
-            attention_mask=attention_mask,
-            valid_lengths=valid_lengths
+            sequence_features=torch.cat(all_sequence_features, dim=0),
+            pooled_features=torch.cat(all_pooled_features, dim=0),
+            attention_mask=torch.cat(all_attention_masks, dim=0),
+            valid_lengths=torch.cat(all_valid_lengths, dim=0)
         )
 
     def embed_descriptions(
@@ -100,10 +118,10 @@ class CLIPEmbedder:
         return_seq: bool = False,
         pad_seq: bool = False
     ) -> Dict[str, Union[torch.Tensor, CLIPFeatures]]:
-        return {
-            key: self.get_embeddings(value, return_seq, pad_seq).squeeze(0)
-            for key, value in descriptions.items()
-        }
+        results = {}
+        for key, value in tqdm(descriptions.items(), desc="Processing descriptions", unit="desc"):
+            results[key] = self.get_embeddings(value, return_seq, pad_seq).squeeze(0)
+        return results
 
     def get_sequence_embeddings(
         self,
@@ -142,30 +160,3 @@ class CLIPEmbedder:
         self.max_length = temp_max_length
 
         return sequences, features.pooled_features
-
-
-if __name__ == "__main__":
-    embedder = CLIPEmbedder("clip-vit-base-patch32")
-
-    texts = ["A camera slowly panning right", "Quick zoom in on the subject"]
-
-    pooled_emb = embedder.get_embeddings(texts)
-    print("Pooled shape:", pooled_emb.shape)
-
-    seq_features = embedder.get_embeddings(texts, return_seq=True)
-    print("Sequence shape:", seq_features.sequence_features.shape)
-    print("Valid lengths:", seq_features.valid_lengths)
-
-    sequences, attention_mask = embedder.get_sequence_embeddings(
-        texts,
-        return_attention_mask=True
-    )
-    print("First sequence shape:", sequences[0].shape)
-
-    descriptions = {
-        "movement": ["pan right", "pan left"],
-        "speed": ["slowly", "quickly"]
-    }
-    all_embeddings = embedder.embed_descriptions(descriptions)
-    for key, emb in all_embeddings.items():
-        print(f"{key} embeddings shape:", emb.shape)

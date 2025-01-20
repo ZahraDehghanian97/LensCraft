@@ -7,10 +7,11 @@ defaults:
 
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
-  clip_embeddings:
-    _target_: data.simulation.init_captions.initialize_all_clip_embeddings
-    clip_model_name: ${clip.model_name}
-    cache_file: clip_embeddings_${clip.model_name}_cache.pkl
+  # clip_embeddings:
+  #   _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
+  #   clip_model_name: ${clip.model_name}
+  #   cache_file: clip_embeddings_${clip.model_name}_cache.pkl
+  #   data_path: ${data.dataset.module.data_path}
 
 noise:
   initial_std: 0.1
@@ -23,3 +24,5 @@ mask:
 teacher_forcing_schedule:
   initial_ratio: 0.8
   final_ratio: 0.2
+
+use_merged_memory: false

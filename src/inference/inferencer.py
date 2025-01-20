@@ -22,6 +22,7 @@ class ModelInference:
         self.model = self._initialize_model(cfg)
         self.converter = TrajectoryConverter()
         self.processor = TrajectoryProcessor(cfg.output_dir)
+        self.use_merged_memory = cfg.training.use_merged_memory
 
     def _initialize_model(self, cfg: DictConfig) -> torch.nn.Module:
         model = instantiate(cfg.training.model)

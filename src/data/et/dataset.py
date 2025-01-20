@@ -59,7 +59,7 @@ class ETDataset(Dataset):
         return torch.tensor(subject_trajectory, dtype=torch.float32)
 
 
-def et_batch_collate(batch):
+def collate_fn(batch):
     return {
         'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
         'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
