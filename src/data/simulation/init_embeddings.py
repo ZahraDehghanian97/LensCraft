@@ -27,44 +27,52 @@ def initialize_all_clip_embeddings(
 
     embedder = CLIPEmbedder(clip_model_name)
 
-    embeddings_data = []
+    all_sentences = []
+    sentence_maps = []
 
-    for _, simulation_data in enumerate(raw_data):
-        embedding = { "simulation": {}, "cinematography": {} }
-        embeddings_data.append(embedding)
-        
-        flat_sents = []
+    for simulation_data in raw_data:
         local_map = {}
 
         instruction = simulation_data["simulationInstructions"][0]
-        sentence_dict = generate_simulation_sentences(instruction)
+        sim_sentences = generate_simulation_sentences(instruction)
         for key in ["init_setup", "movement", "end_setup", "constraints"]:
-            text = sentence_dict[key]
+            text = sim_sentences[key]
             if text is not None:
-                local_map['sim_' + key] = len(sentence_dict)
-                flat_sents.append(text)
+                local_map['sim_' + key] = len(all_sentences)
+                all_sentences.append(text)
             else:
                 local_map['sim_' + key] = None
 
         prompt = simulation_data["cinematographyPrompts"][0]
-        sentence_dict = generate_cinematography_sentences(prompt)
+        cin_sentences = generate_cinematography_sentences(prompt)
         for key in ["init_setup", "movement", "end_setup"]:
-            text = sentence_dict[key]
+            text = cin_sentences[key]
             if text is not None:
-                local_map['cin_' + key] = len(sentence_dict)
-                flat_sents.append(text)
+                local_map['cin_' + key] = len(all_sentences)
+                all_sentences.append(text)
             else:
                 local_map['cin_' + key] = None
 
-        embeddings_list = embedder.get_embeddings(flat_sents)
+        sentence_maps.append(local_map)
+
+    all_embeddings = embedder.get_embeddings(all_sentences)
+
+    embeddings_data = []
+    for sentence_map in sentence_maps:
+        embedding = {
+            "simulation": {},
+            "cinematography": {}
+        }
         
         for key in ["init_setup", "movement", "end_setup", "constraints"]:
-            emb_idx = local_map['sim_' + key]
-            embedding["simulation"][key] = embeddings_list[emb_idx].to('cpu') if emb_idx is not None else None
+            idx = sentence_map['sim_' + key]
+            embedding["simulation"][key] = all_embeddings[idx].to('cpu') if idx is not None else None
         
         for key in ["init_setup", "movement", "end_setup"]:
-            emb_idx = local_map['cin_' + key]
-            embedding["cinematography"][key] = embeddings_list[emb_idx].to('cpu') if emb_idx is not None else None
+            idx = sentence_map['cin_' + key]
+            embedding["cinematography"][key] = all_embeddings[idx].to('cpu') if idx is not None else None
+            
+        embeddings_data.append(embedding)
 
     print(f"Saving CLIP embeddings to cache: {cache_file}")
     with open(cache_file, 'wb') as f:

@@ -71,7 +71,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 current_epoch,
                 max_epochs
             ),
-            'memory_mask_ratio': linear_increase(0, 0.5, current_epoch, max_epochs),
+            'memory_mask_ratio': 0, #linear_increase(0, 0.5, current_epoch, max_epochs),
             'teacher_forcing_ratio': linear_increase(
                 self.teacher_forcing_schedule.initial_ratio,
                 self.teacher_forcing_schedule.final_ratio,
@@ -174,8 +174,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         
         
         loss, loss_dict = self.loss_module(
-            output, 
-            camera_trajectory, 
+            output,
+            camera_trajectory,
             clip_targets,
             embedding_masks,
             tgt_key_padding_mask

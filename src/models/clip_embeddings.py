@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from transformers import CLIPTokenizer, CLIPTextModel
 from dataclasses import dataclass
+from tqdm import tqdm
 
 
 @dataclass
@@ -67,7 +68,7 @@ class CLIPEmbedder:
         all_attention_masks = []
         all_valid_lengths = []
 
-        for chunk in chunks:
+        for chunk in tqdm(chunks, desc="Processing text chunks", unit="chunk"):
             inputs = self.tokenizer(
                 chunk,
                 padding=True,
@@ -117,10 +118,10 @@ class CLIPEmbedder:
         return_seq: bool = False,
         pad_seq: bool = False
     ) -> Dict[str, Union[torch.Tensor, CLIPFeatures]]:
-        return {
-            key: self.get_embeddings(value, return_seq, pad_seq).squeeze(0)
-            for key, value in descriptions.items()
-        }
+        results = {}
+        for key, value in tqdm(descriptions.items(), desc="Processing descriptions", unit="desc"):
+            results[key] = self.get_embeddings(value, return_seq, pad_seq).squeeze(0)
+        return results
 
     def get_sequence_embeddings(
         self,

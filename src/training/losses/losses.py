@@ -3,7 +3,7 @@ from torch.nn.functional import mse_loss, cosine_similarity, cross_entropy
 from .angle_loss import AngleLoss
 
 class CameraTrajectoryLoss:
-    def __init__(self, clip_embeddings, contrastive=False):
+    def __init__(self, clip_embeddings=[], contrastive=False):
         self.angle_loss = AngleLoss()
         self.position_slice = slice(0, 4)
         self.rotation_slice = slice(4, None)

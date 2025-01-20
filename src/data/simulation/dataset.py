@@ -59,7 +59,7 @@ class SimulationDataset(Dataset):
                 frame['rotation']['x'],
                 frame['rotation']['y'],
                 frame['rotation']['z'],
-                frame['aspectRatio']
+                frame['focalLength']
             ]
             for frame in camera_frames
         ]
