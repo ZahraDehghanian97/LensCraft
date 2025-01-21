@@ -60,10 +60,11 @@ class CameraTrajectoryLoss:
                     mask = embedding_masks[key]
                     masked_pred = clip_pred[key][mask]
                     masked_target = clip_target[key][mask]
-                    current_loss = self.compute_clip_loss(masked_pred, masked_target) * 100
-                    clip_losses[key] = current_loss
-                    total_clip_loss += current_loss
-                    num_valid_embeddings += 1
+                    if masked_pred.shape[0] != 0:
+                        current_loss = self.compute_clip_loss(masked_pred, masked_target) * 100
+                        clip_losses[key] = current_loss
+                        total_clip_loss += current_loss
+                        num_valid_embeddings += 1
             
             clip_loss = total_clip_loss / max(num_valid_embeddings, 1)
 
@@ -90,7 +91,7 @@ class CameraTrajectoryLoss:
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         
-        return relative_loss + first_frame_loss
+        return relative_loss * 10 + first_frame_loss
 
     def compute_contrastive_loss(self, clip_pred, clip_target, embedding_masks=None):
         losses = {}

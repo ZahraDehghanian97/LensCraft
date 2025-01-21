@@ -2,29 +2,25 @@ from tensorboard.backend.event_processing import event_accumulator
 import matplotlib.pyplot as plt
 
 val_losses=[
-  "hp_metric",
-  "lr",
   "val_loss_epoch",
   "val_trajectory_epoch",
-  "val_clip_cinematography_init_setup_epoch",
-  "val_clip_cinematography_movement_epoch",
-  "val_clip_cinematography_end_setup_epoch",
-  "val_clip_simulation_init_setup_epoch",
-  "val_clip_simulation_movement_epoch",
-  "val_clip_simulation_end_setup_epoch",
-  "val_clip_simulation_constraints_epoch",
+#   "val_clip_cinematography_init_setup_epoch",
+#   "val_clip_cinematography_movement_epoch",
+#   "val_clip_cinematography_end_setup_epoch",
+#   "val_clip_simulation_init_setup_epoch",
+#   "val_clip_simulation_movement_epoch",
+#   "val_clip_simulation_end_setup_epoch",
+#   "val_clip_simulation_constraints_epoch",
   "val_total_epoch",
   "train_loss_epoch",
   "train_trajectory_epoch",
-  "train_clip_cinematography_init_setup_epoch",
-  "train_clip_cinematography_movement_epoch",
-  "train_clip_cinematography_end_setup_epoch",
-  "train_clip_simulation_init_setup_epoch",
-  "train_clip_simulation_movement_epoch",
-  "train_clip_simulation_end_setup_epoch",
-  "train_clip_simulation_constraints_epoch",
-  "train_total_epoch",
-  "learning_rate",
+#   "train_clip_cinematography_init_setup_epoch",
+#   "train_clip_cinematography_movement_epoch",
+#   "train_clip_cinematography_end_setup_epoch",
+#   "train_clip_simulation_init_setup_epoch",
+#   "train_clip_simulation_movement_epoch",
+#   "train_clip_simulation_end_setup_epoch",
+#   "train_clip_simulation_constraints_epoch",
 ]
 
 def load_tfevents(logdir):
@@ -93,5 +89,5 @@ def analyze_tfevents(logdir, save_plot=None):
 
 
 if __name__ == "__main__":
-    logdir = "lightning_logs/version_0"
+    logdir = "lightning_logs/version_17"
     analyze_tfevents(logdir, save_plot="tensorboard_plot.png")

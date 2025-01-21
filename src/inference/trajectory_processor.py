@@ -13,6 +13,7 @@ class TrajectoryData:
     padding_mask: Optional[torch.Tensor] = None
     src_key_mask: Optional[torch.Tensor] = None
     caption_feat: Optional[torch.Tensor] = None
+    embedding_masks: Optional[torch.Tensor] = None
     teacher_forcing_ratio: Optional[int] = 0.0
 
 class TrajectoryProcessor:
@@ -31,7 +32,7 @@ class TrajectoryProcessor:
             shutil.copy2(self.dataset_dir / 'traj' / f"{sample_id}.txt", output_dir / "traj.txt")
             
             
-    def generate_simulation_format(self, camera, subject, instruction, helper_keyframes=None):
+    def generate_simulation_format(self, camera, subject, simulation_instruction, cinematography_prompts, helper_keyframes=None):
         res = {
             "subjects": [{
                 "position": {
@@ -57,16 +58,16 @@ class TrajectoryProcessor:
                         "y": camera[i, 1].item(),
                         "z": camera[i, 2].item()
                     },
-                    "focalLength": camera[i, 3].item(),
                     "angle": {
-                        "x": camera[i, 4].item(),
-                        "y": camera[i, 5].item(),
-                        "z": camera[i, 6].item()
-                    }
+                        "x": camera[i, 3].item(),
+                        "y": camera[i, 4].item(),
+                        "z": camera[i, 5].item()
+                    },
+                    "focalLength": camera[i, 6].item(),
                 }
                 for i in range(camera.size(0))
             ],
-            "instructions": [instruction],
+            "instructions": [],
         }
         
         if helper_keyframes is not None:
@@ -92,14 +93,15 @@ class TrajectoryProcessor:
         output_path = os.path.join(output_dir, f'simulation-out.json')
         simulations = []
         for item in data:
+            print(item["simulation_instructions"], item["cinematography_prompts"])
             simulations += [
-                self.generate_simulation_format(item['camera'], item['subject'], item['instruction']),
-                self.generate_simulation_format(item['rec'], item['subject'], item['instruction']),
-                self.generate_simulation_format(item['full_key_gen'], item['subject'], item['instruction']),
-                self.generate_simulation_format(item['prompt_gen'], item['subject'], item['instruction']),
-                self.generate_simulation_format(item['key_frames_gen'], item['subject'], item['instruction'], item['camera'][~item['src_key_mask']]),
-                self.generate_simulation_format(item['modified_gen'], item['subject'], item['instruction']),
-                self.generate_simulation_format(item['regen'], item['subject'], item['instruction']),
+                self.generate_simulation_format(item['camera'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
+                self.generate_simulation_format(item['rec'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
+                self.generate_simulation_format(item['full_key_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
+                self.generate_simulation_format(item['prompt_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
+                self.generate_simulation_format(item['key_frames_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"], item['camera'][~item['src_key_mask']]),
+                self.generate_simulation_format(item['modified_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
+                self.generate_simulation_format(item['regen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
             ]
             
         with open(output_path, 'w') as f:

@@ -87,7 +87,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         return [
             torch.stack([
                 batch['cinematography_init_setup_embedding'],
-                batch['cinematography_movement_embedding'],
+                batch['cinematography_simple_movement_embedding'],
+                batch['cinematography_interpolation_movement_embedding'],
                 batch['cinematography_end_setup_embedding']
             ]),
             torch.stack([
@@ -162,15 +163,15 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         
         embedding_masks = {}
         if self.dataset_mode == 'simulation':
-            labels = ['cinematography_init_setup', 'cinematography_movement', 'cinematography_end_setup']
+            labels = ['cinematography_init_setup', 'cinematography_simple_movement', 'cinematography_interpolation_movement', 'cinematography_end_setup']
             for i, embedding in enumerate(dec_embeddings):
                 clip_targets[labels[i]] = embedding
-                embedding_masks[labels[i]] = batch['embedding_masks']['cinematography'][i]
+                embedding_masks[labels[i]] = batch['embedding_masks']['cinematography'][:, i]
             
             labels = ['simulation_init_setup', 'simulation_movement', 'simulation_end_setup', 'simulation_constraints']
             for i, embedding in enumerate(additional_embeddings):
                 clip_targets[labels[i]] = embedding
-                embedding_masks[labels[i]] = batch['embedding_masks']['simulation'][i]
+                embedding_masks[labels[i]] = batch['embedding_masks']['simulation'][:, i]
         
         
         loss, loss_dict = self.loss_module(

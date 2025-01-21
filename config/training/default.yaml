@@ -14,15 +14,15 @@ loss_module:
   #   data_path: ${data.dataset.module.data_path}
 
 noise:
-  initial_std: 0.1
-  final_std: 0.05
+  initial_std: 0.0
+  final_std: 0.0
 
 mask:
   initial_ratio: 0.1
   final_ratio: 0.8
 
 teacher_forcing_schedule:
-  initial_ratio: 0.8
-  final_ratio: 0.4
+  initial_ratio: 0.2
+  final_ratio: 0.8
 
 use_merged_memory: false

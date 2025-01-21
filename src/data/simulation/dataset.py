@@ -1,5 +1,6 @@
-import torch
+
 from torch.utils.data import Dataset
+import torch
 import json
 from typing import Dict, List
 
@@ -16,7 +17,7 @@ class SimulationDataset(Dataset):
         return len(self.raw_data_list)
 
     def __getitem__(self, index):
-        return self._process_single_simulation(self.raw_data_list[index], index)
+        return self._process_single_simulation(self.raw_data_list[index % 10], index)
 
     def _process_single_simulation(self, simulation_data: Dict, index: int) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data['cameraFrames'])
@@ -34,19 +35,20 @@ class SimulationDataset(Dataset):
             'simulation_end_setup_embedding': get_embedding('simulation', 'end_setup'),
             'simulation_constraints_embedding': get_embedding('simulation', 'constraints'),
             'cinematography_init_setup_embedding': get_embedding('cinematography', 'init_setup'),
-            'cinematography_movement_embedding': get_embedding('cinematography', 'movement'),
+            'cinematography_simple_movement_embedding': get_embedding('cinematography', 'simple_movement'),
+            'cinematography_interpolation_movement_embedding': get_embedding('cinematography', 'interpolation_movement'),
             'cinematography_end_setup_embedding': get_embedding('cinematography', 'end_setup'),
             'simulation_instructions': simulation_data['simulationInstructions'],
             'cinematography_prompts': simulation_data['cinematographyPrompts'],
             'embedding_masks': {
-                'simulation': {
-                    key: self.clip_embeddings[index]['simulation'][key] is not None
+                'simulation': [
+                    self.clip_embeddings[index]['simulation'][key] is not None
                     for key in ['init_setup', 'movement', 'end_setup', 'constraints']
-                },
-                'cinematography': {
-                    key: self.clip_embeddings[index]['cinematography'][key] is not None
-                    for key in ['init_setup', 'movement', 'end_setup']
-                }
+                ],
+                'cinematography': [
+                    self.clip_embeddings[index]['cinematography'][key] is not None
+                    for key in ['init_setup', 'simple_movement', 'interpolation_movement', 'end_setup']
+                ]
             }
         }
 
@@ -83,18 +85,13 @@ def collate_fn(batch):
         'simulation_end_setup_embedding': torch.stack([item['simulation_end_setup_embedding'] for item in batch]),
         'simulation_constraints_embedding': torch.stack([item['simulation_constraints_embedding'] for item in batch]),
         'cinematography_init_setup_embedding': torch.stack([item['cinematography_init_setup_embedding'] for item in batch]),
-        'cinematography_movement_embedding': torch.stack([item['cinematography_movement_embedding'] for item in batch]),
+        'cinematography_simple_movement_embedding': torch.stack([item['cinematography_simple_movement_embedding'] for item in batch]),
+        'cinematography_interpolation_movement_embedding': torch.stack([item['cinematography_interpolation_movement_embedding'] for item in batch]),
         'cinematography_end_setup_embedding': torch.stack([item['cinematography_end_setup_embedding'] for item in batch]),
         'simulation_instructions': [item['simulation_instructions'] for item in batch],
         'cinematography_prompts': [item['cinematography_prompts'] for item in batch],
         'embedding_masks': {
-            'simulation': [
-                torch.tensor([item['embedding_masks']['simulation'][key] for item in batch])
-                for key in ['init_setup', 'movement', 'end_setup', 'constraints']
-            ],
-            'cinematography': [
-                torch.tensor([item['embedding_masks']['cinematography'][key] for item in batch])
-                for key in ['init_setup', 'movement', 'end_setup']
-            ]
+            'simulation': torch.tensor([item['embedding_masks']['simulation'] for item in batch]),
+            'cinematography': torch.tensor([item['embedding_masks']['cinematography'] for item in batch])
         }
     }

@@ -190,28 +190,29 @@ def generate_setup_text(setup_config: Dict[str, Any]) -> Optional[str]:
 def generate_instruction_movement_text(dynamic_config: Dict[str, Any]) -> Optional[str]:
     if not dynamic_config:
         return None
+    
+    easing_key = dynamic_config.get("easing")
+    easing_str = movement_easing_descriptions.get(easing_key, "with a linear ease")
 
     if dynamic_config.get("type") == "interpolation":
-        easing = movement_easing_descriptions.get(
-            dynamic_config.get("easing", "linear"),
-            "with a linear ease"
-        )
-        return f"Interpolating camera movement {easing}."
+        subject_aware_interpolation = dynamic_config.get("subjectAwareInterpolation", False)
+        interpolation_str = "Simple interpolating"
+        if subject_aware_interpolation:
+            interpolation_str = "Subject aware interpolating"
+        end_setup = generate_setup_text(dynamic_config.get("endSetup", {}))
+        return f"{interpolation_str} camera movement with {easing_str}. And finished with ${end_setup}"
     else:
         scale_key = dynamic_config.get("scale")
         direction_key = dynamic_config.get("direction")
         movement_mode_key = dynamic_config.get("movementMode")
-        easing_key = dynamic_config.get("easing")
 
-        if not scale_key and not direction_key and not movement_mode_key and not easing_key:
+        if not scale_key and not direction_key and not movement_mode_key:
             return None
 
         scale_str = scale_descriptions.get(scale_key, "on a medium scale")
         direction_str = direction_descriptions.get(direction_key, "right")
         movement_mode_str = movement_mode_descriptions.get(
             movement_mode_key, "transition")
-        easing_str = movement_easing_descriptions.get(
-            easing_key, "with a linear ease")
 
         return (
             f"A simple {movement_mode_str} to the {direction_str}, {scale_str}, {easing_str}."
@@ -275,7 +276,7 @@ def generate_simulation_sentences(instruction: Dict[str, Any]) -> List[Optional[
     }
 
 
-def generate_cinematography_sentences(prompt: Dict[str, Any]) -> List[Optional[str]]:
+def generate_cinematography_sentences(prompt: Dict[str, Any], is_interpolation:bool) -> List[Optional[str]]:
     initial_conf = prompt.get("initial", {})
     initial_text = generate_setup_text({
         "cameraAngle": initial_conf.get("cameraAngle"),
@@ -310,6 +311,7 @@ def generate_cinematography_sentences(prompt: Dict[str, Any]) -> List[Optional[s
 
     return {
         "init_setup": initial_text,
-        "movement": movement_text,
+        "simple_movement": None if is_interpolation else movement_text,
+        "interpolation_movement": movement_text if is_interpolation else None,
         "end_setup": final_text,
     }

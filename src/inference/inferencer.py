@@ -78,11 +78,13 @@ class ModelInference:
             padding_mask = data.padding_mask.to(self.device) if data.padding_mask is not None else None
             src_key_mask = data.src_key_mask.to(self.device) if data.src_key_mask is not None else None
             caption_feat = data.caption_feat.to(self.device)
+            embedding_masks = data.embedding_masks.to(self.device)
             
             output = self.model(
                 data.camera_trajectory.to(self.device),
                 data.subject_trajectory.to(self.device),
-                clip_embeddings=caption_feat,
+                dec_embeddings=caption_feat,
+                embedding_masks=embedding_masks,
                 teacher_forcing_ratio=data.teacher_forcing_ratio,
                 src_key_mask=src_key_mask,
                 tgt_key_padding_mask=padding_mask

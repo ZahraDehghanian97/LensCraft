@@ -1,6 +1,7 @@
 _query_token_names:
   - cinematography_init_setup
-  - cinematography_movement
+  - cinematography_simple_movement
+  - cinematography_interpolation_movement
   - cinematography_end_setup
   - simulation_init_setup
   - simulation_movement
@@ -11,7 +12,7 @@ _feature_dim: 7
 
 module:
   _target_: data.simulation.dataset.SimulationDataset
-  data_path: /media/external_16TB_1/p_haghighi/abolghasemi/random_simulation_dataset_v2.json
+  data_path: /media/external_16TB_1/p_haghighi/abolghasemi/random_simulation_dataset_v2_static.json
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}

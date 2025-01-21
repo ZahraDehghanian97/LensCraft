@@ -17,7 +17,7 @@ def main(cfg: DictConfig):
     
     inference = ModelInference(cfg=cfg)
     data_module = setup_data_module(cfg)
-    dataset = data_module.test_dataset.dataset
+    dataset = data_module.train_dataset.dataset
     
     sample_indices = get_sample_indices(cfg, dataset)
     
@@ -72,7 +72,7 @@ def process_samples(
                 inference.generate_from_caption_feat(data, output_dir)
     else:
         simulations = []
-        sample_indices = [(4, {'cameraMovement': 'shortArcShotLeft'})]
+        sample_indices = [(0, {}), (1, {}), (2, {}), (3, {}), (4, {}), (5, {}), (6, {})]
         for (idx, modification) in sample_indices:
             sample = dataset[idx]
             data = TrajectoryData(
@@ -80,11 +80,12 @@ def process_samples(
                 camera_trajectory=sample['camera_trajectory'].unsqueeze(0),
                 padding_mask=sample.get('padding_mask', None),
                 caption_feat=torch.stack([
-                    sample['movement_clip'],
-                    sample['easing_clip'],
-                    sample['angle_clip'],
-                    sample['shot_clip']
-                ]).unsqueeze(1)
+                    sample['cinematography_init_setup_embedding'],
+                    sample['cinematography_simple_movement_embedding'],
+                    sample['cinematography_interpolation_movement_embedding'],
+                    sample['cinematography_end_setup_embedding']
+                ]).unsqueeze(1),
+                embedding_masks=torch.tensor(sample['embedding_masks']['cinematography']).unsqueeze(0)
             )
             data.teacher_forcing_ratio = 0.0
             rec = inference.reconstruct_trajectory(data)
@@ -93,56 +94,56 @@ def process_samples(
             data.teacher_forcing_ratio = 1.0
             prompt_gen = inference.reconstruct_trajectory(data)
             
-            data.teacher_forcing_ratio = 0.5
+            # data.teacher_forcing_ratio = 0.5
             src_key_mask = torch.ones(30, dtype=torch.bool)
-            src_key_mask[0] = src_key_mask[14] = src_key_mask[29] = False
-            data.src_key_mask = src_key_mask.unsqueeze(0)
-            key_frames_gen = inference.reconstruct_trajectory(data)
-            data.src_key_mask = None
+            # src_key_mask[0] = src_key_mask[14] = src_key_mask[29] = False
+            # data.src_key_mask = src_key_mask.unsqueeze(0)
+            # key_frames_gen = inference.reconstruct_trajectory(data)
+            # data.src_key_mask = None
             
-            modified_sample = sample.copy()
-            modified_instruction = modified_sample['instruction'].copy()
+            # modified_sample = sample.copy()
+            # modified_instruction = modified_sample['instruction'].copy()
             
-            for key, value in modification.items():
-                modified_instruction[key] = value
-            modified_sample['instruction'] = modified_instruction
+            # for key, value in modification.items():
+            #     modified_instruction[key] = value
+            # modified_sample['instruction'] = modified_instruction
             
-            if 'initialShotType' in modification:
-                modified_sample['shot_clip'] = dataset.clip_embeddings['shot'][ShotType[value].value].to('cpu')
-            if 'cameraMovement' in modification:
-                modified_sample['movement_clip'] = dataset.clip_embeddings['movement'][CameraMovementType[value].value].to('cpu')
-            if 'initialCameraAngle' in modification:
-                modified_sample['angle_clip'] = dataset.clip_embeddings['angle'][CameraAngle[value].value].to('cpu')
-            if 'movementEasing' in modification:
-                modified_sample['easing_clip'] = dataset.clip_embeddings['easing'][EasingType[value].value].to('cpu')
+            # if 'initialShotType' in modification:
+            #     modified_sample['shot_clip'] = dataset.clip_embeddings['shot'][ShotType[value].value].to('cpu')
+            # if 'cameraMovement' in modification:
+            #     modified_sample['movement_clip'] = dataset.clip_embeddings['movement'][CameraMovementType[value].value].to('cpu')
+            # if 'initialCameraAngle' in modification:
+            #     modified_sample['angle_clip'] = dataset.clip_embeddings['angle'][CameraAngle[value].value].to('cpu')
+            # if 'movementEasing' in modification:
+            #     modified_sample['easing_clip'] = dataset.clip_embeddings['easing'][EasingType[value].value].to('cpu')
             
-            modified_data = TrajectoryData(
-                subject_trajectory=modified_sample['subject_trajectory'].unsqueeze(0),
-                camera_trajectory=modified_sample['camera_trajectory'].unsqueeze(0),
-                padding_mask=sample.get('padding_mask', None),
-                caption_feat=torch.stack([
-                    modified_sample['movement_clip'],
-                    modified_sample['easing_clip'],
-                    modified_sample['angle_clip'],
-                    modified_sample['shot_clip']
-                ]).unsqueeze(1)
-            )
-            modified_data.teacher_forcing_ratio = 1.0
-            modified_gen = inference.reconstruct_trajectory(modified_data)
+            # modified_data = TrajectoryData(
+            #     subject_trajectory=modified_sample['subject_trajectory'].unsqueeze(0),
+            #     camera_trajectory=modified_sample['camera_trajectory'].unsqueeze(0),
+            #     padding_mask=sample.get('padding_mask', None),
+            #     caption_feat=torch.stack([
+            #         modified_sample['movement_clip'],
+            #         modified_sample['easing_clip'],
+            #         modified_sample['angle_clip'],
+            #         modified_sample['shot_clip']
+            #     ]).unsqueeze(1)
+            # )
+            # modified_data.teacher_forcing_ratio = 1.0
+            # modified_gen = inference.reconstruct_trajectory(modified_data)
             
-            regen_data = TrajectoryData(
-                subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
-                camera_trajectory=modified_gen.unsqueeze(0),
-                padding_mask=sample.get('padding_mask', None),
-                caption_feat=torch.stack([
-                    sample['movement_clip'],
-                    sample['easing_clip'],
-                    sample['angle_clip'],
-                    sample['shot_clip']
-                ]).unsqueeze(1)
-            )
-            regen_data.teacher_forcing_ratio = 0.1
-            regen = inference.reconstruct_trajectory(regen_data)
+            # regen_data = TrajectoryData(
+            #     subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
+            #     camera_trajectory=modified_gen.unsqueeze(0),
+            #     padding_mask=sample.get('padding_mask', None),
+            #     caption_feat=torch.stack([
+            #         sample['movement_clip'],
+            #         sample['easing_clip'],
+            #         sample['angle_clip'],
+            #         sample['shot_clip']
+            #     ]).unsqueeze(1)
+            # )
+            # regen_data.teacher_forcing_ratio = 0.1
+            # regen = inference.reconstruct_trajectory(regen_data)
             
             simulations.append({
                 "subject": sample['subject_trajectory'],
@@ -150,10 +151,11 @@ def process_samples(
                 "rec": rec,
                 "full_key_gen": full_key_gen,
                 "prompt_gen": prompt_gen,
-                "key_frames_gen": key_frames_gen,
-                "modified_gen": modified_gen,
-                "regen": regen,
-                "instruction": sample['instruction'],
+                "key_frames_gen": prompt_gen,
+                "modified_gen": prompt_gen,
+                "regen": prompt_gen,
+                "simulation_instructions": sample['simulation_instructions'],
+                "cinematography_prompts": sample['cinematography_prompts'],
                 "src_key_mask": src_key_mask,
             })
             
