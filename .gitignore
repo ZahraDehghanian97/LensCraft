@@ -125,3 +125,4 @@ clip_embeddings*_cache.pkl
 inference_results/
 datasets/simulation/to-merge
 datasets/simulation/merged_dataset.json
+tensorboard_plot.png

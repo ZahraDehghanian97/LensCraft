@@ -1,8 +1,9 @@
-
+from typing import Dict, List
 from torch.utils.data import Dataset
 import torch
 import json
-from typing import Dict, List
+from .constants import cinematography_struct, cinematography_struct_size, simulation_struct, simulation_struct_size
+from .utils import get_parameters
 
 class SimulationDataset(Dataset):
     def __init__(self, data_path: str, clip_embeddings: Dict):
@@ -13,43 +14,26 @@ class SimulationDataset(Dataset):
             
         self.embedding_dim = 512
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.raw_data_list)
 
-    def __getitem__(self, index):
-        return self._process_single_simulation(self.raw_data_list[index % 10], index)
+    def __getitem__(self, index: int) -> Dict:
+        return self._process_single_simulation(self.raw_data_list[index], index)
 
     def _process_single_simulation(self, simulation_data: Dict, index: int) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data['cameraFrames'])
         subject_trajectory = self._extract_subject_trajectory(simulation_data['subjectsInfo'])
+        instruction = simulation_data["simulationInstructions"][0]
+        prompt = simulation_data["cinematographyPrompts"][0]
         
-        def get_embedding(category: str, key: str) -> torch.Tensor:
-            embedding = self.clip_embeddings[index][category][key]
-            return embedding if embedding is not None else torch.zeros(self.embedding_dim)
+        simulation_instruction = get_parameters(data=instruction, struct=simulation_struct, clip_embeddings=self.clip_embeddings)
+        cinematography_prompt = get_parameters(data=prompt, struct=cinematography_struct, clip_embeddings=self.clip_embeddings)
 
         return {
             'camera_trajectory': torch.tensor(camera_trajectory, dtype=torch.float32),
             'subject_trajectory': torch.tensor(subject_trajectory, dtype=torch.float32),
-            'simulation_init_setup_embedding': get_embedding('simulation', 'init_setup'),
-            'simulation_movement_embedding': get_embedding('simulation', 'movement'),
-            'simulation_end_setup_embedding': get_embedding('simulation', 'end_setup'),
-            'simulation_constraints_embedding': get_embedding('simulation', 'constraints'),
-            'cinematography_init_setup_embedding': get_embedding('cinematography', 'init_setup'),
-            'cinematography_simple_movement_embedding': get_embedding('cinematography', 'simple_movement'),
-            'cinematography_interpolation_movement_embedding': get_embedding('cinematography', 'interpolation_movement'),
-            'cinematography_end_setup_embedding': get_embedding('cinematography', 'end_setup'),
-            'simulation_instructions': simulation_data['simulationInstructions'],
-            'cinematography_prompts': simulation_data['cinematographyPrompts'],
-            'embedding_masks': {
-                'simulation': [
-                    self.clip_embeddings[index]['simulation'][key] is not None
-                    for key in ['init_setup', 'movement', 'end_setup', 'constraints']
-                ],
-                'cinematography': [
-                    self.clip_embeddings[index]['cinematography'][key] is not None
-                    for key in ['init_setup', 'simple_movement', 'interpolation_movement', 'end_setup']
-                ]
-            }
+            'simulation_instruction_parameters': simulation_instruction,
+            'cinematography_prompt_parameters': cinematography_prompt
         }
 
     def _extract_camera_trajectory(self, camera_frames: List[Dict]) -> List[List[float]]:
@@ -77,21 +61,24 @@ class SimulationDataset(Dataset):
             ] for frame in subject_info['frames']]
 
 def collate_fn(batch):
+    batch_size = len(batch)
+    simulation_instruction_tensor = torch.full((simulation_struct_size, batch_size, 512), -1, dtype=torch.float)
+    cinematography_prompt_tensor = torch.full((cinematography_struct_size, batch_size, 512), -1, dtype=torch.float)
+    
+    for batch_idx, item in enumerate(batch):
+        for param_idx, (_, _, _, embedding) in enumerate(item['simulation_instruction_parameters']):
+            if embedding is not None:
+                simulation_instruction_tensor[param_idx, batch_idx] = embedding
+            
+        for param_idx, (_, _, _, embedding) in enumerate(item['cinematography_prompt_parameters']):
+            if embedding is not None:
+                cinematography_prompt_tensor[param_idx, batch_idx] = embedding
+    
     return {
         'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
         'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
-        'simulation_init_setup_embedding': torch.stack([item['simulation_init_setup_embedding'] for item in batch]),
-        'simulation_movement_embedding': torch.stack([item['simulation_movement_embedding'] for item in batch]),
-        'simulation_end_setup_embedding': torch.stack([item['simulation_end_setup_embedding'] for item in batch]),
-        'simulation_constraints_embedding': torch.stack([item['simulation_constraints_embedding'] for item in batch]),
-        'cinematography_init_setup_embedding': torch.stack([item['cinematography_init_setup_embedding'] for item in batch]),
-        'cinematography_simple_movement_embedding': torch.stack([item['cinematography_simple_movement_embedding'] for item in batch]),
-        'cinematography_interpolation_movement_embedding': torch.stack([item['cinematography_interpolation_movement_embedding'] for item in batch]),
-        'cinematography_end_setup_embedding': torch.stack([item['cinematography_end_setup_embedding'] for item in batch]),
-        'simulation_instructions': [item['simulation_instructions'] for item in batch],
-        'cinematography_prompts': [item['cinematography_prompts'] for item in batch],
-        'embedding_masks': {
-            'simulation': torch.tensor([item['embedding_masks']['simulation'] for item in batch]),
-            'cinematography': torch.tensor([item['embedding_masks']['cinematography'] for item in batch])
-        }
+        'simulation_instruction': simulation_instruction_tensor,
+        'cinematography_prompt': cinematography_prompt_tensor,
+        'simulation_instruction_parameters': [item['simulation_instruction_parameters'] for item in batch],
+        'cinematography_prompt_parameters': [item['cinematography_prompt_parameters'] for item in batch]
     }

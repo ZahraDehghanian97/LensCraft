@@ -84,27 +84,13 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         if self.dataset_mode == 'et' or self.use_merged_memory:
             return [torch.stack([batch['caption_feat']]), torch.stack([])]
         
-        return [
-            torch.stack([
-                batch['cinematography_init_setup_embedding'],
-                batch['cinematography_simple_movement_embedding'],
-                batch['cinematography_interpolation_movement_embedding'],
-                batch['cinematography_end_setup_embedding']
-            ]),
-            torch.stack([
-                batch['simulation_init_setup_embedding'],
-                batch['simulation_movement_embedding'],
-                batch['simulation_end_setup_embedding'],
-                batch['simulation_constraints_embedding']
-            ]),
-        ]
+        return [batch['cinematography_prompt'], batch['simulation_instruction']]
 
     def _forward_step(
         self,
         camera_trajectory: torch.Tensor,
         subject_trajectory: torch.Tensor,
         dec_embeddings: torch.Tensor,
-        embedding_masks: Dict[str, Dict[str, torch.Tensor]],
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False
     ) -> Dict[str, torch.Tensor]:
@@ -114,7 +100,6 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 subject_trajectory,
                 tgt_key_padding_mask,
                 dec_embeddings=dec_embeddings,
-                embedding_masks=embedding_masks,
                 teacher_forcing_ratio=0.0
             )
 
@@ -136,7 +121,6 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             src_key_mask,
             camera_trajectory,
             dec_embeddings,
-            embedding_masks,
             ratios['teacher_forcing_ratio'],
             ratios['memory_mask_ratio'],
         )
@@ -150,35 +134,17 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
-            dec_embeddings,
-            batch['embedding_masks']['cinematography'],
+            additional_embeddings, # FIXME: temporal using additional_embeddings instead dec_embeddings
             tgt_key_padding_mask,
             is_training=(stage == "train")
         )
         
-        clip_targets = {}
-        
-        if self.dataset_mode == 'et' or self.use_merged_memory:
-            clip_targets['cls'] = batch['caption_feat']
-        
-        embedding_masks = {}
-        if self.dataset_mode == 'simulation':
-            labels = ['cinematography_init_setup', 'cinematography_simple_movement', 'cinematography_interpolation_movement', 'cinematography_end_setup']
-            for i, embedding in enumerate(dec_embeddings):
-                clip_targets[labels[i]] = embedding
-                embedding_masks[labels[i]] = batch['embedding_masks']['cinematography'][:, i]
-            
-            labels = ['simulation_init_setup', 'simulation_movement', 'simulation_end_setup', 'simulation_constraints']
-            for i, embedding in enumerate(additional_embeddings):
-                clip_targets[labels[i]] = embedding
-                embedding_masks[labels[i]] = batch['embedding_masks']['simulation'][:, i]
-        
+        merge_embeddings = torch.cat([dec_embeddings, additional_embeddings], dim=0)
         
         loss, loss_dict = self.loss_module(
             output,
             camera_trajectory,
-            clip_targets,
-            embedding_masks,
+            merge_embeddings,
             tgt_key_padding_mask
         )
 

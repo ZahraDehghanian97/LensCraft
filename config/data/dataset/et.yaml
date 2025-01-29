@@ -1,5 +1,3 @@
-_query_token_names:
-  - cls
 _seq_length: 300
 _feature_dim: 9
 

@@ -14,7 +14,7 @@ loss_module:
   #   data_path: ${data.dataset.module.data_path}
 
 noise:
-  initial_std: 0.0
+  initial_std: 1.0
   final_std: 0.0
 
 mask:

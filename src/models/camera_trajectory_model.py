@@ -5,27 +5,30 @@ import gc
 from .encoder import Encoder
 from .decoder import Decoder
 
+from data.simulation.constants import cinematography_struct_size, simulation_struct_size
 
 class MultiTaskAutoencoder(nn.Module):
     def __init__(self, input_dim=7, subject_dim=9, nhead=4, num_encoder_layers=3, num_decoder_layers=3, dim_feedforward=2048,
-                 dropout_rate=0.1, seq_length=30, latent_dim=512, query_token_names=['cls'], use_merged_memory=True):
+                 dropout_rate=0.1, seq_length=30, latent_dim=512, use_merged_memory=True):
         super(MultiTaskAutoencoder, self).__init__()
+        
+        self.num_query_tokens = cinematography_struct_size + simulation_struct_size
+        self.num_memory = simulation_struct_size # FIXME: temporal using simulation_struct_size instead cinematography_struct_size
 
         self.subject_projection = nn.Linear(subject_dim, latent_dim)
         self.encoder = Encoder(input_dim, latent_dim, nhead,
-                               num_encoder_layers, dim_feedforward, dropout_rate, query_token_names)
+                               num_encoder_layers, dim_feedforward, dropout_rate, self.num_query_tokens)
         self.decoder = Decoder(input_dim, latent_dim, nhead,
                                num_decoder_layers, dim_feedforward, dropout_rate)
                                
         self.embedding_merger = nn.Sequential(
-            nn.Linear(len(query_token_names) * latent_dim, latent_dim),
+            nn.Linear(self.num_query_tokens * latent_dim, latent_dim),
             nn.ReLU(),
             nn.Linear(latent_dim, latent_dim)
         )
 
         self.seq_length = seq_length
         self.input_dim = input_dim
-        self.query_token_names = query_token_names
         self.use_merged_memory = use_merged_memory
 
     def generate_square_subsequent_mask(self, sz):
@@ -70,7 +73,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         return torch.cat(outputs, dim=1)
 
-    def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, dec_embeddings=None, embedding_masks=None,
+    def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, dec_embeddings=None,
                 teacher_forcing_ratio=0.5, mask_memory_prob=0.0, decode_mode='single_step'):
         subject_embedded = self.subject_projection(subject_trajectory)
         memory = self.encoder(src, subject_embedded, src_key_mask)
@@ -79,13 +82,9 @@ class MultiTaskAutoencoder(nn.Module):
             _, B, _ = memory.shape
             merged_memory = self.embedding_merger(memory.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
         else:
-            merged_memory = memory[:4]
+            merged_memory = memory[:self.num_memory]
         
-        if teacher_forcing_ratio > 0 and dec_embeddings is not None and embedding_masks is not None:
-            for i, embedding_mask in enumerate(embedding_masks.transpose(0, 1)):
-                mask = embedding_mask.unsqueeze(-1).to(torch.float32)
-                merged_memory[i] = merged_memory[i] * mask
-            
+        if teacher_forcing_ratio > 0:
             merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * dec_embeddings
         
         if mask_memory_prob > 0.0:
@@ -100,7 +99,7 @@ class MultiTaskAutoencoder(nn.Module):
             raise ValueError(f"Unknown decode_mode: {decode_mode}")
 
         output = {
-            **{f"{name}_embedding": embedding for name, embedding in zip(self.query_token_names, memory)},
+            'embeddings': memory,
             'reconstructed': reconstructed,
         }
         

@@ -1,12 +1,3 @@
-_query_token_names:
-  - cinematography_init_setup
-  - cinematography_simple_movement
-  - cinematography_interpolation_movement
-  - cinematography_end_setup
-  - simulation_init_setup
-  - simulation_movement
-  - simulation_end_setup
-  - simulation_constraints
 _seq_length: 30
 _feature_dim: 7
 
@@ -17,4 +8,3 @@ module:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
     cache_file: clip_embeddings_${clip.model_name}_cache.pkl
-    data_path: ${data.dataset.module.data_path}
