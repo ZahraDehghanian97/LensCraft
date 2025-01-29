@@ -10,7 +10,7 @@ def merge_json_files(file_paths, output_file):
             merged_data.extend(data)
     
     with open(output_file, 'w') as output:
-        json.dump(merged_data, output, indent=4)
+        json.dump(merged_data, output)
 
 input_files = glob.glob("./to-merge/*.json")
 output_file = "merged_dataset.json"

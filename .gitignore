@@ -126,3 +126,4 @@ inference_results/
 datasets/simulation/to-merge
 datasets/simulation/merged_dataset.json
 tensorboard_plot.png
+datasets/simulation/*.json
