@@ -1,18 +1,33 @@
 from typing import Dict, List
 from torch.utils.data import Dataset
 import torch
-import json
+import msgpack
 from .constants import cinematography_struct, cinematography_struct_size, simulation_struct, simulation_struct_size
 from .utils import get_parameters
 
+def unround_floats(obj, factor=1000.0):
+    if isinstance(obj, int):
+        return obj / factor
+    elif isinstance(obj, float):
+        return obj
+    elif isinstance(obj, list):
+        return [unround_floats(x, factor) for x in obj]
+    elif isinstance(obj, dict):
+        return {k: unround_floats(v, factor) for k, v in obj.items()}
+    else:
+        return obj
+
 class SimulationDataset(Dataset):
-    def __init__(self, data_path: str, clip_embeddings: Dict):
+    def __init__(self, data_path: str, clip_embeddings: Dict, factor=100.0):
         self.clip_embeddings = clip_embeddings
-        
-        with open(data_path, 'r') as file:
-            self.raw_data_list = json.load(file)
-            
         self.embedding_dim = 512
+
+        with open(data_path, 'rb') as file:
+            binary_data = file.read()
+        
+        self.raw_data_list = msgpack.unpackb(binary_data, raw=False)
+
+        self.raw_data_list = unround_floats(self.raw_data_list, factor)
 
     def __len__(self) -> int:
         return len(self.raw_data_list)
