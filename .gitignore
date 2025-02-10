@@ -127,3 +127,6 @@ datasets/simulation/to-merge
 datasets/simulation/merged_dataset.json
 tensorboard_plot.png
 datasets/simulation/*.json
+LensCraftVenv/*
+cinematography_dataset.mpack
+merged_dataset_static.json

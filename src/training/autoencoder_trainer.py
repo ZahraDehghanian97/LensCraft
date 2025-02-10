@@ -35,7 +35,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         use_merged_memory: bool = True
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=['model', 'loss_module'])
+        # self.save_hyperparameters(ignore=['model', 'loss_module'])
         
         self.model = model
         self.optimizer = optimizer

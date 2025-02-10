@@ -24,7 +24,7 @@ def unround_floats(obj, factor=1000.0):
         return obj
 
 class SimulationDataset(Dataset):
-    def __init__(self, data_path: str, clip_embeddings: Dict, factor=100.0):
+    def __init__(self, data_path: str, clip_embeddings: Dict):
         self.clip_embeddings = clip_embeddings
         self.embedding_dim = 512
 
@@ -33,13 +33,12 @@ class SimulationDataset(Dataset):
         
         self.raw_data_list = msgpack.unpackb(binary_data, raw=False)
 
-        self.raw_data_list = unround_floats(self.raw_data_list, factor)
-
     def __len__(self) -> int:
         return len(self.raw_data_list)
 
     def __getitem__(self, index: int) -> Dict:
-        return self._process_single_simulation(self.raw_data_list[index], index)
+        unrounded = unround_floats(self.raw_data_list[index])
+        return self._process_single_simulation(unrounded, index)
 
     def _process_single_simulation(self, simulation_data: Dict, index: int) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data["cameraFrames"])
