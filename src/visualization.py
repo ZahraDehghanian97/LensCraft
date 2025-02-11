@@ -89,5 +89,5 @@ def analyze_tfevents(logdir, save_plot=None):
 
 
 if __name__ == "__main__":
-    logdir = "lightning_logs/version_94"
+    logdir = "lightning_logs/version_16"
     analyze_tfevents(logdir, save_plot="tensorboard_plot.png")
