@@ -3,7 +3,7 @@ _feature_dim: 7
 
 module:
   _target_: data.simulation.dataset.SimulationDataset
-  data_path: /home/arash/abolghasemi/LensCraft/cinematography_dataset.mpack
+  data_path: /home/arash/abolghasemi/LensCraft/datasets/simulation/files
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}

@@ -2,6 +2,8 @@ from typing import Dict, List
 from torch.utils.data import Dataset
 import torch
 import msgpack
+import json
+from pathlib import Path
 
 from .constants import (
     cinematography_struct,
@@ -27,11 +29,32 @@ class SimulationDataset(Dataset):
     def __init__(self, data_path: str, clip_embeddings: Dict):
         self.clip_embeddings = clip_embeddings
         self.embedding_dim = 512
+        self.raw_data_list = []
+        
+        path = Path(data_path)
+        
+        if path.is_file():
+            self.raw_data_list = self._load_file(path)
+        elif path.is_dir():
+            for file_path in path.glob('*'):
+                if file_path.suffix.lower() in ['.json', '.mpack']:
+                    file_data = self._load_file(file_path)
+                    if isinstance(file_data, list):
+                        self.raw_data_list.extend(file_data)
+                    else:
+                        self.raw_data_list.append(file_data)
 
-        with open(data_path, 'rb') as file:
+        if not self.raw_data_list:
+            raise ValueError(f"No valid data files found in {data_path}")
+
+    def _load_file(self, file_path: Path) -> List[Dict]:
+        with open(file_path, 'rb') as file:
             binary_data = file.read()
         
-        self.raw_data_list = msgpack.unpackb(binary_data, raw=False)
+        if file_path.suffix.lower() == '.json':
+            return json.loads(binary_data)
+        else:
+            return msgpack.unpackb(binary_data, raw=False)
 
     def __len__(self) -> int:
         return len(self.raw_data_list)
