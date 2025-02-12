@@ -13,3 +13,4 @@ triton==3.0.0
 python-dotenv==1.0.1
 msgpack==1.1.0
 tensorboard==2.18.0
+psutil==6.1.1

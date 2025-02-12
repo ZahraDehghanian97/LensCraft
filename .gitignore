@@ -125,9 +125,11 @@ clip_embeddings*_cache.pkl
 inference_results/
 datasets/simulation/to-merge
 datasets/simulation/files
+datasets/simulation/items
 datasets/simulation/merged_dataset.json
 tensorboard_plot.png
 datasets/simulation/*.json
 LensCraftVenv/*
 cinematography_dataset.mpack
 merged_dataset_static.json
+cinematography_dataset.zip

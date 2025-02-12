@@ -2,7 +2,6 @@ from typing import Dict, List
 from torch.utils.data import Dataset
 import torch
 import msgpack
-import json
 from pathlib import Path
 
 from .constants import (
@@ -12,58 +11,44 @@ from .constants import (
     simulation_struct_size,
 )
 from .utils import get_parameters
-
-def unround_floats(obj, factor=1000.0):
-    if isinstance(obj, int):
-        return obj / factor
-    elif isinstance(obj, float):
-        return obj
-    elif isinstance(obj, list):
-        return [unround_floats(x, factor) for x in obj]
-    elif isinstance(obj, dict):
-        return {k: unround_floats(v, factor) for k, v in obj.items()}
-    else:
-        return obj
+from .loader import load_simulation_file
 
 class SimulationDataset(Dataset):
     def __init__(self, data_path: str, clip_embeddings: Dict):
         self.clip_embeddings = clip_embeddings
         self.embedding_dim = 512
-        self.raw_data_list = []
+        self.data_path = Path(data_path)
         
-        path = Path(data_path)
+        if not self.data_path.is_dir():
+            raise ValueError(f"Expected directory at {data_path}")
+            
+        dict_path = self.data_path / "parameter_dictionary.msgpack"
+        if not dict_path.exists():
+            raise ValueError(f"parameter_dictionary.msgpack not found in {data_path}")
+            
+        with open(dict_path, 'rb') as f:
+            self.parameter_dictionary = msgpack.unpackb(f.read(), raw=False)
+            
+        self.simulation_files = sorted(
+            self.data_path.glob('simulation_*.msgpack')
+        )
         
-        if path.is_file():
-            self.raw_data_list = self._load_file(path)
-        elif path.is_dir():
-            for file_path in path.glob('*'):
-                if file_path.suffix.lower() in ['.json', '.mpack']:
-                    file_data = self._load_file(file_path)
-                    if isinstance(file_data, list):
-                        self.raw_data_list.extend(file_data)
-                    else:
-                        self.raw_data_list.append(file_data)
-
-        if not self.raw_data_list:
-            raise ValueError(f"No valid data files found in {data_path}")
-
-    def _load_file(self, file_path: Path) -> List[Dict]:
-        with open(file_path, 'rb') as file:
-            binary_data = file.read()
-        
-        if file_path.suffix.lower() == '.json':
-            return json.loads(binary_data)
-        else:
-            return msgpack.unpackb(binary_data, raw=False)
+        if not self.simulation_files:
+            raise ValueError(f"No simulation files found in {data_path}")
 
     def __len__(self) -> int:
-        return len(self.raw_data_list)
+        return len(self.simulation_files)
 
     def __getitem__(self, index: int) -> Dict:
-        unrounded = unround_floats(self.raw_data_list[index])
-        return self._process_single_simulation(unrounded, index)
+        file_path = self.simulation_files[index]
+        data = load_simulation_file(file_path, self.parameter_dictionary)
+        
+        if data is None:
+            raise ValueError(f"Failed to load simulation file at index {index}")
+            
+        return self._process_single_simulation(data)
 
-    def _process_single_simulation(self, simulation_data: Dict, index: int) -> Dict:
+    def _process_single_simulation(self, simulation_data: Dict) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data["cameraFrames"])
         subject_trajectory = self._extract_subject_trajectory(simulation_data["subjectsInfo"])
         instruction = simulation_data["simulationInstructions"][0]
