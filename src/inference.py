@@ -7,7 +7,7 @@ from pathlib import Path
 from data.datamodule import CameraTrajectoryDataModule
 from inference.inferencer import ModelInference
 from inference.trajectory_processor import TrajectoryData, TrajectoryProcessor
-from data.simulation.constants import ShotType, CameraMovementType, CameraAngle, EasingType
+from data.simulation.dataset import collate_fn
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
 def main(cfg: DictConfig):
@@ -74,18 +74,11 @@ def process_samples(
         simulations = []
         sample_indices = [(0, {}), (1, {}), (2, {}), (3, {}), (4, {}), (5, {}), (6, {})]
         for (idx, modification) in sample_indices:
-            sample = dataset[idx]
+            batch = collate_fn([dataset[idx]])
             data = TrajectoryData(
-                subject_trajectory=sample['subject_trajectory'].unsqueeze(0),
-                camera_trajectory=sample['camera_trajectory'].unsqueeze(0),
-                padding_mask=sample.get('padding_mask', None),
-                caption_feat=torch.stack([
-                    sample['cinematography_init_setup_embedding'],
-                    sample['cinematography_simple_movement_embedding'],
-                    sample['cinematography_interpolation_movement_embedding'],
-                    sample['cinematography_end_setup_embedding']
-                ]).unsqueeze(1),
-                embedding_masks=torch.tensor(sample['embedding_masks']['cinematography']).unsqueeze(0)
+                subject_trajectory=batch['subject_trajectory'],
+                camera_trajectory=batch['camera_trajectory'],
+                caption_feat=batch['cinematography_prompt'],
             )
             data.teacher_forcing_ratio = 0.0
             rec = inference.reconstruct_trajectory(data)
@@ -146,16 +139,16 @@ def process_samples(
             # regen = inference.reconstruct_trajectory(regen_data)
             
             simulations.append({
-                "subject": sample['subject_trajectory'],
-                "camera": sample['camera_trajectory'],
+                "subject": batch['subject_trajectory'][0],
+                "camera": batch['camera_trajectory'][0],
                 "rec": rec,
                 "full_key_gen": full_key_gen,
                 "prompt_gen": prompt_gen,
                 "key_frames_gen": prompt_gen,
                 "modified_gen": prompt_gen,
                 "regen": prompt_gen,
-                "simulation_instructions": sample['simulation_instructions'],
-                "cinematography_prompts": sample['cinematography_prompts'],
+                "simulation_instructions": '',
+                "cinematography_prompts": '',
                 "src_key_mask": src_key_mask,
             })
             

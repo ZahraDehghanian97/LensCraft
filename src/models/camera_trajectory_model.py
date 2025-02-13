@@ -13,7 +13,7 @@ class MultiTaskAutoencoder(nn.Module):
         super(MultiTaskAutoencoder, self).__init__()
         
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
-        self.num_memory = simulation_struct_size # FIXME: temporal using simulation_struct_size instead cinematography_struct_size
+        self.num_memory = cinematography_struct_size
 
         self.subject_projection = nn.Linear(subject_dim, latent_dim)
         self.encoder = Encoder(input_dim, latent_dim, nhead,

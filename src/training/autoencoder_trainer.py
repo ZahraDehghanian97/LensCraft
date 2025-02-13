@@ -100,7 +100,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 subject_trajectory,
                 tgt_key_padding_mask,
                 dec_embeddings=dec_embeddings,
-                teacher_forcing_ratio=0.0
+                teacher_forcing_ratio=0.5
             )
 
         ratios = self._get_current_ratios()
@@ -134,7 +134,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
-            additional_embeddings, # FIXME: temporal using additional_embeddings instead dec_embeddings
+            dec_embeddings,
             tgt_key_padding_mask,
             is_training=(stage == "train")
         )

@@ -35,21 +35,23 @@ class TrajectoryProcessor:
     def generate_simulation_format(self, camera, subject, simulation_instruction, cinematography_prompts, helper_keyframes=None):
         res = {
             "subjects": [{
-                "position": {
-                    "x": subject[0, 0].item(),
-                    "y": subject[0, 1].item(),
-                    "z": subject[0, 2].item()
+                "frames": [{
+                    "position": {
+                        "x": frame[0].item(),
+                        "y": frame[1].item(),
+                        "z": frame[2].item()
+                    },
+                    "rotation": {
+                        "x": frame[6].item(),
+                        "y": frame[7].item(),
+                        "z": frame[8].item()
+                    }
+                } for frame in subject],
+                "dimensions": {
+                    "width": subject[0, 3].item(),
+                    "height": subject[0, 4].item(),
+                    "depth": subject[0, 5].item()
                 },
-                "size": {
-                    "x": subject[0, 3].item(),
-                    "y": subject[0, 4].item(),
-                    "z": subject[0, 5].item()
-                },
-                "rotation": {
-                    "x": subject[0, 6].item(),
-                    "y": subject[0, 7].item(),
-                    "z": subject[0, 8].item()
-                }
             }],
             "cameraFrames": [
                 {
