@@ -1,0 +1,70 @@
+defaults:
+  - _self_
+  - hydra: default
+
+logdir: ${oc.env:TENSORBOARD_LOG_DIR,lightning_logs/version_0}
+save_plot: ${oc.env:PLOT_SAVE_PATH,./visualization/tensorboard_plot.png}
+
+plot:
+  figsize:
+    width: 12
+    height: 8
+  style:
+    grid: true
+    title: "Training Metrics"
+    xlabel: "Step"
+    ylabel: "Value"
+
+metrics:
+  validation:
+    - val_loss_epoch
+    - val_trajectory_epoch
+    - val_total_epoch
+  training:
+    - train_loss_epoch
+    - train_trajectory_epoch
+    - train_total_epoch
+  clips:
+    enabled: false
+    num_clips: 28 
+    include_validation: true
+    include_training: true
+
+event_accumulator:
+  size_guidance:
+    scalars: 0
+    histograms: 0
+    images: 0
+    tensors: 0
+
+output:
+  show_plot: true
+  save_plot: true
+  print_available_tags: true
+  plot_format: "png"
+  dpi: 300
+  
+colors:
+  validation: "#1f77b4"
+  training: "#2ca02c"
+  clips: "#ff7f0e"
+
+line_styles:
+  validation:
+    linestyle: "-"
+    linewidth: 2
+    alpha: 1.0
+  training:
+    linestyle: "--"
+    linewidth: 2
+    alpha: 1.0
+  clips:
+    linestyle: ":"
+    linewidth: 1
+    alpha: 0.7
+
+legend:
+  location: "best"
+  fontsize: 10
+  frameon: true
+  framealpha: 0.8
