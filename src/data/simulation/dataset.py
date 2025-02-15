@@ -129,8 +129,8 @@ def collate_fn(batch):
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
-        "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]),
-        "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]),
+        "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
+        "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
         "simulation_instruction_parameters": [
             item["simulation_instruction_parameters"] for item in batch
         ],

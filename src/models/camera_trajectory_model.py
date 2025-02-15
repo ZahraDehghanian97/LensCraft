@@ -33,7 +33,7 @@ class MultiTaskAutoencoder(nn.Module):
         if camera_embedding is None:
             if caption_embedding is None:
                 raise ValueError("Both memory and caption_embedding cannot be None")
-            merged_memory = caption_embedding.transpose(0, 1)
+            merged_memory = caption_embedding
         else:
             if self.use_merged_memory:
                 _, B, _ = camera_embedding.shape
@@ -42,7 +42,7 @@ class MultiTaskAutoencoder(nn.Module):
                 merged_memory = camera_embedding[:self.memory_tokens_count]
             
             if teacher_forcing_ratio > 0 and caption_embedding is not None:
-                merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * caption_embedding.transpose(0, 1)
+                merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * caption_embedding
         
         if mask_memory_prob > 0.0:
             memory_mask = (torch.rand(merged_memory.shape[0], 
