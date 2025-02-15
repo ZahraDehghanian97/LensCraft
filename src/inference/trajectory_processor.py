@@ -32,7 +32,7 @@ class TrajectoryProcessor:
             shutil.copy2(self.dataset_dir / 'traj' / f"{sample_id}.txt", output_dir / "traj.txt")
             
             
-    def generate_simulation_format(self, camera, subject, simulation_instruction, cinematography_prompts, helper_keyframes=None):
+    def generate_simulation_format(self, camera, subject, helper_keyframes=None):
         res = {
             "subjects": [{
                 "frames": [{
@@ -97,13 +97,10 @@ class TrajectoryProcessor:
         for item in data:
             print(item["simulation_instructions"], item["cinematography_prompts"])
             simulations += [
-                self.generate_simulation_format(item['camera'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
-                self.generate_simulation_format(item['rec'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
-                self.generate_simulation_format(item['full_key_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
-                self.generate_simulation_format(item['prompt_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
-                self.generate_simulation_format(item['key_frames_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"], item['camera'][~item['src_key_mask']]),
-                self.generate_simulation_format(item['modified_gen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
-                self.generate_simulation_format(item['regen'], item['subject'], item["simulation_instructions"], item["cinematography_prompts"],),
+                self.generate_simulation_format(item['camera'], item['subject']),
+                self.generate_simulation_format(item['rec'], item['subject']),
+                self.generate_simulation_format(item['hybrid_gen'], item['subject']),
+                self.generate_simulation_format(item['prompt_gen'], item['subject'])
             ]
             
         with open(output_path, 'w') as f:

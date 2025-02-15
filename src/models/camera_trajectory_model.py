@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -79,3 +81,57 @@ class MultiTaskAutoencoder(nn.Module):
             output['cls_embedding'] = memory[0]
 
         return output
+
+    def inference(
+            self,
+            caption_embedding: Optional[torch.Tensor] = None,
+            camera_trajectory: Optional[torch.Tensor] = None,
+            subject_trajectory: torch.Tensor = None,
+            teacher_forcing_ratio: float = 0.0,
+            src_key_mask: Optional[torch.Tensor] = None,
+            padding_mask: Optional[torch.Tensor] = None,
+            decode_mode: str = 'single_step'
+        ) -> dict:
+        if subject_trajectory is None:
+            raise ValueError("subject_trajectory cannot be None")
+
+        with torch.no_grad():
+            device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
+            
+            subject_trajectory = subject_trajectory.to(device)
+            
+            if caption_embedding is not None:
+                caption_embedding = caption_embedding.to(device)
+            elif camera_trajectory is None:
+                raise ValueError("Both camera_trajectory and caption_embedding cannot be None")
+            
+            if padding_mask is not None:
+                padding_mask = padding_mask.to(device)
+            
+            # If camera trajectory is provided, use the full model
+            if camera_trajectory is not None:
+                camera_trajectory = camera_trajectory.to(device)
+                if src_key_mask is not None:
+                    src_key_mask = src_key_mask.to(device)
+                
+                return self.forward(
+                    src=camera_trajectory,
+                    subject_trajectory=subject_trajectory,
+                    caption_embedding=caption_embedding,
+                    teacher_forcing_ratio=teacher_forcing_ratio,
+                    src_key_mask=src_key_mask,
+                    tgt_key_padding_mask=padding_mask,
+                    decode_mode=decode_mode
+                )
+            
+            # If no camera trajectory, use only the decoder
+            else:
+                subject_embedding = self.subject_projection(subject_trajectory)
+                memory = self.prepate_decoder_memory(caption_embedding=caption_embedding)
+                reconstructed = self.decoder(
+                    memory=memory,
+                    subject_embedding=subject_embedding,
+                    decode_mode=decode_mode,
+                    tgt_key_padding_mask=padding_mask
+                )
+                return {'reconstructed': reconstructed}
