@@ -90,7 +90,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         self,
         camera_trajectory: torch.Tensor,
         subject_trajectory: torch.Tensor,
-        dec_embeddings: torch.Tensor,
+        caption_embedding: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False
     ) -> Dict[str, torch.Tensor]:
@@ -99,7 +99,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 camera_trajectory,
                 subject_trajectory,
                 tgt_key_padding_mask,
-                dec_embeddings=dec_embeddings,
+                caption_embedding=caption_embedding,
                 teacher_forcing_ratio=0.5
             )
 
@@ -120,7 +120,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             tgt_key_padding_mask,
             src_key_mask,
             camera_trajectory,
-            dec_embeddings,
+            caption_embedding,
             ratios['teacher_forcing_ratio'],
             ratios['memory_mask_ratio'],
         )
@@ -130,16 +130,16 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         subject_trajectory = batch['subject_trajectory']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
-        [dec_embeddings, additional_embeddings] = self._prepare_clip_embeddings(batch)
+        [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
-            dec_embeddings,
+            caption_embedding,
             tgt_key_padding_mask,
             is_training=(stage == "train")
         )
         
-        merge_embeddings = torch.cat([dec_embeddings, additional_embeddings], dim=0)
+        merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)
         
         loss, loss_dict = self.loss_module(
             output,

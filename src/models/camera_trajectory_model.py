@@ -11,7 +11,7 @@ class MultiTaskAutoencoder(nn.Module):
         super(MultiTaskAutoencoder, self).__init__()
         
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
-        self.num_memory = cinematography_struct_size
+        self.memory_tokens_count = cinematography_struct_size
 
         self.subject_projection = nn.Linear(subject_dim, latent_dim)
         self.encoder = Encoder(input_dim, latent_dim, nhead,
@@ -27,15 +27,20 @@ class MultiTaskAutoencoder(nn.Module):
 
         self.use_merged_memory = use_merged_memory
 
-    def convert_encoder_memory(self, memory, dec_embeddings=None, teacher_forcing_ratio=0.0, mask_memory_prob=0.0):
-        if self.use_merged_memory:
-            _, B, _ = memory.shape
-            merged_memory = self.embedding_merger(memory.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
+    def prepate_decoder_memory(self, camera_embedding=None, caption_embedding=None, teacher_forcing_ratio=0.0, mask_memory_prob=0.0):
+        if camera_embedding is None:
+            if caption_embedding is None:
+                raise ValueError("Both memory and caption_embedding cannot be None")
+            merged_memory = caption_embedding
         else:
-            merged_memory = memory[:self.num_memory]
-        
-        if teacher_forcing_ratio > 0 and dec_embeddings is not None:
-            merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * dec_embeddings
+            if self.use_merged_memory:
+                _, B, _ = camera_embedding.shape
+                merged_memory = self.embedding_merger(camera_embedding.transpose(0, 1).reshape(B, -1)).unsqueeze(0)
+            else:
+                merged_memory = camera_embedding[:self.memory_tokens_count]
+            
+            if teacher_forcing_ratio > 0 and caption_embedding is not None:
+                merged_memory = (1-teacher_forcing_ratio) * merged_memory + teacher_forcing_ratio * caption_embedding
         
         if mask_memory_prob > 0.0:
             memory_mask = (torch.rand(merged_memory.shape[0], 
@@ -45,20 +50,20 @@ class MultiTaskAutoencoder(nn.Module):
         return merged_memory
 
     def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, 
-                dec_embeddings=None, teacher_forcing_ratio=0.5, mask_memory_prob=0.0, decode_mode='single_step'):
-        subject_embedded = self.subject_projection(subject_trajectory)
-        memory = self.encoder(src, subject_embedded, src_key_mask)
+                caption_embedding=None, teacher_forcing_ratio=0.5, mask_memory_prob=0.0, decode_mode='single_step'):
+        subject_embedding = self.subject_projection(subject_trajectory)
+        camera_embedding = self.encoder(src, subject_embedding, src_key_mask)
         
-        merged_memory = self.convert_encoder_memory(
-            memory=memory,
-            dec_embeddings=dec_embeddings,
+        memory = self.prepate_decoder_memory(
+            camera_embedding=camera_embedding,
+            caption_embedding=caption_embedding,
             teacher_forcing_ratio=teacher_forcing_ratio,
             mask_memory_prob=mask_memory_prob
         )
 
         reconstructed = self.decoder(
-            memory=merged_memory,
-            subject_embedded=subject_embedded,
+            memory=memory,
+            subject_embedding=subject_embedding,
             decode_mode=decode_mode,
             target=target,
             teacher_forcing_ratio=teacher_forcing_ratio,
@@ -66,11 +71,11 @@ class MultiTaskAutoencoder(nn.Module):
         )
 
         output = {
-            'embeddings': memory,
+            'embeddings': camera_embedding,
             'reconstructed': reconstructed,
         }
         
         if self.use_merged_memory:
-            output['cls_embedding'] = merged_memory[0]
+            output['cls_embedding'] = memory[0]
 
         return output
