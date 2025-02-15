@@ -4,6 +4,7 @@ _feature_dim: 7
 module:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${oc.env:SIMULATION_DATA_PATH}
+  embedding_dim: ${clip.latent_dim}
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}

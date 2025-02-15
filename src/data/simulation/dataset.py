@@ -14,9 +14,9 @@ from .utils import get_parameters
 from .loader import load_simulation_file
 
 class SimulationDataset(Dataset):
-    def __init__(self, data_path: str, clip_embeddings: Dict):
+    def __init__(self, data_path: str, clip_embeddings: Dict, embedding_dim: int):
         self.clip_embeddings = clip_embeddings
-        self.embedding_dim = 512
+        self.embedding_dim = embedding_dim
         self.data_path = Path(data_path)
         
         if not self.data_path.is_dir():
@@ -65,12 +65,32 @@ class SimulationDataset(Dataset):
             clip_embeddings=self.clip_embeddings
         )
 
+        simulation_instruction_tensor = self._create_instruction_tensor(
+            simulation_instruction,
+            simulation_struct_size
+        )
+        cinematography_prompt_tensor = self._create_instruction_tensor(
+            cinematography_prompt,
+            cinematography_struct_size
+        )
+
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
             "subject_trajectory": torch.tensor(subject_trajectory, dtype=torch.float32),
+            "simulation_instruction": simulation_instruction_tensor,
+            "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction,
             "cinematography_prompt_parameters": cinematography_prompt
         }
+
+    def _create_instruction_tensor(self, parameters: List, struct_size: int) -> torch.Tensor:
+        instruction_tensor = torch.full((struct_size, self.embedding_dim), -1, dtype=torch.float)
+        
+        for param_idx, (_, _, _, embedding) in enumerate(parameters):
+            if embedding is not None:
+                instruction_tensor[param_idx] = embedding
+                
+        return instruction_tensor
 
     def _extract_camera_trajectory(self, camera_frames: List[Dict]) -> List[List[float]]:
         return [
@@ -106,32 +126,11 @@ class SimulationDataset(Dataset):
         ]
 
 def collate_fn(batch):
-    batch_size = len(batch)
-    simulation_instruction_tensor = torch.full(
-        (simulation_struct_size, batch_size, 512),
-        -1,
-        dtype=torch.float
-    )
-    cinematography_prompt_tensor = torch.full(
-        (cinematography_struct_size, batch_size, 512),
-        -1,
-        dtype=torch.float
-    )
-    
-    for batch_idx, item in enumerate(batch):
-        for param_idx, (_, _, _, embedding) in enumerate(item["simulation_instruction_parameters"]):
-            if embedding is not None:
-                simulation_instruction_tensor[param_idx, batch_idx] = embedding
-        
-        for param_idx, (_, _, _, embedding) in enumerate(item["cinematography_prompt_parameters"]):
-            if embedding is not None:
-                cinematography_prompt_tensor[param_idx, batch_idx] = embedding
-    
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
-        "simulation_instruction": simulation_instruction_tensor,
-        "cinematography_prompt": cinematography_prompt_tensor,
+        "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]),
+        "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]),
         "simulation_instruction_parameters": [
             item["simulation_instruction_parameters"] for item in batch
         ],
