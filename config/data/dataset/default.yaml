@@ -3,8 +3,8 @@ _feature_dim: 7
 
 module:
   _target_: data.simulation.dataset.SimulationDataset
-  data_path: /home/arash/abolghasemi/LensCraft/datasets/simulation/files
+  data_path: ${oc.env:SIMULATION_DATA_PATH}
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
-    cache_file: clip_embeddings_${clip.model_name}_cache.pkl
+    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl

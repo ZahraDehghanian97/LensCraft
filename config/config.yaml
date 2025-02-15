@@ -23,12 +23,14 @@ callbacks:
     filename: best-val-model-{epoch:03d}-{val_loss:.3f}
     save_top_k: 1
     mode: min
+    dirpath: ${oc.env:CHECKPOINT_DIR,./checkpoints}
   train_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
     monitor: train_loss
     filename: best-train-model-{epoch:03d}-{train_loss:.3f}
     save_top_k: 1
     mode: min
+    dirpath: ${oc.env:CHECKPOINT_DIR,./checkpoints}
   lr_monitor:
     _target_: lightning.pytorch.callbacks.LearningRateMonitor
     logging_interval: "step"

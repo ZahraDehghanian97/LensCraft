@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Tuple
 import pickle
 import torch
+import os
 from .caption import enum_descriptions
 from models.clip_embeddings import CLIPEmbedder
 
@@ -9,6 +10,10 @@ def initialize_all_clip_embeddings(
     clip_model_name: str = "openai/clip-vit-large-patch14",
     cache_file: str = "clip_embeddings_cache.pkl",
 ) -> Dict[str, Any]:
+    cache_dir = os.path.dirname(cache_file)
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        
     try:
         with open(cache_file, 'rb') as f:
             print(f"Loading CLIP embeddings from cache: {cache_file}")
