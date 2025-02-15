@@ -133,3 +133,4 @@ LensCraftVenv/*
 cinematography_dataset.mpack
 merged_dataset_static.json
 cinematography_dataset.zip
+checkpoints/*
