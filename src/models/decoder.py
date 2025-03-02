@@ -48,8 +48,7 @@ class Decoder(nn.Module):
         output = self.transformer_decoder(
             tgt=embedded, memory=memory, tgt_key_padding_mask=tgt_key_padding_mask)
         output = output.transpose(0, 1)
-        output = self.output_projection(
-            output[:, subject_embedding.size(1):, :])
+        output = self.output_projection(output[:, -self.seq_length:, :])
 
         return output
 
