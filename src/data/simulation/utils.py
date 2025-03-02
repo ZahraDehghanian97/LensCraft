@@ -67,3 +67,13 @@ def count_parameters(struct: List) -> int:
             count += 1
             
     return count
+
+
+def get_struct_parameters(struct: list, last_value=None) -> list:
+    parameter_list = list()
+    for parameter, value_type in struct:
+        if isinstance(value_type, list):
+            parameter_list.extend(get_struct_parameters(value_type, parameter))
+        else:
+            parameter_list.append((last_value + "_" + parameter, value_type))
+    return parameter_list
