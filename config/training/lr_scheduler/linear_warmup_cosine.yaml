@@ -1,4 +1,4 @@
 _target_: training.lr_schedulers.warmup_cosine.WarmupCosineDecayLR
 _partial_: true
 warmup_steps: 10
-rate: 1.0
+rate: 0.5714
