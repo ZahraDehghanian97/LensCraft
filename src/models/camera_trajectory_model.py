@@ -9,13 +9,15 @@ from data.simulation.constants import cinematography_struct_size, simulation_str
 
 class MultiTaskAutoencoder(nn.Module):
     def __init__(self, input_dim=7, subject_dim=9, nhead=4, num_encoder_layers=3, num_decoder_layers=3, 
-                 dim_feedforward=2048, dropout_rate=0.1, seq_length=30, latent_dim=512, use_merged_memory=True):
+                 dim_feedforward=2048, dropout_rate=0.1, seq_length=30, latent_dim=512, use_merged_memory=False):
         super(MultiTaskAutoencoder, self).__init__()
         
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
         self.memory_tokens_count = cinematography_struct_size
 
-        self.subject_projection = nn.Linear(subject_dim, latent_dim)
+        self.subject_projection_loc_rot = nn.Linear(6, latent_dim)
+        self.subject_projection_vol = nn.Linear(1, latent_dim)
+
         self.encoder = Encoder(input_dim, latent_dim, nhead,
                              num_encoder_layers, dim_feedforward, dropout_rate, self.num_query_tokens)
         self.decoder = Decoder(input_dim, latent_dim, nhead,
@@ -29,7 +31,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         self.use_merged_memory = use_merged_memory
 
-    def prepate_decoder_memory(self, camera_embedding=None, caption_embedding=None, teacher_forcing_ratio=0.0, mask_memory_prob=0.0):
+    def prepare_decoder_memory(self, camera_embedding=None, caption_embedding=None, teacher_forcing_ratio=0.0, mask_memory_prob=0.0):
         if camera_embedding is None:
             if caption_embedding is None:
                 raise ValueError("Both memory and caption_embedding cannot be None")
@@ -53,10 +55,18 @@ class MultiTaskAutoencoder(nn.Module):
 
     def forward(self, src, subject_trajectory, tgt_key_padding_mask=None, src_key_mask=None, target=None, 
                 caption_embedding=None, teacher_forcing_ratio=0.5, mask_memory_prob=0.0, decode_mode='single_step'):
-        subject_embedding = self.subject_projection(subject_trajectory)
-        camera_embedding = self.encoder(src, subject_embedding, src_key_mask)
         
-        memory = self.prepate_decoder_memory(
+        subject_trajectory_loc_rot = torch.cat([
+            subject_trajectory[:, :, :3], 
+            subject_trajectory[:, :, 6:]], 2)
+        subject_trajectory_vol = subject_trajectory[:, 0:1, 3:6]
+        subject_trajectory_vol = subject_trajectory_vol.permute(0, 2, 1)
+        subject_embedding_loc_rot = self.subject_projection_loc_rot(subject_trajectory_loc_rot)
+        subject_embedding_vol = self.subject_projection_vol(subject_trajectory_vol)
+        subject_embedding_loc_rot_vol = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
+        camera_embedding = self.encoder(src, subject_embedding_loc_rot_vol, src_key_mask)     
+
+        memory = self.prepare_decoder_memory(
             camera_embedding=camera_embedding,
             caption_embedding=caption_embedding,
             teacher_forcing_ratio=teacher_forcing_ratio,
@@ -65,7 +75,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         reconstructed = self.decoder(
             memory=memory,
-            subject_embedding=subject_embedding,
+            subject_embedding=subject_embedding_loc_rot_vol,
             decode_mode=decode_mode,
             target=target,
             teacher_forcing_ratio=teacher_forcing_ratio,
@@ -126,8 +136,13 @@ class MultiTaskAutoencoder(nn.Module):
             
             # If no camera trajectory, use only the decoder
             else:
-                subject_embedding = self.subject_projection(subject_trajectory)
-                memory = self.prepate_decoder_memory(caption_embedding=caption_embedding)
+                subject_trajectory_loc_rot = torch.cat([subject_trajectory[:, :, :3], subject_trajectory[:, :, 6:]], 2)
+                subject_trajectory_vol = subject_trajectory[:, 0:1, 3:6]
+                subject_trajectory_vol = subject_trajectory_vol.permute(0, 2, 1)
+                subject_embedding_loc_rot = self.subject_projection_loc_rot(subject_trajectory_loc_rot)
+                subject_embedding_vol = self.subject_projection_vol(subject_trajectory_vol)
+                subject_embedding = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
+                memory = self.prepare_decoder_memory(caption_embedding=caption_embedding)
                 reconstructed = self.decoder(
                     memory=memory,
                     subject_embedding=subject_embedding,

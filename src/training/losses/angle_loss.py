@@ -2,8 +2,9 @@ import math
 import torch
 
 class AngleLoss(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, scaling_factor=180):
         super().__init__()
+        self.scaling_factor = scaling_factor
     
     def euler_to_normal(self, angles):
         sin_angles = torch.sin(angles)
@@ -24,7 +25,7 @@ class AngleLoss(torch.nn.Module):
         pred_normal = self.euler_to_normal(pred)
         target_normal = self.euler_to_normal(target)
         
-        loss = torch.mean((pred_normal - target_normal) ** 2) * 180
+        loss = torch.mean((pred_normal - target_normal) ** 2) * self.scaling_factor
         
         return loss
 

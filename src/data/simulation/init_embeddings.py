@@ -9,6 +9,7 @@ from models.clip_embeddings import CLIPEmbedder
 def initialize_all_clip_embeddings(
     clip_model_name: str = "openai/clip-vit-large-patch14",
     cache_file: str = "clip_embeddings_cache.pkl",
+    chunk_size: int = 100,
 ) -> Dict[str, Any]:
     cache_dir = os.path.dirname(cache_file)
     if cache_dir:
@@ -21,7 +22,7 @@ def initialize_all_clip_embeddings(
     except (FileNotFoundError, pickle.UnpicklingError):
         print("Generating new CLIP embeddings...")
 
-    embedder = CLIPEmbedder(clip_model_name)
+    embedder = CLIPEmbedder(clip_model_name, chunk_size=chunk_size)
     
     all_sentences: List[str] = []
     metadata: List[Tuple[str, str]] = []  

@@ -1,13 +1,39 @@
 import torch
-from torch.nn.functional import mse_loss, cosine_similarity, cross_entropy
+from torch.nn.functional import mse_loss, cosine_similarity
 from .angle_loss import AngleLoss
 
 class CameraTrajectoryLoss:
-    def __init__(self, clip_embeddings=[], contrastive=False):
-        self.angle_loss = AngleLoss()
+    def __init__(self, 
+                 contrastive_loss_margin: int=5, 
+                 n_clip_embs: int=28, 
+                 losses_list: list=[], 
+                 weighted_clip_loss: bool=False,
+                 weight_power: int=1,
+                 clip_weights: dict=None,
+                 clip_loss_scaling_factor: float=37500,
+                 trajectory_loss_ratio: float=10,
+                 contrastive_loss_scaling_factor: float=0.1,
+                 angle_loss_scaling_factor: float=180
+                 ):
+        self.angle_loss = AngleLoss(angle_loss_scaling_factor)
         self.position_slice = slice(0, 4)
         self.rotation_slice = slice(4, None)
-        self.contrastive = contrastive
+        self.contrastive_loss_margin = contrastive_loss_margin
+        self.n_clip_embs = n_clip_embs
+        self.losses_list = losses_list
+        self.weighted_clip_loss = weighted_clip_loss
+        self.weight_power = weight_power
+        self.clip_weights = clip_weights
+        self.clip_loss_scaling_factor = clip_loss_scaling_factor
+        self.trajectory_loss_ratio = trajectory_loss_ratio
+        self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
+
+        if self.weighted_clip_loss:
+            self.sum_clip_weights = 0
+            for embedding, weight in self.clip_weights.items():
+                if self.weight_power > 1:
+                    self.clip_weights[embedding] = weight ** self.weight_power
+                self.sum_clip_weights += self.clip_weights[embedding]
 
         # self.clip_embeddings = clip_embeddings
         # self.all_categories = {}
@@ -37,24 +63,29 @@ class CameraTrajectoryLoss:
         )
 
     def compute_total_loss(self, trajectory_pred, trajectory_target, clip_pred, clip_target):
-        trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
+        if len(self.losses_list) == 0:
+            raise ValueError("The losses list cannot be empty; it must contain at least one of the following: 'trajectory', 'clip', or 'contrastive'.")
         
-        clip_losses = []
-        clip_loss = 0
-        if self.contrastive:
-            clip_loss, clip_losses = self.compute_contrastive_loss(clip_pred, clip_target)
-        else:            
-            for i in range(clip_pred.shape[0]):
-                current_loss = self.compute_clip_loss(clip_pred[i], clip_target[i])
-                clip_losses.append(current_loss)
-                clip_loss += current_loss
+        total_loss = 0
+        loss_dict = dict()
+
+        if "trajectory" in self.losses_list:
+            trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
+            total_loss += trajectory_loss
+            loss_dict["trajectory"] = trajectory_loss.item()
         
-        total_loss = trajectory_loss + clip_loss / clip_pred.shape[1] * 100
-        loss_dict = {
-            'trajectory': trajectory_loss.item(),
-            'clip': {i: clip_losses[i] for i in range(len(clip_losses))},
-            'total': total_loss.item()
-        }
+        if "contrastive" in self.losses_list:
+            contrastive_loss, _ = self.compute_contrastive_loss(clip_target, clip_pred, self.n_clip_embs, self.contrastive_loss_margin)
+            total_loss += contrastive_loss * self.contrastive_loss_scaling_factor
+            loss_dict["contrastive"] = contrastive_loss.item()
+
+        if "clip" in self.losses_list:
+            total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(clip_target, clip_pred, self.n_clip_embs, self.weighted_clip_loss, self.clip_weights, self.sum_clip_weights)
+            total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
+            loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
+            loss_dict["average_clip"] = total_clip_loss
+
+        loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
 
     def compute_component_losses(self, pred, target):
@@ -72,18 +103,45 @@ class CameraTrajectoryLoss:
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         
-        return relative_loss * 10 + first_frame_loss
+        return relative_loss * self.trajectory_loss_ratio + first_frame_loss
 
-    def compute_contrastive_loss(self, clip_pred, clip_target):
-        pass
+    @staticmethod
+    def compute_contrastive_loss(clip_target, clip_pred, n_clip_embs, margin):
+        contrastive_losses = []
+        total_contrastive_loss = 0
+        for i in range(n_clip_embs): # Target
+            current_loss = 0
+            for j in range(n_clip_embs): # Predicted
+                if i == j:
+                    current_loss += max(0, margin - torch.sqrt(mse_loss(clip_target[i], clip_pred[j]))) ** 2
+                else:
+                    current_loss += mse_loss(clip_target[i], clip_pred[j])
+            contrastive_losses.append(current_loss)
+            total_contrastive_loss += current_loss
+        return total_contrastive_loss, contrastive_losses
+
+    
+    @staticmethod
+    def compute_clip_loss(clip_target, clip_pred, n_clip_embs, weighted_clip_loss, clip_weights, sum_clip_weights):
+        clip_losses = []
+        total_clip_loss = 0
+        total_clip_loss_weighted = 0
+        for i in range(n_clip_embs):
+            similarity = cosine_similarity(clip_target[i], clip_pred[i])
+            current_loss = 1 - similarity.mean()
+            clip_losses.append(current_loss) 
+            if weighted_clip_loss:
+                total_clip_loss_weighted += current_loss * clip_weights[f"clip_{i}"]
+                total_clip_loss += current_loss
+            else:
+                total_clip_loss += current_loss
+        total_clip_loss_weighted = total_clip_loss_weighted / sum_clip_weights
+        total_clip_loss = total_clip_loss / n_clip_embs
+        return total_clip_loss_weighted, clip_losses, total_clip_loss
+    
 
     @staticmethod
     def _find_label_indices(all_embeds, target_embeds):
         distances = (target_embeds.unsqueeze(1) - all_embeds.unsqueeze(0)).pow(2).sum(-1)
         label_idx = distances.argmin(dim=1)
         return label_idx
-    
-    @staticmethod
-    def compute_clip_loss(pred_embedding, target_embedding):
-        similarity = cosine_similarity(pred_embedding, target_embedding)
-        return 1 - similarity.mean()

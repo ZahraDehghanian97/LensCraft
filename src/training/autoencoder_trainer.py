@@ -71,7 +71,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
                 current_epoch,
                 max_epochs
             ),
-            'memory_mask_ratio': 0, #linear_increase(0, 0.5, current_epoch, max_epochs),
+            'memory_mask_ratio': self.mask.memory_ratio,
             'teacher_forcing_ratio': linear_increase(
                 self.teacher_forcing_schedule.initial_ratio,
                 self.teacher_forcing_schedule.final_ratio,

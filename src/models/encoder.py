@@ -28,10 +28,11 @@ class Encoder(nn.Module):
         src_with_queries = torch.cat([query_tokens, src_embedded], dim=0)
 
         if src_key_padding_mask is not None:
-            query_mask = torch.zeros((src_key_padding_mask.shape[0], self.query_tokens.shape[0]), 
-                                   dtype=torch.bool, device=src.device)
-            src_key_padding_mask = torch.cat(
-                [query_mask, src_key_padding_mask, src_key_padding_mask], dim=1)
+            query_mask = torch.zeros((src_key_padding_mask.shape[0], 
+                                      self.query_tokens.shape[0] + 3), # Add 3 to consider subject volume
+                                   dtype=torch.bool, 
+                                   device=src.device)
+            src_key_padding_mask = torch.cat([query_mask, src_key_padding_mask, src_key_padding_mask], dim=1)
 
         memory = self.transformer_encoder(
             src_with_queries, src_key_padding_mask=src_key_padding_mask)
