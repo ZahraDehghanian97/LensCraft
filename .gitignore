@@ -134,3 +134,11 @@ cinematography_dataset.mpack
 merged_dataset_static.json
 cinematography_dataset.zip
 checkpoints/*
+
+
+tensorboard_plot*
+cinematography_dataset/
+*.code-workspace
+see_dataset_structure.ipynb
+main.py
+test_optuna.py
