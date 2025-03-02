@@ -16,10 +16,6 @@ class ETDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         original_item = self.original_dataset[index]
-        '''raw_trans = original_item['traj_feat'][6:].permute(1, 0)
-        velocity = raw_trans[1:] - raw_trans[:-1]
-        raw_trans[1:] = velocity  
-        original_item['traj_feat'][6:] = raw_trans.permute(1, 0)'''
         return self.process_item(original_item)
 
     def process_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
