@@ -4,6 +4,44 @@ import torch
 import os
 from .caption import enum_descriptions
 from models.clip_embeddings import CLIPEmbedder
+import numpy as np
+import copy
+
+def calc_embedding_mean(embeddings_data: dict, embedding_dim: int=512) -> dict:
+    means = {}
+    for key, value in embeddings_data.items():
+        sum = np.zeros(embedding_dim)
+        n_emb = 0
+        for _, vector in value.items():
+            sum += vector.numpy()
+            n_emb += 1
+        means[key] = sum / n_emb
+    return means
+
+
+def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dim: int=512) -> dict:
+    stds = {}
+    for key, value in embeddings_data.items():
+        sum_squared_error = np.zeros(embedding_dim)
+        n_emb = 0
+        for _, vector in value.items():
+            sum_squared_error += (vector.numpy() - means[key]) ** 2
+            n_emb += 1
+        stds[key] = np.sqrt(sum_squared_error / n_emb)
+    return stds
+
+
+def normalize_embeddings(embeddings_data: dict) -> dict:
+    means = calc_embedding_mean(embeddings_data)
+    stds = calc_embedding_std(embeddings_data, means)
+    embeddings_data_normalized = copy.deepcopy(embeddings_data)
+    for key, value in embeddings_data.items():
+        for key_nested, vector in value.items():
+            mean = means[key]
+            std = stds[key]
+            vector_normalized = (vector - mean) / std
+            embeddings_data_normalized[key][key_nested] = vector_normalized
+    return embeddings_data_normalized
 
 
 def initialize_all_clip_embeddings(
@@ -18,7 +56,7 @@ def initialize_all_clip_embeddings(
     try:
         with open(cache_file, 'rb') as f:
             print(f"Loading CLIP embeddings from cache: {cache_file}")
-            return pickle.load(f)
+            return normalize_embeddings(pickle.load(f))
     except (FileNotFoundError, pickle.UnpicklingError):
         print("Generating new CLIP embeddings...")
 
@@ -54,4 +92,4 @@ def initialize_all_clip_embeddings(
         pickle.dump(embeddings_data, f)
     
     print(f"Saved CLIP embeddings to cache: {cache_file}")
-    return embeddings_data
+    return normalize_embeddings(embeddings_data)
