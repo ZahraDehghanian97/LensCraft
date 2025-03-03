@@ -13,7 +13,7 @@ loss_module:
     - clip 
     # - trajectory
     # - contrastive
-  weighted_clip_loss: true
+  weighted_clip_loss: false
   weight_power: 1
   clip_loss_scaling_factor: 37500  
   trajectory_loss_ratio: 10

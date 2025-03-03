@@ -24,12 +24,9 @@ class CameraTrajectoryLoss:
         self.weighted_clip_loss = weighted_clip_loss
         self.weight_power = weight_power
         self.clip_weights = clip_weights
-        self.clip_loss_scaling_factor = clip_loss_scaling_factor
-        self.trajectory_loss_ratio = trajectory_loss_ratio
-        self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
-
+        self.sum_clip_weights = 0
+        
         if self.weighted_clip_loss:
-            self.sum_clip_weights = 0
             for embedding, weight in self.clip_weights.items():
                 if self.weight_power > 1:
                     self.clip_weights[embedding] = weight ** self.weight_power
@@ -81,9 +78,14 @@ class CameraTrajectoryLoss:
 
         if "clip" in self.losses_list:
             total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(clip_target, clip_pred, self.n_clip_embs, self.weighted_clip_loss, self.clip_weights, self.sum_clip_weights)
-            total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
+            if self.weighted_clip_loss:
+                total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
+            else:
+                total_loss += total_clip_loss / clip_pred.shape[1] * self.clip_loss_scaling_factor
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
             loss_dict["average_clip"] = total_clip_loss
+            print("CLIP LOSS:            {}".format(total_clip_loss))
+            print("CLIP LOSS (WEIGHTED): {}".format(total_clip_loss_weighted))
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
@@ -132,10 +134,9 @@ class CameraTrajectoryLoss:
             clip_losses.append(current_loss) 
             if weighted_clip_loss:
                 total_clip_loss_weighted += current_loss * clip_weights[f"clip_{i}"]
-                total_clip_loss += current_loss
-            else:
-                total_clip_loss += current_loss
-        total_clip_loss_weighted = total_clip_loss_weighted / sum_clip_weights
+            total_clip_loss += current_loss
+        if weighted_clip_loss:
+            total_clip_loss_weighted = total_clip_loss_weighted / sum_clip_weights
         total_clip_loss = total_clip_loss / n_clip_embs
         return total_clip_loss_weighted, clip_losses, total_clip_loss
     

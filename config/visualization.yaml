@@ -2,7 +2,7 @@ defaults:
   - _self_
   - hydra: default
 
-logdir: ${oc.env:TENSORBOARD_LOG_DIR,lightning_logs/version_127}
+logdir: ${oc.env:TENSORBOARD_LOG_DIR,lightning_logs/version_133}
 save_plot: ${oc.env:PLOT_SAVE_PATH,./visualization/tensorboard_plot_}
 
 plot:
