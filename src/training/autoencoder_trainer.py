@@ -93,7 +93,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
     def _forward_step(
         self,
         camera_trajectory: torch.Tensor,
-        subject_trajectory: torch.Tensor,
+        subject_trajectory_loc_rot: torch.Tensor,
+        subject_volume: torch.Tensor,
         caption_embedding: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False
@@ -101,7 +102,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         if not is_training:
             return self.model(
                 camera_trajectory,
-                subject_trajectory,
+                subject_trajectory_loc_rot,
+                subject_volume,
                 tgt_key_padding_mask,
                 caption_embedding=caption_embedding,
                 teacher_forcing_ratio=0.5
@@ -124,7 +126,8 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
         return self.model(
             noisy_masked_trajectory,
-            subject_trajectory,
+            subject_trajectory_loc_rot,
+            subject_volume,
             tgt_key_padding_mask,
             src_key_mask,
             camera_trajectory,
@@ -135,14 +138,16 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
     def _step(self, batch: Dict[str, Any], batch_idx: int, stage: str) -> torch.Tensor:
         camera_trajectory = batch['camera_trajectory']
-        subject_trajectory = batch['subject_trajectory']
+        subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot']
+        subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
         [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
         
         output = self._forward_step(
             camera_trajectory,
-            subject_trajectory,
+            subject_trajectory_loc_rot,
+            subject_volume,
             caption_embedding,
             tgt_key_padding_mask,
             is_training=(stage == "train")

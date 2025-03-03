@@ -1,6 +1,6 @@
 _seq_length: 30
 _feature_dim: 7
-_subject_dim: 9
+_subject_dim: 6
 
 module:
   _target_: data.simulation.dataset.SimulationDataset

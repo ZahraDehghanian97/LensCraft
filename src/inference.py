@@ -42,15 +42,21 @@ def main(cfg: DictConfig):
         for idx in sample_indices:
             batch = et_collate_fn([dataset[idx]])
             
+            subject_traj = batch['subject_trajectory'].to(device)
+            subject_loc_rot = torch.cat([subject_traj[:, :, :3], subject_traj[:, :, 6:]], dim=2)
+            subject_vol = subject_traj[:, 0:1, 3:6].permute(0, 2, 1)
+            
             with torch.no_grad():
                 rec = model.inference(
-                    subject_trajectory=batch['subject_trajectory'].to(device),
+                    subject_trajectory_loc_rot=subject_loc_rot,
+                    subject_volume=subject_vol,
                     camera_trajectory=batch['camera_trajectory'].to(device),
                     padding_mask=batch.get('padding_mask', None),
                 )
                 
                 prompt_gen = model.inference(
-                    subject_trajectory=batch['subject_trajectory'].to(device),
+                    subject_trajectory_loc_rot=subject_loc_rot,
+                    subject_volume=subject_vol,
                     caption_embedding=batch['caption_feat'].to(device).unsqueeze(0),
                     padding_mask=batch.get('padding_mask', None),
                     teacher_forcing_ratio=1.0
@@ -59,7 +65,8 @@ def main(cfg: DictConfig):
                 hybrid_gen = None
                 if 'camera_trajectory' in batch and 'caption_feat' in batch:
                     hybrid_gen = model.inference(
-                        subject_trajectory=batch['subject_trajectory'].to(device),
+                        subject_trajectory_loc_rot=subject_loc_rot,
+                        subject_volume=subject_vol,
                         camera_trajectory=batch['camera_trajectory'].to(device),
                         caption_embedding=batch['caption_feat'].to(device).unsqueeze(0),
                         padding_mask=batch.get('padding_mask', None),
@@ -71,8 +78,12 @@ def main(cfg: DictConfig):
             if isinstance(original_item, dict) and 'caption_raw' in original_item and 'caption' in original_item['caption_raw']:
                 caption = original_item['caption_raw']['caption']
             
+            subject_trajectory = batch['subject_trajectory'] if 'subject_trajectory' in batch else None
+            
             sim_data = {
-                "subject": batch['subject_trajectory'][0],
+                "subject": subject_trajectory[0] if subject_trajectory is not None else None,
+                "subject_loc_rot": subject_loc_rot[0].cpu(),
+                "subject_vol": subject_vol[0].cpu(),
                 "camera": batch['camera_trajectory'][0],
                 "rec": rec,
                 "padding_mask": batch.get('padding_mask', None),
@@ -97,25 +108,34 @@ def main(cfg: DictConfig):
         for idx in range(7):
             batch = collate_fn([dataset[idx]])
             
+            subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot'].to(device)
+            subject_volume = batch['subject_volume'].to(device)
+            
             rec = model.inference(
-                subject_trajectory=batch['subject_trajectory'],
-                camera_trajectory=batch['camera_trajectory']
+                subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                subject_volume=subject_volume,
+                camera_trajectory=batch['camera_trajectory'].to(device)
             )
+            
             prompt_gen = model.inference(
-                subject_trajectory=batch['subject_trajectory'],
-                camera_trajectory=batch['camera_trajectory'],
-                caption_embedding=batch['cinematography_prompt'],
+                subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                subject_volume=subject_volume,
+                camera_trajectory=batch['camera_trajectory'].to(device),
+                caption_embedding=batch['cinematography_prompt'].to(device),
                 teacher_forcing_ratio=1.0
             )
+            
             hybrid_gen = model.inference(
-                subject_trajectory=batch['subject_trajectory'],
-                camera_trajectory=batch['camera_trajectory'],
-                caption_embedding=batch['cinematography_prompt'],
+                subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                subject_volume=subject_volume,
+                camera_trajectory=batch['camera_trajectory'].to(device),
+                caption_embedding=batch['cinematography_prompt'].to(device),
                 teacher_forcing_ratio=0.4
             )
             
             simulations.append({
-                "subject": batch['subject_trajectory'][0],
+                "subject_loc_rot": subject_trajectory_loc_rot[0].cpu(),
+                "subject_vol": subject_volume[0].cpu(),
                 "camera": batch['camera_trajectory'][0],
                 "rec": rec,
                 "prompt_gen": prompt_gen,

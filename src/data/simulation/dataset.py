@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from torch.utils.data import Dataset
 import torch
 import msgpack
@@ -50,7 +50,7 @@ class SimulationDataset(Dataset):
 
     def _process_single_simulation(self, simulation_data: Dict) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data["cameraFrames"])
-        subject_trajectory = self._extract_subject_trajectory(simulation_data["subjectsInfo"])
+        subject_loc_rot, subject_vol = self._extract_subject_components(simulation_data["subjectsInfo"])
         instruction = simulation_data["simulationInstructions"][0]
         prompt = simulation_data["cinematographyPrompts"][0]
 
@@ -76,7 +76,8 @@ class SimulationDataset(Dataset):
 
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
-            "subject_trajectory": torch.tensor(subject_trajectory, dtype=torch.float32),
+            "subject_trajectory_loc_rot": torch.tensor(subject_loc_rot, dtype=torch.float32),
+            "subject_volume": torch.tensor(subject_vol, dtype=torch.float32),
             "simulation_instruction": simulation_instruction_tensor,
             "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction,
@@ -106,29 +107,40 @@ class SimulationDataset(Dataset):
             for frame in camera_frames
         ]
 
-    def _extract_subject_trajectory(self, subjects_info: List[Dict]) -> List[List[float]]:
+    def _extract_subject_components(self, subjects_info: List[Dict]) -> Tuple[List[List[float]], List[List[float]]]:
         subject_info = subjects_info[0]
         subject = subject_info["subject"]
-
-        return [
+        
+        loc_rot = [
             [
                 frame["position"]["x"], 
                 frame["position"]["y"], 
                 frame["position"]["z"],
-                subject["dimensions"]["width"],
-                subject["dimensions"]["height"],
-                subject["dimensions"]["depth"],
                 frame["rotation"]["x"],
                 frame["rotation"]["y"],
                 frame["rotation"]["z"]
             ]
             for frame in subject_info["frames"]
         ]
+        
+        vol = [
+            [
+                subject["dimensions"]["width"],
+                subject["dimensions"]["height"],
+                subject["dimensions"]["depth"]
+            ]
+        ]
+        
+        return loc_rot, vol
 
 def collate_fn(batch):
+    vol_batch = torch.stack([item["subject_volume"] for item in batch])
+    vol_batch = vol_batch.permute(0, 2, 1)
+    
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
+        "subject_trajectory_loc_rot": torch.stack([item["subject_trajectory_loc_rot"] for item in batch]),
+        "subject_volume": vol_batch,
         "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
         "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
         "simulation_instruction_parameters": [

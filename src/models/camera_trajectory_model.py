@@ -12,7 +12,7 @@ class MultiTaskAutoencoder(nn.Module):
     def __init__(
         self, 
         input_dim: int = 7, 
-        subject_dim: int = 9, 
+        subject_dim: int = 6,
         nhead: int = 4, 
         num_encoder_layers: int = 3, 
         num_decoder_layers: int = 3, 
@@ -27,7 +27,7 @@ class MultiTaskAutoencoder(nn.Module):
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
         self.memory_tokens_count = cinematography_struct_size
 
-        self.subject_projection_loc_rot = nn.Linear(6, latent_dim)
+        self.subject_projection_loc_rot = nn.Linear(subject_dim, latent_dim)
         self.subject_projection_vol = nn.Linear(1, latent_dim)
 
         self.encoder = Encoder(
@@ -98,25 +98,20 @@ class MultiTaskAutoencoder(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        subject_trajectory: torch.Tensor,
+        subject_trajectory_loc_rot: torch.Tensor,
+        subject_volume: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         src_key_mask: Optional[torch.Tensor] = None,
         target: Optional[torch.Tensor] = None,
         caption_embedding: Optional[torch.Tensor] = None,
         teacher_forcing_ratio: float = 0.5,
-        mask_memory_prob: float = 0.0, 
+        mask_memory_prob: float = 0.0,
         decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
-        subject_trajectory_loc_rot = torch.cat([
-            subject_trajectory[:, :, :3], 
-            subject_trajectory[:, :, 6:]], 2)
-        subject_trajectory_vol = subject_trajectory[:, 0:1, 3:6]
-        subject_trajectory_vol = subject_trajectory_vol.permute(0, 2, 1)
-        
         subject_embedding_loc_rot = self.subject_projection_loc_rot(
             subject_trajectory_loc_rot
         )
-        subject_embedding_vol = self.subject_projection_vol(subject_trajectory_vol)
+        subject_embedding_vol = self.subject_projection_vol(subject_volume)
         subject_embedding_loc_rot_vol = torch.cat(
             [subject_embedding_loc_rot, subject_embedding_vol], 1
         )
@@ -157,19 +152,21 @@ class MultiTaskAutoencoder(nn.Module):
         self,
         caption_embedding: Optional[torch.Tensor] = None,
         camera_trajectory: Optional[torch.Tensor] = None,
-        subject_trajectory: torch.Tensor = None,
+        subject_trajectory_loc_rot: Optional[torch.Tensor] = None,
+        subject_volume: Optional[torch.Tensor] = None,
         teacher_forcing_ratio: float = 0.0,
         src_key_mask: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
         decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
-        if subject_trajectory is None:
-            raise ValueError("subject_trajectory cannot be None")
+        if subject_trajectory_loc_rot is None or subject_volume is None:
+            raise ValueError("subject_trajectory_loc_rot and subject_volume cannot be None")
 
         with torch.no_grad():
             device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
             
-            subject_trajectory = subject_trajectory.to(device)
+            subject_trajectory_loc_rot = subject_trajectory_loc_rot.to(device)
+            subject_volume = subject_volume.to(device)
             
             if caption_embedding is not None:
                 caption_embedding = caption_embedding.to(device)
@@ -189,7 +186,8 @@ class MultiTaskAutoencoder(nn.Module):
                 
                 return self.forward(
                     src=camera_trajectory,
-                    subject_trajectory=subject_trajectory,
+                    subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                    subject_volume=subject_volume,
                     caption_embedding=caption_embedding,
                     teacher_forcing_ratio=teacher_forcing_ratio,
                     src_key_mask=src_key_mask,
@@ -199,17 +197,11 @@ class MultiTaskAutoencoder(nn.Module):
             
             # If no camera trajectory, use only the decoder
             else:
-                subject_trajectory_loc_rot = torch.cat(
-                    [subject_trajectory[:, :, :3], subject_trajectory[:, :, 6:]], 2
-                )
-                subject_trajectory_vol = subject_trajectory[:, 0:1, 3:6]
-                subject_trajectory_vol = subject_trajectory_vol.permute(0, 2, 1)
-                
                 subject_embedding_loc_rot = self.subject_projection_loc_rot(
                     subject_trajectory_loc_rot
                 )
                 subject_embedding_vol = self.subject_projection_vol(
-                    subject_trajectory_vol
+                    subject_volume
                 )
                 subject_embedding = torch.cat(
                     [subject_embedding_loc_rot, subject_embedding_vol], 1
