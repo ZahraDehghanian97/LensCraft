@@ -25,6 +25,9 @@ class CameraTrajectoryLoss:
         self.weight_power = weight_power
         self.clip_weights = clip_weights
         self.sum_clip_weights = 0
+        self.clip_loss_scaling_factor = clip_loss_scaling_factor
+        self.trajectory_loss_ratio = trajectory_loss_ratio
+        self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
         
         if self.weighted_clip_loss:
             for embedding, weight in self.clip_weights.items():
