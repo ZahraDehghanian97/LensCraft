@@ -1,8 +1,11 @@
-import lightning as L
-import torch
-from utils.augmentation import apply_mask_and_noise, linear_increase
 from typing import Optional, Dict, Any, Tuple, List, Union
 from dataclasses import dataclass
+
+import lightning as L
+import torch
+
+from utils.augmentation import apply_mask_and_noise, linear_increase
+
 
 @dataclass
 class NoiseConfig:
@@ -13,6 +16,7 @@ class NoiseConfig:
 class MaskConfig:
     initial_ratio: float
     final_ratio: float
+    memory_ratio: float = 0.0
 
 @dataclass
 class TeacherForcingConfig:
@@ -80,7 +84,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             )
         }
 
-    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]):
+    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
         if self.dataset_mode == 'et' or self.use_merged_memory:
             return [torch.stack([batch['caption_feat']]), torch.stack([])]
         
@@ -105,7 +109,11 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
         ratios = self._get_current_ratios()
         
-        valid_len = (~tgt_key_padding_mask).sum(dim=1) if tgt_key_padding_mask is not None else None
+        valid_len = (
+            (~tgt_key_padding_mask).sum(dim=1) 
+            if tgt_key_padding_mask is not None else None
+        )
+        
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
             camera_trajectory,
             valid_len,
@@ -131,6 +139,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
         [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
+        
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
@@ -163,19 +172,37 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
 
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any]) -> None:
         batch_size = self.trainer.datamodule.batch_size
-        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True,
-                prog_bar=True, logger=True, batch_size=batch_size)
+        
+        self.log(
+            f"{stage}_loss", 
+            loss, 
+            on_step=True, 
+            on_epoch=True,
+            prog_bar=True, 
+            logger=True, 
+            batch_size=batch_size
+        )
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
-                    self.log(f"{stage}_{key}_{subkey}", subvalue,
-                            on_step=True, on_epoch=True,
-                            logger=True, batch_size=batch_size)
+                    self.log(
+                        f"{stage}_{key}_{subkey}", 
+                        subvalue,
+                        on_step=True, 
+                        on_epoch=True,
+                        logger=True, 
+                        batch_size=batch_size
+                    )
             else:
-                self.log(f"{stage}_{key}", value,
-                        on_step=True, on_epoch=True,
-                        logger=True, batch_size=batch_size)
+                self.log(
+                    f"{stage}_{key}", 
+                    value,
+                    on_step=True, 
+                    on_epoch=True,
+                    logger=True, 
+                    batch_size=batch_size
+                )
 
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Tuple[List, List]]:
         optimizer = self.optimizer(self.parameters())
@@ -184,15 +211,22 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             total_steps = self.trainer.max_epochs * len(
                 self.trainer.datamodule.train_dataloader()
             )
-            scheduler = self.lr_scheduler(optimizer=optimizer, total_steps=total_steps)
+            scheduler = self.lr_scheduler(
+                optimizer=optimizer, 
+                total_steps=total_steps
+            )
             return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
         
         return optimizer
     
-    def lr_scheduler_step(self, scheduler: torch.optim.lr_scheduler._LRScheduler, metric: Any) -> None:
+    def lr_scheduler_step(
+        self, 
+        scheduler: torch.optim.lr_scheduler._LRScheduler, 
+        metric: Any
+    ) -> None:
         scheduler.step(self.global_step)
 
-    def on_train_epoch_end(self):
+    def on_train_epoch_end(self) -> None:
         optimizer = self.trainer.optimizers[0]
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
