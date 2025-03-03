@@ -7,10 +7,10 @@ from models.clip_embeddings import CLIPEmbedder
 import numpy as np
 import copy
 
-def calc_embedding_mean(embeddings_data: dict, embedding_dim: int=512) -> dict:
+def calc_embedding_mean(embeddings_data: dict, embedding_dimension: int=512) -> dict:
     means = {}
     for key, value in embeddings_data.items():
-        sum = np.zeros(embedding_dim)
+        sum = np.zeros(embedding_dimension)
         n_emb = 0
         for _, vector in value.items():
             sum += vector.numpy()
@@ -19,10 +19,10 @@ def calc_embedding_mean(embeddings_data: dict, embedding_dim: int=512) -> dict:
     return means
 
 
-def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dim: int=512) -> dict:
+def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dimension: int=512) -> dict:
     stds = {}
     for key, value in embeddings_data.items():
-        sum_squared_error = np.zeros(embedding_dim)
+        sum_squared_error = np.zeros(embedding_dimension)
         n_emb = 0
         for _, vector in value.items():
             sum_squared_error += (vector.numpy() - means[key]) ** 2
@@ -31,9 +31,9 @@ def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dim: int=51
     return stds
 
 
-def normalize_embeddings(embeddings_data: dict) -> dict:
-    means = calc_embedding_mean(embeddings_data)
-    stds = calc_embedding_std(embeddings_data, means)
+def normalize_embeddings(embeddings_data: dict, embedding_dimension: int) -> dict:
+    means = calc_embedding_mean(embeddings_data, embedding_dimension)
+    stds = calc_embedding_std(embeddings_data, means, embedding_dimension)
     embeddings_data_normalized = copy.deepcopy(embeddings_data)
     for key, value in embeddings_data.items():
         for key_nested, vector in value.items():
@@ -48,6 +48,8 @@ def initialize_all_clip_embeddings(
     clip_model_name: str = "openai/clip-vit-large-patch14",
     cache_file: str = "clip_embeddings_cache.pkl",
     chunk_size: int = 100,
+    embedding_dimension: int = 512,
+    normalize: bool = True,
 ) -> Dict[str, Any]:
     cache_dir = os.path.dirname(cache_file)
     if cache_dir:
@@ -56,7 +58,10 @@ def initialize_all_clip_embeddings(
     try:
         with open(cache_file, 'rb') as f:
             print(f"Loading CLIP embeddings from cache: {cache_file}")
-            return normalize_embeddings(pickle.load(f))
+            if normalize:
+                return normalize_embeddings(pickle.load(f), embedding_dimension)
+            else:
+                return pickle.load(f)
     except (FileNotFoundError, pickle.UnpicklingError):
         print("Generating new CLIP embeddings...")
 
@@ -92,4 +97,7 @@ def initialize_all_clip_embeddings(
         pickle.dump(embeddings_data, f)
     
     print(f"Saved CLIP embeddings to cache: {cache_file}")
-    return normalize_embeddings(embeddings_data)
+    if normalize:
+        return normalize_embeddings(embeddings_data, embedding_dimension)
+    else: 
+        return embeddings_data
