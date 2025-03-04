@@ -49,7 +49,7 @@ def initialize_all_clip_embeddings(
     cache_file: str = "clip_embeddings_cache.pkl",
     chunk_size: int = 100,
     embedding_dimension: int = 512,
-    normalize: bool = True,
+    normalize: bool = False,
 ) -> Dict[str, Any]:
     cache_dir = os.path.dirname(cache_file)
     if cache_dir:

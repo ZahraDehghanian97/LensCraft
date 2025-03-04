@@ -11,4 +11,4 @@ module:
     clip_model_name: ${clip.model_name}
     cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
     embedding_dimension: 512
-    normalize: true
+    normalize: false
