@@ -143,3 +143,5 @@ cinematography_dataset/
 see_dataset_structure.ipynb
 main.py
 test_optuna.py
+
+multirun

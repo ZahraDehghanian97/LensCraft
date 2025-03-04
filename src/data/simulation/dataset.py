@@ -135,7 +135,7 @@ class SimulationDataset(Dataset):
 
 def collate_fn(batch):
     vol_batch = torch.stack([item["subject_volume"] for item in batch])
-    vol_batch = vol_batch.permute(0, 2, 1)
+    # vol_batch = vol_batch.permute(0, 2, 1)
     
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),

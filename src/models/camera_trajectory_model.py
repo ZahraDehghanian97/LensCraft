@@ -28,7 +28,7 @@ class MultiTaskAutoencoder(nn.Module):
         self.memory_tokens_count = cinematography_struct_size
 
         self.subject_projection_loc_rot = nn.Linear(subject_dim, latent_dim)
-        self.subject_projection_vol = nn.Linear(1, latent_dim)
+        self.subject_projection_vol = nn.Linear(3, latent_dim)
 
         self.encoder = Encoder(
             input_dim,
@@ -140,7 +140,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         output = {
             'embeddings': camera_embedding,
-            'reconstructed': reconstructed,
+            'reconstructed': torch.zeros(src.shape),
         }
         
         if self.use_merged_memory:

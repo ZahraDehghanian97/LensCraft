@@ -64,15 +64,36 @@ def main(cfg: DictConfig):
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
 
-    trainer = instantiate(cfg.trainer, callbacks=callbacks)
+    is_sweep_run = os.environ.get('IS_SWEEP_RUN', 'false').lower() == 'true'
+    
+    if is_sweep_run:
+        sweep_max_epochs = int(os.environ.get('SWEEP_MAX_EPOCHS', '20'))
+        
+        trainer_config = OmegaConf.to_container(cfg.trainer, resolve=True)
+        if isinstance(trainer_config, dict):
+            trainer_config.pop('_target_', None)
+            trainer_config.pop('_partial_', None)
+            trainer_config['max_epochs'] = sweep_max_epochs
+            trainer = L.Trainer(**trainer_config, callbacks=callbacks)
+        else:
+            trainer = instantiate(cfg.trainer, callbacks=callbacks, max_epochs=sweep_max_epochs)
+    else:
+        trainer = instantiate(cfg.trainer, callbacks=callbacks)
 
     trainer.fit(lightning_model, datamodule=data_module)
 
-    print("Training completed!")
-    best_model_path = trainer.checkpoint_callback.best_model_path
-    print(f"Best model saved at: {best_model_path}")
-
-    trainer.test(lightning_model, datamodule=data_module)
+    val_loss = None
+    for callback in callbacks:
+        if hasattr(callback, 'best_model_score'):
+            val_loss = callback.best_model_score.item()
+            break
+    
+    if val_loss is None:
+        test_results = trainer.test(lightning_model, datamodule=data_module)
+        if len(test_results) > 0:
+            val_loss = test_results[0].get('test_loss', float('inf'))
+    
+    return val_loss
 
 
 if __name__ == "__main__":
