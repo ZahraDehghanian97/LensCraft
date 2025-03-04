@@ -159,6 +159,7 @@ class LightningMultiTaskAutoencoder(L.LightningModule):
             output,
             camera_trajectory,
             merge_embeddings,
+            batch,
             tgt_key_padding_mask
         )
 
