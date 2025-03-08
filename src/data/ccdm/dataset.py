@@ -12,13 +12,13 @@ class CCDMDataset(Dataset):
         clip_model_name: str = "openai/clip-vit-large-patch14",
         embedding_dim: int = 512,
         standardize: bool = True,
-        max_seq_len: int = 300,
+        seq_len: int = 30,
     ):
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
         self.clip_model_name = clip_model_name
         self.standardize = standardize
-        self.max_seq_len = max_seq_len
+        self.seq_len = seq_len
         
         self._load_data()
         self.clip_embedder = CLIPEmbedder(
@@ -60,22 +60,22 @@ class CCDMDataset(Dataset):
         
         traj_length = len(camera_trajectory)
         
-        if traj_length < self.max_seq_len:
-            padding = np.repeat(camera_trajectory[-1:], self.max_seq_len - traj_length, axis=0)
+        if traj_length < self.seq_len:
+            padding = np.repeat(camera_trajectory[-1:], self.seq_len - traj_length, axis=0)
             camera_trajectory = np.concatenate([camera_trajectory, padding], axis=0)
             padding_mask = np.concatenate([
                 np.ones(traj_length), 
-                np.zeros(self.max_seq_len - traj_length)
+                np.zeros(self.seq_len - traj_length)
             ])
         else:
-            camera_trajectory = camera_trajectory[:self.max_seq_len]
-            padding_mask = np.ones(self.max_seq_len)
+            camera_trajectory = camera_trajectory[:self.seq_len]
+            padding_mask = np.ones(self.seq_len)
         
         text = " ".join(text_description)
         with torch.no_grad():
             text_embedding = self.clip_embedder.get_embeddings([text])[0].cpu()
         
-        subject_trajectory = np.zeros((self.max_seq_len, 9), dtype=np.float32)
+        subject_trajectory = np.zeros((self.seq_len, 9), dtype=np.float32)
         subject_trajectory[:, 3:6] = np.array([0.5, 1.7, 0.3])
         
         return {

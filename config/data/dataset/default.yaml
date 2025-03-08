@@ -1,8 +1,9 @@
-_seq_length: 30
-_feature_dim: 7
-_subject_dim: 6
+info:
+  max_seq_length: 30
+  seq_length: 30
+  feature_dim: 7
 
-module:
+config:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${oc.env:SIMULATION_DATA_PATH}
   embedding_dim: ${clip.latent_dim}

@@ -1,10 +1,12 @@
-_seq_length: 30
-_feature_dim: 7
+info:
+  max_seq_length: 300
+  seq_length: 30
+  feature_dim: 7
 
-module:
+config:
   _target_: data.ccdm.CCDMDataset
   data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
   clip_model_name: ${clip.model_name}
   embedding_dim: 512
   standardize: true
-  max_seq_len: 300
+  seq_len: 30

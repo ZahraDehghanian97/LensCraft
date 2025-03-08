@@ -18,7 +18,7 @@ def main(cfg: DictConfig):
     L.seed_everything(cfg.seed)
 
     data_module = CameraTrajectoryDataModule(
-        dataset_config=cfg.data.dataset.module,
+        dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
         num_workers=cfg.data.num_workers,
         val_size=cfg.data.val_size,

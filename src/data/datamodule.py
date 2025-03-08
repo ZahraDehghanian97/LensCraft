@@ -17,10 +17,10 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         self.val_size = val_size
         self.test_size = test_size
         
-        if 'ETDataset' in dataset_config['_target_']:
+        if 'ETDataset' in self.dataset_config['_target_']:
             self.dataset_mode = 'et'
             self.collate_fn = et_collate_fn
-        elif 'CCDMDataset' in dataset_config['_target_']:
+        elif 'CCDMDataset' in self.dataset_config['_target_']:
             self.dataset_mode = 'ccdm'
             self.collate_fn = ccdm_collate_fn
         else:
