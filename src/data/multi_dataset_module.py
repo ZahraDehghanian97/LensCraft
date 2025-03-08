@@ -4,12 +4,10 @@ import psutil
 import lightning as L
 from torch.utils.data import DataLoader, random_split
 import hydra
-from hydra.utils import instantiate
+
+from .combined_dataloader import CombinedDataLoader
 
 class MultiDatasetModule(L.LightningDataModule):
-    """
-    DataModule that handles multiple datasets (simulation and CCDM) simultaneously.
-    """
     def __init__(
         self, 
         simulation_config, 
@@ -122,10 +120,10 @@ class MultiDatasetModule(L.LightningDataModule):
             **kwargs
         )
         
-        return {
-            'simulation': sim_loader,
-            'ccdm': ccdm_loader
-        }
+        self.sim_train_loader = sim_loader
+        self.ccdm_train_loader = ccdm_loader
+        
+        return CombinedDataLoader(sim_loader, ccdm_loader)
 
     def val_dataloader(self):
         kwargs = self._get_dataloader_kwargs()

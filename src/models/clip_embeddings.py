@@ -68,7 +68,7 @@ class CLIPEmbedder:
         all_attention_masks = []
         all_valid_lengths = []
 
-        for chunk in tqdm(chunks, desc="Processing text chunks", unit="chunk"):
+        for chunk in chunks: # tqdm(chunks, desc="Processing text chunks", unit="chunk"):
             inputs = self.tokenizer(
                 chunk,
                 padding=True,

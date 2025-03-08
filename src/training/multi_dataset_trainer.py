@@ -16,6 +16,7 @@ class MultiDatasetTrainer(BaseTrainer):
         teacher_forcing_schedule: TeacherForcingConfig,
         compile_mode: str = "default",
         compile_enabled: bool = True,
+        dataset_mode: str = 'simulation',
         use_merged_memory: bool = True,
         sim_weight: float = 0.6,
         ccdm_weight: float = 0.4,
@@ -32,11 +33,14 @@ class MultiDatasetTrainer(BaseTrainer):
             compile_enabled,
             use_merged_memory
         )
-        
+                
         self.sim_weight = sim_weight
         self.ccdm_weight = ccdm_weight
         
         self.train_step_count = 0
+        
+        self.validation_sim_outputs = []
+        self.validation_ccdm_outputs = []
 
     def _prepare_sim_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
         return [batch['cinematography_prompt'], batch['simulation_instruction']]
@@ -125,29 +129,31 @@ class MultiDatasetTrainer(BaseTrainer):
         if dataloader_idx == 0:
             loss, loss_dict = self._process_sim_batch(batch, "val")
             self._log_metrics("val_sim", loss, loss_dict, len(batch['camera_trajectory']))
+            self.validation_sim_outputs.append(loss)
             return loss
         else:
             loss, loss_dict = self._process_ccdm_batch(batch, "val")
             self._log_metrics("val_ccdm", loss, loss_dict, len(batch['camera_trajectory']))
+            self.validation_ccdm_outputs.append(loss)
             return loss
 
-    def validation_epoch_end(self, outputs):
-        if not outputs:
-            return
-        
-        if isinstance(outputs[0], list):
-            sim_outputs = outputs[0]
-            ccdm_outputs = outputs[1]
-            
-            sim_avg_loss = torch.stack([x for x in sim_outputs]).mean()
-            ccdm_avg_loss = torch.stack([x for x in ccdm_outputs]).mean()
-            
-            combined_loss = (self.sim_weight * sim_avg_loss) + (self.ccdm_weight * ccdm_avg_loss)
-            
-            self.log("val_loss", combined_loss, prog_bar=True)
+    def on_validation_epoch_end(self):
+        if self.validation_sim_outputs:
+            sim_avg_loss = torch.stack([x for x in self.validation_sim_outputs if x is not None]).mean()
         else:
-            avg_loss = torch.stack([x for x in outputs]).mean()
-            self.log("val_loss", avg_loss, prog_bar=True)
+            sim_avg_loss = torch.tensor(0.0, device=self.device)
+        
+        if self.validation_ccdm_outputs:
+            ccdm_avg_loss = torch.stack([x for x in self.validation_ccdm_outputs if x is not None]).mean()
+        else:
+            ccdm_avg_loss = torch.tensor(0.0, device=self.device)
+        
+        combined_loss = (self.sim_weight * sim_avg_loss) + (self.ccdm_weight * ccdm_avg_loss)
+        
+        self.log("val_loss", combined_loss, prog_bar=True)
+        
+        self.validation_sim_outputs.clear()
+        self.validation_ccdm_outputs.clear()
 
     def test_step(self, batch: Dict[str, Any], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:
         if dataloader_idx == 0:
@@ -160,6 +166,14 @@ class MultiDatasetTrainer(BaseTrainer):
             return loss
     
     def _get_total_steps(self) -> int:
-        sim_steps = len(self.trainer.train_dataloader['simulation'])
-        ccdm_steps = len(self.trainer.train_dataloader['ccdm'])
-        return max(sim_steps, ccdm_steps) * self.trainer.max_epochs
+        datamodule = self.trainer.datamodule
+        if hasattr(datamodule, 'sim_train_loader') and hasattr(datamodule, 'ccdm_train_loader'):
+            sim_steps = len(datamodule.sim_train_loader)
+            ccdm_steps = len(datamodule.ccdm_train_loader)
+            return max(sim_steps, ccdm_steps) * self.trainer.max_epochs
+        
+        try:
+            return len(self.trainer.train_dataloader) * self.trainer.max_epochs
+        except Exception as e:
+            print(f"Warning: Could not determine total steps: {e}")
+            return 1000 * self.trainer.max_epochs

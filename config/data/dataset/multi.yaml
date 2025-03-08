@@ -1,4 +1,8 @@
-_target_: data.multi_dataset_module.MultiDatasetModule
+info:
+  max_seq_length: 300
+  seq_length: 30
+  feature_dim: 7
+
 simulation_config:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${oc.env:SIMULATION_DATA_PATH}
@@ -16,11 +20,4 @@ ccdm_config:
   clip_model_name: ${clip.model_name}
   embedding_dim: 512
   standardize: true
-  max_seq_len: 300
-
-
-batch_size: ${data.batch_size}
-val_size: ${data.val_size}
-test_size: ${data.test_size}
-num_workers: ${data.num_workers}
-sim_ratio: 0.5  # Ratio of simulation samples in batch
+  seq_len: 30
