@@ -1,0 +1,8 @@
+defaults:
+  - dataset: multi
+
+batch_size: ${data.batch_size}
+val_size: ${data.val_size}
+test_size: ${data.test_size}
+num_workers: ${data.num_workers}
+sim_ratio: 0.5

@@ -87,11 +87,20 @@ class CameraTrajectoryLoss:
                 total_loss += total_clip_loss / clip_pred.shape[1] * self.clip_loss_scaling_factor
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
             loss_dict["average_clip"] = total_clip_loss
-            print("CLIP LOSS:            {}".format(total_clip_loss))
-            print("CLIP LOSS (WEIGHTED): {}".format(total_clip_loss_weighted))
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
+    
+    def compute_trajectory_only_loss(self, model_output, camera_trajectory, tgt_key_padding_mask=None):
+        reconstructed = model_output['reconstructed']
+        trajectory_loss = self.compute_trajectory_loss(reconstructed, camera_trajectory)
+        
+        loss_dict = {
+            "trajectory": trajectory_loss.item(),
+            "total": trajectory_loss.item()
+        }
+        
+        return trajectory_loss, loss_dict
 
     def compute_component_losses(self, pred, target):
         position_loss = mse_loss(

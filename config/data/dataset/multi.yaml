@@ -1,0 +1,26 @@
+_target_: data.multi_dataset_module.MultiDatasetModule
+simulation_config:
+  _target_: data.simulation.dataset.SimulationDataset
+  data_path: ${oc.env:SIMULATION_DATA_PATH}
+  embedding_dim: ${clip.latent_dim}
+  clip_embeddings:
+    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
+    clip_model_name: ${clip.model_name}
+    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
+    embedding_dimension: 512
+    normalize: true
+
+ccdm_config:
+  _target_: data.ccdm.CCDMDataset
+  data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
+  clip_model_name: ${clip.model_name}
+  embedding_dim: 512
+  standardize: true
+  max_seq_len: 300
+
+
+batch_size: ${data.batch_size}
+val_size: ${data.val_size}
+test_size: ${data.test_size}
+num_workers: ${data.num_workers}
+sim_ratio: 0.5  # Ratio of simulation samples in batch

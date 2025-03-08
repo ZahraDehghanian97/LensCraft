@@ -6,6 +6,7 @@ import lightning as L
 from torch.utils.data import random_split, DataLoader
 from data.simulation.dataset import collate_fn
 from data.et.dataset import collate_fn as et_collate_fn
+from data.ccdm.dataset import collate_fn as ccdm_collate_fn
 
 
 class CameraTrajectoryDataModule(L.LightningDataModule):
@@ -15,8 +16,16 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         self.batch_size = batch_size
         self.val_size = val_size
         self.test_size = test_size
-        self.dataset_mode = 'et' if 'ETDataset' in dataset_config['_target_'] else 'simulation'
-        self.collate_fn = et_collate_fn if self.dataset_mode == 'et' else collate_fn
+        
+        if 'ETDataset' in dataset_config['_target_']:
+            self.dataset_mode = 'et'
+            self.collate_fn = et_collate_fn
+        elif 'CCDMDataset' in dataset_config['_target_']:
+            self.dataset_mode = 'ccdm'
+            self.collate_fn = ccdm_collate_fn
+        else:
+            self.dataset_mode = 'simulation'
+            self.collate_fn = collate_fn
         
         self.is_mac = platform.system() == 'Darwin'
         self.setup_platform_specific(num_workers)

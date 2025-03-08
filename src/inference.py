@@ -8,6 +8,7 @@ from data.datamodule import CameraTrajectoryDataModule
 from inference.checkpoint_utils import load_checkpoint
 from data.simulation.dataset import collate_fn
 from data.et.dataset import collate_fn as et_collate_fn
+from data.ccdm.dataset import collate_fn as ccdm_collate_fn
 from inference.export_et import export_et_trajectories
 from inference.export_simulation import export_simulation, prepare_output_directory
 
@@ -34,7 +35,43 @@ def main(cfg: DictConfig):
     data_module.setup()
     dataset = data_module.test_dataset.dataset
 
-    if 'ETDataset' in cfg.data.dataset.module['_target_']:
+    if 'CCDMDataset' in cfg.data.dataset.module['_target_']:
+        simulations = []
+        num_samples = min(7, len(dataset)) if cfg.sample_id is None else 1
+        sample_indices = [cfg.sample_id] if cfg.sample_id is not None else range(num_samples)
+        
+        for idx in sample_indices:
+            batch = ccdm_collate_fn([dataset[idx]])
+            
+            subject_traj_loc_rot = batch['subject_trajectory_loc_rot'].to(device)
+            subject_vol = batch['subject_volume'].to(device)
+            
+            with torch.no_grad():
+                rec = model.inference(
+                    subject_trajectory_loc_rot=subject_traj_loc_rot,
+                    subject_volume=subject_vol,
+                    camera_trajectory=batch['camera_trajectory'].to(device),
+                    padding_mask=batch.get('padding_mask', None),
+                )
+            
+            original_item = dataset[idx]
+            caption = original_item.get('raw_text', None) if isinstance(original_item, dict) else None
+            
+            sim_data = {
+                "subject": batch['subject_trajectory'][0] if 'subject_trajectory' in batch else None,
+                "subject_loc_rot": subject_traj_loc_rot[0].cpu(),
+                "subject_vol": subject_vol[0].cpu(),
+                "camera": batch['camera_trajectory'][0],
+                "rec": rec,
+                "padding_mask": batch.get('padding_mask', None),
+            }
+            
+            simulations.append(sim_data)
+            
+        output_dir = prepare_output_directory(cfg.output_dir)
+        export_simulation(simulations, output_dir)
+    
+    elif 'ETDataset' in cfg.data.dataset.module['_target_']:
         simulations = []
         num_samples = min(7, len(dataset)) if cfg.sample_id is None else 1
         sample_indices = [cfg.sample_id] if cfg.sample_id is not None else range(num_samples)
