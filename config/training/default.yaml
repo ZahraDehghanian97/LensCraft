@@ -11,8 +11,8 @@ loss_module:
   n_clip_embs: 28
   losses_list:
     - clip 
-    # - trajectory
-    - contrastive
+    - trajectory
+    # - contrastive
   weighted_clip_loss: false
   weight_power: 1
   clip_loss_scaling_factor: 37500  
@@ -53,7 +53,9 @@ loss_module:
     clip_model_name: ${clip.model_name}
     cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
     embedding_dimension: 512
-    normalize: true
+    embedding_mode: "normal" # choose between ["default", "normal", "pca"]
+    n_components_pca: 100
+  encoder_loss_function: "clip"  # choose between ["clip", "mse"]
 
 noise:
   initial_std: 1.0

@@ -17,7 +17,8 @@ class CameraTrajectoryLoss:
                  trajectory_loss_ratio: float=10,
                  contrastive_loss_scaling_factor: float=0.1,
                  angle_loss_scaling_factor: float=180,
-                 clip_embeddings: dict=None
+                 clip_embeddings: dict=None,
+                 encoder_loss_function: str="clip"
                  ):
         self.angle_loss = AngleLoss(angle_loss_scaling_factor)
         self.position_slice = slice(0, 4)
@@ -32,7 +33,9 @@ class CameraTrajectoryLoss:
         self.clip_loss_scaling_factor = clip_loss_scaling_factor
         self.trajectory_loss_ratio = trajectory_loss_ratio
         self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
+        self.encoder_loss_function = encoder_loss_function
         self.clip_embeddings = clip_embeddings
+
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         
         if self.weighted_clip_loss:
@@ -51,7 +54,7 @@ class CameraTrajectoryLoss:
         #         embeds = embeds / embeds.norm(dim=-1, keepdim=True)
         #         self.all_categories[cat] = (keys, embeds)
 
-    def __call__(self, model_output, camera_trajectory, clip_targets, batch, tgt_key_padding_mask=None):
+    def __call__(self, model_output, camera_trajectory, clip_target, batch, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed']
         clip_pred = model_output['embeddings']
         
@@ -65,7 +68,7 @@ class CameraTrajectoryLoss:
             reconstructed,
             camera_trajectory,
             clip_pred,
-            clip_targets,
+            clip_target,
             batch
         )
 
@@ -87,16 +90,24 @@ class CameraTrajectoryLoss:
             loss_dict["contrastive"] = contrastive_loss.item()
 
         if "clip" in self.losses_list:
-            total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(clip_target, clip_pred, self.n_clip_embs, self.weighted_clip_loss, self.clip_weights, self.sum_clip_weights)
-            if self.weighted_clip_loss:
-                total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
-            else:
-                total_loss += total_clip_loss / clip_pred.shape[1] * self.clip_loss_scaling_factor
+            if self.encoder_loss_function == "clip":
+                total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(clip_target, clip_pred, self.n_clip_embs, self.weighted_clip_loss, self.clip_weights, self.sum_clip_weights)
+                if self.weighted_clip_loss:
+                    total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
+                else:
+                    total_loss += total_clip_loss / clip_pred.shape[1] * self.clip_loss_scaling_factor
+
+            elif self.encoder_loss_function == "mse":
+                total_clip_loss = mse_loss(clip_target, clip_pred)
+                total_loss += total_clip_loss
+
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
             loss_dict["average_clip"] = total_clip_loss
 
-            print("CLIP LOSS:            {}".format(total_clip_loss))
-            print("Contrastive Loss:     {}".format(contrastive_loss))
+        print("CLIP LOSS: {:.3f}".format(total_clip_loss))
+        print("TRAJ LOSS: {:.3f}".format(trajectory_loss))
+        # print("CONT Loss:     {:.3f}".format(contrastive_loss))
+        print("TOTL LOSS: {:.3f}".format(total_loss))
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
@@ -142,7 +153,7 @@ class CameraTrajectoryLoss:
                     random_index = np.random.choice(valid_indices)
                     random_embedding_name = list(embedding_type_enum)[random_index]
                     random_embedding_name = self.get_embedding_name(random_embedding_name)
-                    random_embedding_vector = self.clip_embeddings[embedding_type_name][random_embedding_name]
+                    random_embedding_vector = self.clip_embeddings[embedding_type_name][random_embedding_name] # FIXME: decide clip embedding
                     modified_sample[index] = random_embedding_vector
                 else:
                     modified_sample[index] = embedding

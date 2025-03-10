@@ -77,3 +77,14 @@ def get_struct_parameters(struct: list, last_value=None) -> list:
         else:
             parameter_list.append((last_value + "_" + parameter, value_type))
     return parameter_list
+
+
+def create_instruction_tensor(parameters: List, struct_size: int) -> torch.Tensor:
+    embedding_dim = len(parameters[0][-1])
+    instruction_tensor = torch.full((struct_size, embedding_dim), -1, dtype=torch.float)
+    
+    for param_idx, (_, _, _, embedding) in enumerate(parameters):
+        if embedding is not None:
+            instruction_tensor[param_idx] = embedding
+            
+    return instruction_tensor

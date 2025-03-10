@@ -6,6 +6,7 @@ from .caption import enum_descriptions
 from models.clip_embeddings import CLIPEmbedder
 import numpy as np
 import copy
+from sklearn.decomposition import PCA
 
 def calc_embedding_mean(embeddings_data: dict, embedding_dimension: int=512) -> dict:
     means = {}
@@ -44,12 +45,47 @@ def normalize_embeddings(embeddings_data: dict, embedding_dimension: int) -> dic
     return embeddings_data_normalized
 
 
+
+def pca_embeddings(embeddings_data: dict, n_components: int) -> tuple[dict, dict]:
+    clip_emb = copy.deepcopy(embeddings_data)
+    pca_map = dict()
+    for key, value in clip_emb.items():
+        feature_embeddings = list()
+        n_feature_embeddings = len(value)
+
+        for key_n, value_n in value.items():
+            feature_embeddings.append(value_n)
+        feature_embeddings = np.array(feature_embeddings)
+        std = feature_embeddings.std(axis=0)
+
+        while feature_embeddings.shape[0] < n_components:
+            noise = np.random.randn(*feature_embeddings.shape) * (std * 10e-4)
+            feature_embeddings = np.concatenate([feature_embeddings, 
+                                                 feature_embeddings + noise], axis=0)
+
+        pca = PCA(n_components=n_components)
+        pca.fit(feature_embeddings)
+        feature_embeddings_low_dim = pca.transform(feature_embeddings[:n_feature_embeddings, :])
+        pca_map[key] = pca
+
+        feature_embeddings_low_dim = torch.tensor(feature_embeddings_low_dim)
+        idx = 0
+        for key_n, value_n in value.items():
+            clip_emb[key][key_n] = feature_embeddings_low_dim[idx, :]
+            idx += 1
+
+    return clip_emb, pca_map
+
+
+
+
 def initialize_all_clip_embeddings(
     clip_model_name: str = "openai/clip-vit-large-patch14",
     cache_file: str = "clip_embeddings_cache.pkl",
     chunk_size: int = 100,
     embedding_dimension: int = 512,
-    normalize: bool = False,
+    embedding_mode: str = "default",
+    n_components_pca: int = 10
 ) -> Dict[str, Any]:
     cache_dir = os.path.dirname(cache_file)
     if cache_dir:
@@ -58,46 +94,47 @@ def initialize_all_clip_embeddings(
     try:
         with open(cache_file, 'rb') as f:
             print(f"Loading CLIP embeddings from cache: {cache_file}")
-            if normalize:
-                return normalize_embeddings(pickle.load(f), embedding_dimension)
-            else:
-                return pickle.load(f)
+            embeddings = pickle.load(f)
     except (FileNotFoundError, pickle.UnpicklingError):
         print("Generating new CLIP embeddings...")
 
-    embedder = CLIPEmbedder(clip_model_name, chunk_size=chunk_size)
-    
-    all_sentences: List[str] = []
-    metadata: List[Tuple[str, str]] = []  
-    
-    for param_type, descriptions in enum_descriptions.items():
-        for key, sentence in descriptions.items():
-            all_sentences.append(sentence)
-            metadata.append((param_type, key))
-    
-    bool_sentences = ["enabled", "disabled"]
-    bool_keys = [True, False]
-    all_sentences.extend(bool_sentences)
-    metadata.extend([("boolean", str(key)) for key in bool_keys])
-    
-    all_embeddings = embedder.get_embeddings(all_sentences).to('cpu')
-    
-    embeddings_data: Dict[str, Dict[Any, torch.Tensor]] = {
-        param_type: {} for param_type in enum_descriptions.keys()
-    }
-    embeddings_data["boolean"] = {}
-    
-    for (param_type, key), embedding in zip(metadata, all_embeddings):
-        if param_type == "boolean":
-            embeddings_data[param_type][key == "True"] = embedding
-        else:
-            embeddings_data[param_type][key] = embedding
+        embedder = CLIPEmbedder(clip_model_name, chunk_size=chunk_size)
 
-    with open(cache_file, 'wb') as f:
-        pickle.dump(embeddings_data, f)
-    
-    print(f"Saved CLIP embeddings to cache: {cache_file}")
-    if normalize:
-        return normalize_embeddings(embeddings_data, embedding_dimension)
-    else: 
-        return embeddings_data
+        all_sentences: List[str] = []
+        metadata: List[Tuple[str, str]] = []  
+
+        for param_type, descriptions in enum_descriptions.items():
+            for key, sentence in descriptions.items():
+                all_sentences.append(sentence)
+                metadata.append((param_type, key))
+
+        bool_sentences = ["enabled", "disabled"]
+        bool_keys = [True, False]
+        all_sentences.extend(bool_sentences)
+        metadata.extend([("boolean", str(key)) for key in bool_keys])
+
+        all_embeddings = embedder.get_embeddings(all_sentences).to('cpu')
+
+        embeddings: Dict[str, Dict[Any, torch.Tensor]] = {
+            param_type: {} for param_type in enum_descriptions.keys()
+        }
+        embeddings["boolean"] = {}
+
+        for (param_type, key), embedding in zip(metadata, all_embeddings):
+            if param_type == "boolean":
+                embeddings[param_type][key == "True"] = embedding
+            else:
+                embeddings[param_type][key] = embedding
+
+        with open(cache_file, 'wb') as f:
+            pickle.dump(embeddings, f)
+
+        print(f"Saved CLIP embeddings to cache: {cache_file}")
+
+    finally:
+        if embedding_mode == "default":
+            return embedding
+        elif embedding_mode == "normal":
+            return normalize_embeddings(embeddings, embedding_dimension)
+        elif embedding_mode == "pca":
+            return pca_embeddings(embeddings, n_components_pca)

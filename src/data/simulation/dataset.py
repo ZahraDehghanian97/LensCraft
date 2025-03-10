@@ -10,7 +10,7 @@ from .constants import (
     simulation_struct,
     simulation_struct_size,
 )
-from .utils import get_parameters
+from .utils import get_parameters, create_instruction_tensor
 from .loader import load_simulation_file
 
 class SimulationDataset(Dataset):
@@ -37,7 +37,8 @@ class SimulationDataset(Dataset):
             raise ValueError(f"No simulation files found in {data_path}")
 
     def __len__(self) -> int:
-        return len(self.simulation_files)
+        # return len(self.simulation_files)
+        return 100000 # FIXME
 
     def __getitem__(self, index: int) -> Dict:
         file_path = self.simulation_files[index]
@@ -47,33 +48,20 @@ class SimulationDataset(Dataset):
             raise ValueError(f"Failed to load simulation file at index {index}")
             
         return self._process_single_simulation(data)
+    
 
     def _process_single_simulation(self, simulation_data: Dict) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data["cameraFrames"])
         subject_loc_rot, subject_vol = self._extract_subject_components(simulation_data["subjectsInfo"])
+        
         instruction = simulation_data["simulationInstructions"][0]
         prompt = simulation_data["cinematographyPrompts"][0]
-
-        simulation_instruction = get_parameters(
-            data=instruction,
-            struct=simulation_struct,
-            clip_embeddings=self.clip_embeddings
-        )
-        cinematography_prompt = get_parameters(
-            data=prompt,
-            struct=cinematography_struct,
-            clip_embeddings=self.clip_embeddings
-        )
-
-        simulation_instruction_tensor = self._create_instruction_tensor(
-            simulation_instruction,
-            simulation_struct_size
-        )
-        cinematography_prompt_tensor = self._create_instruction_tensor(
-            cinematography_prompt,
-            cinematography_struct_size
-        )
-
+        
+        simulation_instruction = get_parameters(data=instruction, struct=simulation_struct, clip_embeddings=self.clip_embeddings)
+        cinematography_prompt = get_parameters(data=prompt, struct=cinematography_struct, clip_embeddings=self.clip_embeddings)
+        simulation_instruction_tensor = create_instruction_tensor(simulation_instruction, simulation_struct_size)
+        cinematography_prompt_tensor = create_instruction_tensor(cinematography_prompt, cinematography_struct_size)
+        
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
             "subject_trajectory_loc_rot": torch.tensor(subject_loc_rot, dtype=torch.float32),
@@ -81,17 +69,9 @@ class SimulationDataset(Dataset):
             "simulation_instruction": simulation_instruction_tensor,
             "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction,
-            "cinematography_prompt_parameters": cinematography_prompt
+            "cinematography_prompt_parameters": cinematography_prompt,
         }
 
-    def _create_instruction_tensor(self, parameters: List, struct_size: int) -> torch.Tensor:
-        instruction_tensor = torch.full((struct_size, self.embedding_dim), -1, dtype=torch.float)
-        
-        for param_idx, (_, _, _, embedding) in enumerate(parameters):
-            if embedding is not None:
-                instruction_tensor[param_idx] = embedding
-                
-        return instruction_tensor
 
     def _extract_camera_trajectory(self, camera_frames: List[Dict]) -> List[List[float]]:
         return [

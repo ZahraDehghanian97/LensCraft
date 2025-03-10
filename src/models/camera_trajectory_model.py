@@ -140,7 +140,7 @@ class MultiTaskAutoencoder(nn.Module):
 
         output = {
             'embeddings': camera_embedding,
-            'reconstructed': torch.zeros(src.shape),
+            'reconstructed': reconstructed,
         }
         
         if self.use_merged_memory:
