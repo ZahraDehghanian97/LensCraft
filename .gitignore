@@ -147,3 +147,4 @@ test_optuna.py
 multirun
 
 datasets/files
+*.pkl

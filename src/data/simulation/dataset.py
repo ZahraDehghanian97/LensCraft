@@ -10,7 +10,7 @@ from .constants import (
     simulation_struct,
     simulation_struct_size,
 )
-from .utils import get_parameters
+from .utils import get_parameters, create_instruction_tensor
 from .loader import load_simulation_file
 
 class SimulationDataset(Dataset):
@@ -65,11 +65,11 @@ class SimulationDataset(Dataset):
             clip_embeddings=self.clip_embeddings
         )
 
-        simulation_instruction_tensor = self._create_instruction_tensor(
+        simulation_instruction_tensor = create_instruction_tensor(
             simulation_instruction,
             simulation_struct_size
         )
-        cinematography_prompt_tensor = self._create_instruction_tensor(
+        cinematography_prompt_tensor = create_instruction_tensor(
             cinematography_prompt,
             cinematography_struct_size
         )
@@ -84,14 +84,6 @@ class SimulationDataset(Dataset):
             "cinematography_prompt_parameters": cinematography_prompt
         }
 
-    def _create_instruction_tensor(self, parameters: List, struct_size: int) -> torch.Tensor:
-        instruction_tensor = torch.full((struct_size, self.embedding_dim), -1, dtype=torch.float)
-        
-        for param_idx, (_, _, _, embedding) in enumerate(parameters):
-            if embedding is not None:
-                instruction_tensor[param_idx] = embedding
-                
-        return instruction_tensor
 
     def _extract_camera_trajectory(self, camera_frames: List[Dict]) -> List[List[float]]:
         return [
@@ -135,7 +127,6 @@ class SimulationDataset(Dataset):
 
 def collate_fn(batch):
     vol_batch = torch.stack([item["subject_volume"] for item in batch])
-    vol_batch = vol_batch.permute(0, 2, 1)
     
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),

@@ -1,5 +1,6 @@
 from typing import Optional, Dict
 
+import pickle
 import torch
 import torch.nn as nn
 
@@ -20,7 +21,8 @@ class MultiTaskAutoencoder(nn.Module):
         dropout_rate: float = 0.1, 
         seq_length: int = 30, 
         latent_dim: int = 512, 
-        use_merged_memory: bool = False
+        use_merged_memory: bool = False,
+        denormalize_memory: bool = False
     ):
         super(MultiTaskAutoencoder, self).__init__()
         
@@ -28,7 +30,7 @@ class MultiTaskAutoencoder(nn.Module):
         self.memory_tokens_count = cinematography_struct_size
 
         self.subject_projection_loc_rot = nn.Linear(subject_dim, latent_dim)
-        self.subject_projection_vol = nn.Linear(1, latent_dim)
+        self.subject_projection_vol = nn.Linear(3, latent_dim)
 
         self.encoder = Encoder(
             input_dim,
@@ -57,6 +59,22 @@ class MultiTaskAutoencoder(nn.Module):
         )
 
         self.use_merged_memory = use_merged_memory
+        self.denormalize_memory = denormalize_memory
+        self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
+        if self.denormalize_memory:
+            self.embedding_means, self.embedding_stds = self.load_means_and_stds()
+        self.cinematography_features = [
+            "CameraVerticalAngle",
+            "ShotSize",
+            "SubjectView",
+            "SubjectInFramePosition",
+            "CameraMovementType",
+            "MovementSpeed",
+            "CameraVerticalAngle",
+            "ShotSize",
+            "SubjectView",
+            "SubjectInFramePosition"
+        ]
 
     def prepare_decoder_memory(
         self,
@@ -69,6 +87,11 @@ class MultiTaskAutoencoder(nn.Module):
             if caption_embedding is None:
                 raise ValueError("Both memory and caption_embedding cannot be None")
             merged_memory = caption_embedding
+            if self.denormalize_memory:
+                for i in range(merged_memory.shape[0]):
+                    feature = self.cinematography_features[i]
+                    mean, std = self.get_mean_and_std(feature)
+                    merged_memory[i, :, :] = merged_memory[i, :, :] * std + mean
         else:
             if self.use_merged_memory:
                 _, batch_size, _ = camera_embedding.shape
@@ -79,10 +102,20 @@ class MultiTaskAutoencoder(nn.Module):
                 merged_memory = camera_embedding[:self.memory_tokens_count]
             
             if teacher_forcing_ratio > 0 and caption_embedding is not None:
-                merged_memory = (
-                    (1 - teacher_forcing_ratio) * merged_memory +
-                    teacher_forcing_ratio * caption_embedding
-                )
+                if self.denormalize_memory:
+                    for i in range(merged_memory.shape[0]):
+                        feature = self.cinematography_features[i]
+                        mean, std = self.get_mean_and_std(feature)
+                        merged_memory[i, :, :] = (
+                            (1 - teacher_forcing_ratio) * (merged_memory[i, :, :] * std + mean) + 
+                            teacher_forcing_ratio * (caption_embedding[i, :, :] * std + mean) 
+                        )
+                else:
+                    merged_memory = (
+                        (1 - teacher_forcing_ratio) * merged_memory +
+                        teacher_forcing_ratio * caption_embedding
+                    )
+
         
         if mask_memory_prob > 0.0:
             memory_mask = (
@@ -123,7 +156,7 @@ class MultiTaskAutoencoder(nn.Module):
         )     
 
         memory = self.prepare_decoder_memory(
-            camera_embedding=camera_embedding,
+            camera_embedding=camera_embedding.clone(),
             caption_embedding=caption_embedding,
             teacher_forcing_ratio=teacher_forcing_ratio,
             mask_memory_prob=mask_memory_prob
@@ -219,3 +252,17 @@ class MultiTaskAutoencoder(nn.Module):
                 )
                 
                 return {'reconstructed': reconstructed}
+    
+    
+    def load_means_and_stds(self):
+        with open("embedding_means.pkl", 'rb') as f:
+            embedding_means = pickle.load(f)
+        with open("embedding_stds.pkl", "rb") as f:
+            embedding_stds = pickle.load(f)
+        return embedding_means, embedding_stds
+    
+    
+    def get_mean_and_std(self, feature):
+        mean = torch.tensor(self.embedding_means[feature], device=self.device)
+        std = torch.tensor(self.embedding_stds[feature], device=self.device)
+        return mean, std

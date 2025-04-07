@@ -11,7 +11,7 @@ loss_module:
   n_clip_embs: 28
   losses_list:
     - clip 
-    # - trajectory
+    - trajectory
     # - contrastive
   weighted_clip_loss: false
   weight_power: 1
@@ -48,11 +48,14 @@ loss_module:
     clip_25: 1     # constraints_allFramesVisibility
     clip_26: 1     # constraints_staticDistance
     clip_27: 1     # constraints_staticCameraSubjectRotation
-  # clip_embeddings:
-  #   _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
-  #   clip_model_name: ${clip.model_name}
-  #   cache_file: clip_embeddings_${clip.model_name}_cache.pkl
-  #   data_path: ${data.dataset.module.data_path}
+  clip_embeddings:
+    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
+    clip_model_name: ${clip.model_name}
+    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
+    embedding_dimension: 512
+    embedding_mode: "default" # choose between ["default", "normal", "pca"]
+    n_components_pca: 100
+  encoder_loss_function: "clip" # choose between ["clip", "mse"]
 
 noise:
   initial_std: 1.0

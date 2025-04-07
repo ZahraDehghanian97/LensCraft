@@ -1,7 +1,7 @@
 defaults:
-  - training: multi
+  - training: default
   - trainer: default
-  - data: multi
+  - data: default
   - output: default
   - clip: default
   - hydra: default

@@ -192,3 +192,5 @@ cinematography_struct_parameters = get_struct_parameters(cinematography_struct)
 simulation_struct_parameters = get_struct_parameters(simulation_struct)
 
 CLIP_PARAMETERS = cinematography_struct_parameters + simulation_struct_parameters
+
+CLIP_PARAMETERS_DICT = dict(CLIP_PARAMETERS)
