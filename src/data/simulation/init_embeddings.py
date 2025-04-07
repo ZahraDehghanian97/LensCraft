@@ -120,7 +120,7 @@ def initialize_all_clip_embeddings(
         all_sentences.extend(bool_sentences)
         metadata.extend([("boolean", str(key)) for key in bool_keys])
 
-        all_embeddings = embedder.get_embeddings(all_sentences).to('cpu')
+        all_embeddings = embedder.extract_clip_embeddings(all_sentences).to('cpu')
 
         embeddings: Dict[str, Dict[Any, torch.Tensor]] = {
             param_type: {} for param_type in enum_descriptions.keys()

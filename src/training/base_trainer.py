@@ -56,7 +56,7 @@ class BaseTrainer(L.LightningModule):
             self.model = torch.compile(self.model, mode=self.compile_mode)
             self.compiled = True
 
-    def _get_current_ratios(self) -> Dict[str, float]:
+    def _calculate_schedule_parameters(self) -> Dict[str, float]:
         current_epoch = self.current_epoch
         max_epochs = self.trainer.max_epochs
 
@@ -102,7 +102,7 @@ class BaseTrainer(L.LightningModule):
                 teacher_forcing_ratio=0.5 if teacher_forcing_ratio is None else teacher_forcing_ratio
             )
 
-        ratios = self._get_current_ratios()
+        ratios = self._calculate_schedule_parameters()
         
         valid_len = (
             (~tgt_key_padding_mask).sum(dim=1) 

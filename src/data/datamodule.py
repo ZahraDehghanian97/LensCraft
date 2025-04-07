@@ -28,9 +28,9 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             self.collate_fn = collate_fn
         
         self.is_mac = platform.system() == 'Darwin'
-        self.setup_platform_specific(num_workers)
+        self.configure_platform_optimizations(num_workers)
 
-    def setup_platform_specific(self, num_workers):
+    def configure_platform_optimizations(self, num_workers):
         cpu_count = os.cpu_count()
         memory_gb = psutil.virtual_memory().available / (1024 ** 3)
         

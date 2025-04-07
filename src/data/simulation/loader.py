@@ -36,7 +36,7 @@ def reconstruct_from_reference(refs: List[List[int]], dictionary: Dict) -> List[
         
     return obj
 
-def _expand_subjects_info(compressed_subjects: List[Dict]) -> List[Dict]:
+def _decode_compressed_subject_data(compressed_subjects: List[Dict]) -> List[Dict]:
     expanded = []
     for subject in compressed_subjects:
         frames = []
@@ -76,7 +76,7 @@ def _expand_subjects_info(compressed_subjects: List[Dict]) -> List[Dict]:
         expanded.append(subject_info)
     return expanded
 
-def _expand_camera_frames(compressed_frames: List[List[float]]) -> List[Dict]:
+def _convert_camera_arrays_to_objects(compressed_frames: List[List[float]]) -> List[Dict]:
     return [{
         "position": {"x": frame[0], "y": frame[1], "z": frame[2]},
         "rotation": {"x": frame[3], "y": frame[4], "z": frame[5]},
@@ -84,7 +84,7 @@ def _expand_camera_frames(compressed_frames: List[List[float]]) -> List[Dict]:
         "aspectRatio": frame[7]
     } for frame in compressed_frames]
 
-def load_simulation_file(file_path: Path, parameter_dictionary: Dict) -> Optional[Dict]:
+def parse_simulation_file_to_dict(file_path: Path, parameter_dictionary: Dict) -> Optional[Dict]:
     try:
         with open(file_path, 'rb') as file:
             raw_data = file.read()
@@ -109,8 +109,8 @@ def load_simulation_file(file_path: Path, parameter_dictionary: Dict) -> Optiona
         return {
             "cinematographyPrompts": [cinematography_prompts],
             "simulationInstructions": [simulation_instructions],
-            "subjectsInfo": _expand_subjects_info(unround_floats(subjects_info)),
-            "cameraFrames": _expand_camera_frames(unround_floats(camera_frames))
+            "subjectsInfo": _decode_compressed_subject_data(unround_floats(subjects_info)),
+            "cameraFrames": _convert_camera_arrays_to_objects(unround_floats(camera_frames))
         }
     except Exception as e:
         return None

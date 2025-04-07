@@ -22,13 +22,13 @@ class CCDMDataset(Dataset):
         self.seq_len = seq_len
         self.default_focal_length = default_focal_length
         
-        self._load_data()
+        self._load_camera_trajectory_data()
         self.clip_embedder = CLIPEmbedder(
             model_name=self.clip_model_name,
             device="cuda" if torch.cuda.is_available() else "cpu"
         )
     
-    def _load_data(self):
+    def _load_camera_trajectory_data(self):
         data_file = self.data_path
         if not data_file.exists():
             raise FileNotFoundError(f"Data file not found at {data_file}")
@@ -56,7 +56,7 @@ class CCDMDataset(Dataset):
     def __len__(self) -> int:
         return len(self.camera_trajectories)
     
-    def _convert_ccdm_to_simulation_format(self, camera_trajectory: torch.Tensor) -> torch.Tensor:
+    def _transform_camera_format_to_simulation(self, camera_trajectory: torch.Tensor) -> torch.Tensor:
         frames_count = camera_trajectory.shape[0]
         simulation_format = torch.zeros((frames_count, 7), dtype=torch.float32)
         
@@ -91,11 +91,11 @@ class CCDMDataset(Dataset):
             indices = torch.linspace(0, traj_length - 1, self.seq_len).long()
             camera_trajectory = camera_trajectory[indices]
         
-        camera_trajectory_sim = self._convert_ccdm_to_simulation_format(camera_trajectory)
+        camera_trajectory_sim = self._transform_camera_format_to_simulation(camera_trajectory)
         
         text = " ".join(text_description)
         with torch.no_grad():
-            text_embedding = self.clip_embedder.get_embeddings([text])[0].cpu()
+            text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
         
         subject_loc_rot = torch.zeros((self.seq_len, 6), dtype=torch.float32)        
         subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)

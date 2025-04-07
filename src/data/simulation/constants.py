@@ -1,6 +1,6 @@
 from enum import Enum
 
-from data.simulation.utils import count_parameters, get_struct_parameters
+from data.simulation.utils import count_total_parameters_in_struct, flatten_struct_parameters
 
 
 class CameraVerticalAngle(Enum):
@@ -150,7 +150,7 @@ cinematography_struct = [
     ])
 ]
 
-cinematography_struct_size = count_parameters(cinematography_struct)
+cinematography_struct_size = count_total_parameters_in_struct(cinematography_struct)
 
 simulation_struct = [
     ("initialSetup", [
@@ -185,11 +185,11 @@ simulation_struct = [
     ])
 ]
 
-simulation_struct_size = count_parameters(simulation_struct)
+simulation_struct_size = count_total_parameters_in_struct(simulation_struct)
 
-cinematography_struct_parameters = get_struct_parameters(cinematography_struct)
+cinematography_struct_parameters = flatten_struct_parameters(cinematography_struct)
 
-simulation_struct_parameters = get_struct_parameters(simulation_struct)
+simulation_struct_parameters = flatten_struct_parameters(simulation_struct)
 
 CLIP_PARAMETERS = cinematography_struct_parameters + simulation_struct_parameters
 

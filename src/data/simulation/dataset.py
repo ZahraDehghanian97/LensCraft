@@ -10,8 +10,8 @@ from .constants import (
     simulation_struct,
     simulation_struct_size,
 )
-from .utils import get_parameters, create_instruction_tensor
-from .loader import load_simulation_file
+from .utils import extract_cinematography_parameters, convert_parameters_to_embedding_tensor
+from .loader import parse_simulation_file_to_dict
 
 class SimulationDataset(Dataset):
     def __init__(self, data_path: str, clip_embeddings: Dict, embedding_dim: int):
@@ -41,35 +41,35 @@ class SimulationDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict:
         file_path = self.simulation_files[index]
-        data = load_simulation_file(file_path, self.parameter_dictionary)
+        data = parse_simulation_file_to_dict(file_path, self.parameter_dictionary)
         
         if data is None:
             raise ValueError(f"Failed to load simulation file at index {index}")
             
-        return self._process_single_simulation(data)
+        return self._convert_simulation_to_model_inputs(data)
 
-    def _process_single_simulation(self, simulation_data: Dict) -> Dict:
+    def _convert_simulation_to_model_inputs(self, simulation_data: Dict) -> Dict:
         camera_trajectory = self._extract_camera_trajectory(simulation_data["cameraFrames"])
         subject_loc_rot, subject_vol = self._extract_subject_components(simulation_data["subjectsInfo"])
         instruction = simulation_data["simulationInstructions"][0]
         prompt = simulation_data["cinematographyPrompts"][0]
 
-        simulation_instruction = get_parameters(
+        simulation_instruction = extract_cinematography_parameters(
             data=instruction,
             struct=simulation_struct,
             clip_embeddings=self.clip_embeddings
         )
-        cinematography_prompt = get_parameters(
+        cinematography_prompt = extract_cinematography_parameters(
             data=prompt,
             struct=cinematography_struct,
             clip_embeddings=self.clip_embeddings
         )
 
-        simulation_instruction_tensor = create_instruction_tensor(
+        simulation_instruction_tensor = convert_parameters_to_embedding_tensor(
             simulation_instruction,
             simulation_struct_size
         )
-        cinematography_prompt_tensor = create_instruction_tensor(
+        cinematography_prompt_tensor = convert_parameters_to_embedding_tensor(
             cinematography_prompt,
             cinematography_struct_size
         )

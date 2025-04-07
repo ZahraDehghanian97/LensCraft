@@ -20,13 +20,13 @@ class Decoder(nn.Module):
 
         self.output_projection = nn.Linear(latent_dim, output_dim)
 
-    def generate_square_subsequent_mask(self, sz):
+    def create_autoregressive_attention_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float(
             '-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    def _process_inputs(self, decoder_input, subject_embedding, tgt_key_padding_mask=None):
+    def prepare_decoder_inputs_with_positioning(self, decoder_input, subject_embedding, tgt_key_padding_mask=None):
         embedded = self.embedding(decoder_input)
         embedded = torch.cat([subject_embedding, embedded], dim=1)
         embedded = self.pos_encoder(embedded)
@@ -42,7 +42,7 @@ class Decoder(nn.Module):
         decoder_input = torch.zeros(
             memory.shape[1], self.seq_length, self.output_dim, device=memory.device)
 
-        embedded, tgt_key_padding_mask = self._process_inputs(
+        embedded, tgt_key_padding_mask = self.prepare_decoder_inputs_with_positioning(
             decoder_input, subject_embedding, tgt_key_padding_mask)
 
         output = self.transformer_decoder(
@@ -58,7 +58,7 @@ class Decoder(nn.Module):
         outputs = []
 
         for t in range(self.seq_length):
-            tgt_mask = self.generate_square_subsequent_mask(
+            tgt_mask = self.create_autoregressive_attention_mask(
                 t + 2).to(memory.device)
 
             embedded, _ = self._process_inputs(

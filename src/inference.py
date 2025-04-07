@@ -47,7 +47,7 @@ def main(cfg: DictConfig):
             subject_vol = batch['subject_volume'].to(device)
             
             with torch.no_grad():
-                rec = model.inference(
+                rec = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_traj_loc_rot,
                     subject_volume=subject_vol,
                     camera_trajectory=batch['camera_trajectory'].to(device),
@@ -84,14 +84,14 @@ def main(cfg: DictConfig):
             subject_vol = subject_traj[:, 0:1, 3:6].permute(0, 2, 1)
             
             with torch.no_grad():
-                rec = model.inference(
+                rec = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_loc_rot,
                     subject_volume=subject_vol,
                     camera_trajectory=batch['camera_trajectory'].to(device),
                     padding_mask=batch.get('padding_mask', None),
                 )
                 
-                prompt_gen = model.inference(
+                prompt_gen = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_loc_rot,
                     subject_volume=subject_vol,
                     caption_embedding=batch['caption_feat'].to(device).unsqueeze(0),
@@ -101,7 +101,7 @@ def main(cfg: DictConfig):
                 
                 hybrid_gen = None
                 if 'camera_trajectory' in batch and 'caption_feat' in batch:
-                    hybrid_gen = model.inference(
+                    hybrid_gen = model.generate_camera_trajectory(
                         subject_trajectory_loc_rot=subject_loc_rot,
                         subject_volume=subject_vol,
                         camera_trajectory=batch['camera_trajectory'].to(device),
@@ -148,13 +148,13 @@ def main(cfg: DictConfig):
             subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot'].to(device)
             subject_volume = batch['subject_volume'].to(device)
             
-            rec = model.inference(
+            rec = model.generate_camera_trajectory(
                 subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                 subject_volume=subject_volume,
                 camera_trajectory=batch['camera_trajectory'].to(device)
             )
             
-            prompt_gen = model.inference(
+            prompt_gen = model.generate_camera_trajectory(
                 subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                 subject_volume=subject_volume,
                 camera_trajectory=batch['camera_trajectory'].to(device),
@@ -162,7 +162,7 @@ def main(cfg: DictConfig):
                 teacher_forcing_ratio=1.0
             )
             
-            hybrid_gen = model.inference(
+            hybrid_gen = model.generate_camera_trajectory(
                 subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                 subject_volume=subject_volume,
                 camera_trajectory=batch['camera_trajectory'].to(device),
