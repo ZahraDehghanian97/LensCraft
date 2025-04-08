@@ -80,7 +80,7 @@ def generate_simulation_format(camera, subject_loc_rot=None, subject_vol=None, s
     
     return res
 
-def export_simulation(data, output_dir):
+def export_simulation(data, output_dir, metrics=None):
     output_path = os.path.join(output_dir, f'simulation-out.json')
     simulations = []
     
@@ -111,6 +111,13 @@ def export_simulation(data, output_dir):
             generate_simulation_format(hybrid_gen_camera, subject_loc_rot, subject_vol, subject),
             generate_simulation_format(prompt_gen_camera, subject_loc_rot, subject_vol, subject)
         ]
+    
+    output_data = {
+        "simulations": simulations
+    }
+    
+    if metrics is not None:
+        output_data["metrics"] = metrics
         
     with open(output_path, 'w') as f:
-        json.dump({"simulations": simulations}, f, indent=2)
+        json.dump(output_data, f, indent=2)

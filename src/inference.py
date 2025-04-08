@@ -11,6 +11,7 @@ from data.et.dataset import collate_fn as et_collate_fn
 from data.ccdm.dataset import collate_fn as ccdm_collate_fn
 from inference.export_et import export_et_trajectories
 from inference.export_simulation import export_simulation, prepare_output_directory
+from metrics.callback import MetricCallback
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
@@ -35,8 +36,12 @@ def main(cfg: DictConfig):
     data_module.setup()
     dataset = data_module.test_dataset.dataset
 
+    # Initialize metrics callback
+    metric_callback = MetricCallback(num_cams=1, device=device)
+    metrics = {}
+    simulations = []
+
     if 'CCDMDataset' in cfg.data.dataset.module['_target_']:
-        simulations = []
         num_samples = min(7, len(dataset)) if cfg.sample_id is None else 1
         sample_indices = [cfg.sample_id] if cfg.sample_id is not None else range(num_samples)
         
@@ -47,12 +52,19 @@ def main(cfg: DictConfig):
             subject_vol = batch['subject_volume'].to(device)
             
             with torch.no_grad():
+                # Get reference embedding - encode the ground truth camera trajectory
+                subject_embedding = model.subject_projection(batch['subject_trajectory'])
+                ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
+                
                 rec = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_traj_loc_rot,
                     subject_volume=subject_vol,
                     camera_trajectory=batch['camera_trajectory'].to(device),
                     padding_mask=batch.get('padding_mask', None),
                 )
+                
+                # Update metrics
+                metric_callback.update_clatr_metrics("rec", rec['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
             
             original_item = dataset[idx]
             caption = original_item.get('raw_text', None) if isinstance(original_item, dict) else None
@@ -62,17 +74,19 @@ def main(cfg: DictConfig):
                 "subject_loc_rot": subject_traj_loc_rot[0].cpu(),
                 "subject_vol": subject_vol[0].cpu(),
                 "camera": batch['camera_trajectory'][0],
-                "rec": rec,
+                "rec": rec['reconstructed'],
                 "padding_mask": batch.get('padding_mask', None),
             }
             
             simulations.append(sim_data)
             
+        # Compute final metrics
+        metrics.update(metric_callback.compute_clatr_metrics("rec"))
+        
         output_dir = prepare_output_directory(cfg.output_dir)
-        export_simulation(simulations, output_dir)
+        export_simulation(simulations, output_dir, metrics)
     
     elif 'ETDataset' in cfg.data.dataset.module['_target_']:
-        simulations = []
         num_samples = min(7, len(dataset)) if cfg.sample_id is None else 1
         sample_indices = [cfg.sample_id] if cfg.sample_id is not None else range(num_samples)
         
@@ -84,6 +98,10 @@ def main(cfg: DictConfig):
             subject_vol = subject_traj[:, 0:1, 3:6].permute(0, 2, 1)
             
             with torch.no_grad():
+                # Get reference embedding - encode the ground truth camera trajectory
+                subject_embedding = model.subject_projection(batch['subject_trajectory'])
+                ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
+                
                 rec = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_loc_rot,
                     subject_volume=subject_vol,
@@ -109,6 +127,12 @@ def main(cfg: DictConfig):
                         padding_mask=batch.get('padding_mask', None),
                         teacher_forcing_ratio=0.4
                     )
+                
+                # Update metrics
+                metric_callback.update_clatr_metrics("rec", rec['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('caption_feat', None))
+                metric_callback.update_clatr_metrics("prompt_gen", prompt_gen['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('caption_feat', None))
+                if hybrid_gen is not None:
+                    metric_callback.update_clatr_metrics("hybrid_gen", hybrid_gen['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('caption_feat', None))
             
             caption = None
             original_item = dataset[idx]
@@ -122,65 +146,82 @@ def main(cfg: DictConfig):
                 "subject_loc_rot": subject_loc_rot[0].cpu(),
                 "subject_vol": subject_vol[0].cpu(),
                 "camera": batch['camera_trajectory'][0],
-                "rec": rec,
+                "rec": rec['reconstructed'],
                 "padding_mask": batch.get('padding_mask', None),
             }
             
             if prompt_gen is not None:
-                sim_data["prompt_gen"] = prompt_gen
+                sim_data["prompt_gen"] = prompt_gen['reconstructed']
             
             if hybrid_gen is not None:
-                sim_data["hybrid_gen"] = hybrid_gen
+                sim_data["hybrid_gen"] = hybrid_gen['reconstructed']
                 
             if caption is not None:
                 sim_data["caption"] = caption
                 
             simulations.append(sim_data)
             
+        # Compute final metrics
+        for run_type in ["rec", "prompt_gen", "hybrid_gen"]:
+            metrics.update(metric_callback.compute_clatr_metrics(run_type))
+            
         output_dir = prepare_output_directory(cfg.output_dir)
-        export_et_trajectories(simulations, output_dir)
+        export_et_trajectories(simulations, output_dir, metrics)
         
     else:
-        simulations = []
         for idx in range(7):
             batch = collate_fn([dataset[idx]])
             
             subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot'].to(device)
             subject_volume = batch['subject_volume'].to(device)
             
-            rec = model.generate_camera_trajectory(
-                subject_trajectory_loc_rot=subject_trajectory_loc_rot,
-                subject_volume=subject_volume,
-                camera_trajectory=batch['camera_trajectory'].to(device)
-            )
-            
-            prompt_gen = model.generate_camera_trajectory(
-                subject_trajectory_loc_rot=subject_trajectory_loc_rot,
-                subject_volume=subject_volume,
-                camera_trajectory=batch['camera_trajectory'].to(device),
-                caption_embedding=batch['cinematography_prompt'].to(device),
-                teacher_forcing_ratio=1.0
-            )
-            
-            hybrid_gen = model.generate_camera_trajectory(
-                subject_trajectory_loc_rot=subject_trajectory_loc_rot,
-                subject_volume=subject_volume,
-                camera_trajectory=batch['camera_trajectory'].to(device),
-                caption_embedding=batch['cinematography_prompt'].to(device),
-                teacher_forcing_ratio=0.4
-            )
+            with torch.no_grad():
+                # Get reference embedding - encode the ground truth camera trajectory
+                subject_embedding = model.subject_projection(batch['subject_trajectory'])
+                ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
+                
+                rec = model.generate_camera_trajectory(
+                    subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                    subject_volume=subject_volume,
+                    camera_trajectory=batch['camera_trajectory'].to(device)
+                )
+                
+                prompt_gen = model.generate_camera_trajectory(
+                    subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                    subject_volume=subject_volume,
+                    camera_trajectory=batch['camera_trajectory'].to(device),
+                    caption_embedding=batch['cinematography_prompt'].to(device),
+                    teacher_forcing_ratio=1.0
+                )
+                
+                hybrid_gen = model.generate_camera_trajectory(
+                    subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                    subject_volume=subject_volume,
+                    camera_trajectory=batch['camera_trajectory'].to(device),
+                    caption_embedding=batch['cinematography_prompt'].to(device),
+                    teacher_forcing_ratio=0.4
+                )
+                
+                # Update metrics
+                metric_callback.update_clatr_metrics("rec", rec['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
+                metric_callback.update_clatr_metrics("prompt_gen", prompt_gen['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
+                metric_callback.update_clatr_metrics("hybrid_gen", hybrid_gen['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
             
             simulations.append({
                 "subject_loc_rot": subject_trajectory_loc_rot[0].cpu(),
                 "subject_vol": subject_volume[0].cpu(),
                 "camera": batch['camera_trajectory'][0],
-                "rec": rec,
-                "prompt_gen": prompt_gen,
-                "hybrid_gen": hybrid_gen,
+                "rec": rec['reconstructed'],
+                "prompt_gen": prompt_gen['reconstructed'],
+                "hybrid_gen": hybrid_gen['reconstructed'],
             })
             
+        # Compute final metrics
+        for run_type in ["rec", "prompt_gen", "hybrid_gen"]:
+            metrics.update(metric_callback.compute_clatr_metrics(run_type))
+            
         output_dir = prepare_output_directory(cfg.output_dir)
-        export_simulation(simulations, output_dir)
+        export_simulation(simulations, output_dir, metrics)
 
 if __name__ == "__main__":
     main()
