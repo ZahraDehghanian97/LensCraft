@@ -26,6 +26,7 @@ def main(cfg: DictConfig):
     
     model : MultiTaskAutoencoder = instantiate(cfg.training.model)
     model = load_checkpoint(cfg.checkpoint_path, model, device)
+    model.to(device)
     model.eval()
     
     data_module = CameraTrajectoryDataModule(
