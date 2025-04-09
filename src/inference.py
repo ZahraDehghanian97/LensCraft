@@ -12,6 +12,8 @@ from data.ccdm.dataset import collate_fn as ccdm_collate_fn
 from inference.export_et import export_et_trajectories
 from inference.export_simulation import export_simulation, prepare_output_directory
 from metrics.callback import MetricCallback
+from dotenv import load_dotenv
+load_dotenv()
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
