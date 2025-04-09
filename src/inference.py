@@ -29,7 +29,7 @@ def main(cfg: DictConfig):
     model.eval()
     
     data_module = CameraTrajectoryDataModule(
-        dataset_config=cfg.data.dataset.module,
+        dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
         num_workers=cfg.data.num_workers,
         val_size=cfg.data.val_size,
@@ -43,7 +43,7 @@ def main(cfg: DictConfig):
     metrics = {}
     simulations = []
 
-    if 'CCDMDataset' in cfg.data.dataset.module['_target_']:
+    if 'CCDMDataset' in cfg.data.dataset.config['_target_']:
         num_samples = min(7, len(dataset)) if cfg.sample_id is None else 1
         sample_indices = [cfg.sample_id] if cfg.sample_id is not None else range(num_samples)
         
@@ -88,7 +88,7 @@ def main(cfg: DictConfig):
         output_dir = prepare_output_directory(cfg.output_dir)
         export_simulation(simulations, output_dir, metrics)
     
-    elif 'ETDataset' in cfg.data.dataset.module['_target_']:
+    elif 'ETDataset' in cfg.data.dataset.config['_target_']:
         num_samples = min(7, len(dataset)) if cfg.sample_id is None else 1
         sample_indices = [cfg.sample_id] if cfg.sample_id is not None else range(num_samples)
         
