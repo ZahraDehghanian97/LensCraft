@@ -3,7 +3,7 @@ import hydra
 from hydra.utils import instantiate
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
-
+from src.models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
 from inference.checkpoint_utils import load_checkpoint
 from data.simulation.dataset import collate_fn
@@ -24,7 +24,7 @@ def main(cfg: DictConfig):
     
     device = torch.device(cfg.device if cfg.device else "cuda" if torch.cuda.is_available() else "cpu")
     
-    model = instantiate(cfg.training.model)
+    model : MultiTaskAutoencoder = instantiate(cfg.training.model)
     model = load_checkpoint(cfg.checkpoint_path, model, device)
     model.eval()
     
@@ -55,7 +55,9 @@ def main(cfg: DictConfig):
             
             with torch.no_grad():
                 # Get reference embedding - encode the ground truth camera trajectory
-                subject_embedding = model.subject_projection(batch['subject_trajectory'])
+                subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_traj_loc_rot)
+                subject_embedding_vol = model.subject_projection_vol(subject_vol)
+                subject_embedding = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
                 ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
                 
                 rec = model.generate_camera_trajectory(
@@ -101,7 +103,9 @@ def main(cfg: DictConfig):
             
             with torch.no_grad():
                 # Get reference embedding - encode the ground truth camera trajectory
-                subject_embedding = model.subject_projection(batch['subject_trajectory'])
+                subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_loc_rot)
+                subject_embedding_vol = model.subject_projection_vol(subject_vol)
+                subject_embedding = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
                 ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
                 
                 rec = model.generate_camera_trajectory(
@@ -179,7 +183,9 @@ def main(cfg: DictConfig):
             
             with torch.no_grad():
                 # Get reference embedding - encode the ground truth camera trajectory
-                subject_embedding = model.subject_projection(batch['subject_trajectory'])
+                subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_trajectory_loc_rot)
+                subject_embedding_vol = model.subject_projection_vol(subject_volume)
+                subject_embedding = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
                 ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
                 
                 rec = model.generate_camera_trajectory(
