@@ -99,12 +99,17 @@ def export_simulation(data, output_dir, metrics=None):
         rec_camera = item['rec']['reconstructed'] if isinstance(item['rec'], dict) else item['rec']
         prompt_gen_camera = item['prompt_gen']['reconstructed'] if isinstance(item['prompt_gen'], dict) else item['prompt_gen']
         hybrid_gen_camera = item['hybrid_gen']['reconstructed'] if isinstance(item['hybrid_gen'], dict) else item['hybrid_gen']
-        
-        print(
-            item.get('simulation_instructions', None), 
-            item.get('cinematography_prompts', None)
-        )
-        
+
+        # Ensure all cameras have shape [N, 7] by removing batch dimension if present
+        if len(item['camera'].shape) > 2:
+            item['camera'] = item['camera'].squeeze(0)
+        if len(rec_camera.shape) > 2:
+            rec_camera = rec_camera.squeeze(0)
+        if len(hybrid_gen_camera.shape) > 2:
+            hybrid_gen_camera = hybrid_gen_camera.squeeze(0)
+        if len(prompt_gen_camera.shape) > 2:
+            prompt_gen_camera = prompt_gen_camera.squeeze(0)
+
         simulations += [
             generate_simulation_format(item['camera'], subject_loc_rot, subject_vol, subject),
             generate_simulation_format(rec_camera, subject_loc_rot, subject_vol, subject),

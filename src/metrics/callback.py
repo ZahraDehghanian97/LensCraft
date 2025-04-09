@@ -55,10 +55,10 @@ class MetricCallback:
         self.clatr_fd[run_type].reset()
 
         return {
-            f"{run_type}/clatr_score": clatr_score,
-            f"{run_type}/precision": clatr_p,
-            f"{run_type}/recall": clatr_r,
-            f"{run_type}/density": clatr_d,
-            f"{run_type}/coverage": clatr_c,
-            f"{run_type}/fcd": fcd,
+            f"{run_type}/clatr_score": clatr_score.item(),
+            f"{run_type}/precision": clatr_p.item(),
+            f"{run_type}/recall": clatr_r.item(),
+            f"{run_type}/density": clatr_d.item(),
+            f"{run_type}/coverage": clatr_c.item(),
+            f"{run_type}/fcd": fcd.item(),
         }
