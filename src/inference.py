@@ -3,7 +3,7 @@ import hydra
 from hydra.utils import instantiate
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
-from src.models.camera_trajectory_model import MultiTaskAutoencoder
+from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
 from inference.checkpoint_utils import load_checkpoint
 from data.simulation.dataset import collate_fn
@@ -50,21 +50,26 @@ def main(cfg: DictConfig):
         for idx in sample_indices:
             batch = ccdm_collate_fn([dataset[idx]])
             
+            # Move all tensors to device
             subject_traj_loc_rot = batch['subject_trajectory_loc_rot'].to(device)
             subject_vol = batch['subject_volume'].to(device)
+            camera_trajectory = batch['camera_trajectory'].to(device)
+            padding_mask = batch.get('padding_mask', None)
+            if padding_mask is not None:
+                padding_mask = padding_mask.to(device)
             
             with torch.no_grad():
                 # Get reference embedding - encode the ground truth camera trajectory
                 subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_traj_loc_rot)
                 subject_embedding_vol = model.subject_projection_vol(subject_vol)
                 subject_embedding = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
-                ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
+                ref_embedding = model.encoder(camera_trajectory, subject_embedding)[:model.memory_tokens_count]
                 
                 rec = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_traj_loc_rot,
                     subject_volume=subject_vol,
-                    camera_trajectory=batch['camera_trajectory'].to(device),
-                    padding_mask=batch.get('padding_mask', None),
+                    camera_trajectory=camera_trajectory,
+                    padding_mask=padding_mask,
                 )
                 
                 # Update metrics
@@ -178,42 +183,47 @@ def main(cfg: DictConfig):
         for idx in range(7):
             batch = collate_fn([dataset[idx]])
             
+            # Move all tensors to device
             subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot'].to(device)
             subject_volume = batch['subject_volume'].to(device)
+            camera_trajectory = batch['camera_trajectory'].to(device)
+            cinematography_prompt = batch.get('cinematography_prompt', None)
+            if cinematography_prompt is not None:
+                cinematography_prompt = cinematography_prompt.to(device)
             
             with torch.no_grad():
                 # Get reference embedding - encode the ground truth camera trajectory
                 subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_trajectory_loc_rot)
                 subject_embedding_vol = model.subject_projection_vol(subject_volume)
                 subject_embedding = torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
-                ref_embedding = model.encoder(batch['camera_trajectory'], subject_embedding)[:model.memory_tokens_count]
+                ref_embedding = model.encoder(camera_trajectory, subject_embedding)[:model.memory_tokens_count]
                 
                 rec = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                     subject_volume=subject_volume,
-                    camera_trajectory=batch['camera_trajectory'].to(device)
+                    camera_trajectory=camera_trajectory
                 )
                 
                 prompt_gen = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                     subject_volume=subject_volume,
-                    camera_trajectory=batch['camera_trajectory'].to(device),
-                    caption_embedding=batch['cinematography_prompt'].to(device),
+                    camera_trajectory=camera_trajectory,
+                    caption_embedding=cinematography_prompt,
                     teacher_forcing_ratio=1.0
                 )
                 
                 hybrid_gen = model.generate_camera_trajectory(
                     subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                     subject_volume=subject_volume,
-                    camera_trajectory=batch['camera_trajectory'].to(device),
-                    caption_embedding=batch['cinematography_prompt'].to(device),
+                    camera_trajectory=camera_trajectory,
+                    caption_embedding=cinematography_prompt,
                     teacher_forcing_ratio=0.4
                 )
                 
                 # Update metrics
-                metric_callback.update_clatr_metrics("rec", rec['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
-                metric_callback.update_clatr_metrics("prompt_gen", prompt_gen['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
-                metric_callback.update_clatr_metrics("hybrid_gen", hybrid_gen['embeddings'][:model.memory_tokens_count], ref_embedding, batch.get('cinematography_prompt', None))
+                metric_callback.update_clatr_metrics("rec", rec['embeddings'][:model.memory_tokens_count], ref_embedding, cinematography_prompt)
+                metric_callback.update_clatr_metrics("prompt_gen", prompt_gen['embeddings'][:model.memory_tokens_count], ref_embedding, cinematography_prompt)
+                metric_callback.update_clatr_metrics("hybrid_gen", hybrid_gen['embeddings'][:model.memory_tokens_count], ref_embedding, cinematography_prompt)
             
             simulations.append({
                 "subject_loc_rot": subject_trajectory_loc_rot[0].cpu(),
