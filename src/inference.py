@@ -3,7 +3,7 @@ import hydra
 from hydra.utils import instantiate
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
-from src.models.camera_trajectory_model import MultiTaskAutoencoder
+from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
 from inference.checkpoint_utils import load_checkpoint
 from data.simulation.dataset import collate_fn
