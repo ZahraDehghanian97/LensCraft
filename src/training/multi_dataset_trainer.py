@@ -20,6 +20,7 @@ class MultiDatasetTrainer(BaseTrainer):
         use_merged_memory: bool = True,
         sim_weight: float = 0.6,
         ccdm_weight: float = 0.4,
+        decode_mode: str = 'single_step'
     ):
         super().__init__(
             model,
@@ -36,6 +37,7 @@ class MultiDatasetTrainer(BaseTrainer):
                 
         self.sim_weight = sim_weight
         self.ccdm_weight = ccdm_weight
+        self.decode_mode = decode_mode
         
         self.train_step_count = 0
         
@@ -59,7 +61,8 @@ class MultiDatasetTrainer(BaseTrainer):
             subject_volume,
             caption_embedding,
             tgt_key_padding_mask,
-            is_training=(stage == "train")
+            is_training=(stage == "train"),
+            decode_mode=self.decode_mode
         )
         
         merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)
@@ -86,7 +89,7 @@ class MultiDatasetTrainer(BaseTrainer):
             caption_embedding=None,
             tgt_key_padding_mask=tgt_key_padding_mask,
             is_training=(stage == "train"),
-            teacher_forcing_ratio=0.0
+            decode_mode=self.decode_mode
         )
         
         trajectory_loss = self.loss_module.compute_trajectory_loss(

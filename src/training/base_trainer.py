@@ -20,8 +20,10 @@ class MaskConfig:
 
 @dataclass
 class TeacherForcingConfig:
-    initial_ratio: float
-    final_ratio: float
+    memory_initial_ratio: float
+    memory_final_ratio: float
+    trajectory_initial_ratio: float
+    trajectory_final_ratio: float
 
 
 class BaseTrainer(L.LightningModule):
@@ -74,9 +76,15 @@ class BaseTrainer(L.LightningModule):
                 max_epochs
             ),
             'memory_mask_ratio': self.mask.memory_ratio,
-            'teacher_forcing_ratio': linear_increase(
-                self.teacher_forcing_schedule.initial_ratio,
-                self.teacher_forcing_schedule.final_ratio,
+            'memory_teacher_forcing_ratio': linear_increase(
+                self.teacher_forcing_schedule.memory_initial_ratio,
+                self.teacher_forcing_schedule.memory_final_ratio,
+                current_epoch,
+                max_epochs
+            ),
+            'trajectory_teacher_forcing_ratio': linear_increase(
+                self.teacher_forcing_schedule.trajectory_initial_ratio,
+                self.teacher_forcing_schedule.trajectory_final_ratio,
                 current_epoch,
                 max_epochs
             )
@@ -90,7 +98,7 @@ class BaseTrainer(L.LightningModule):
         caption_embedding: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False,
-        teacher_forcing_ratio: Optional[float] = None
+        decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
         if not is_training:
             return self.model(
@@ -99,7 +107,9 @@ class BaseTrainer(L.LightningModule):
                 subject_volume,
                 tgt_key_padding_mask,
                 caption_embedding=caption_embedding,
-                teacher_forcing_ratio=0.5 if teacher_forcing_ratio is None else teacher_forcing_ratio
+                memory_teacher_forcing_ratio=0.5,
+                trajectory_teacher_forcing_ratio=0.0,
+                decode_mode=decode_mode
             )
 
         ratios = self._calculate_schedule_parameters()
@@ -125,8 +135,10 @@ class BaseTrainer(L.LightningModule):
             src_key_mask,
             camera_trajectory,
             caption_embedding,
-            ratios['teacher_forcing_ratio'] if teacher_forcing_ratio is None else teacher_forcing_ratio,
+            ratios['memory_teacher_forcing_ratio'],
+            ratios['trajectory_teacher_forcing_ratio'],
             ratios['memory_mask_ratio'],
+            decode_mode,
         )
 
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:

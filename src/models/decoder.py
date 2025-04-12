@@ -20,12 +20,6 @@ class Decoder(nn.Module):
 
         self.output_projection = nn.Linear(latent_dim, output_dim)
 
-    def create_autoregressive_attention_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float(
-            '-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-
     def prepare_decoder_inputs_with_positioning(self, decoder_input, subject_embedding, tgt_key_padding_mask=None):
         embedded = self.embedding(decoder_input)
         embedded = torch.cat([subject_embedding, embedded], dim=1)
@@ -52,43 +46,45 @@ class Decoder(nn.Module):
 
         return output
 
-    def autoregressive_decode(self, memory, subject_embedding, target=None, teacher_forcing_ratio=0.5):
-        decoder_input = torch.zeros(
-            memory.shape[1], 1, self.output_dim, device=memory.device)
-        outputs = []
-
+    def autoregressive_decode(self, memory, subject_embedding, target=None, teacher_forcing_ratio=0.5, tgt_key_padding_mask=None):
+        batch_size = memory.shape[1]
+        device = memory.device
+        
+        output_trajectory = torch.zeros(batch_size, self.seq_length, self.output_dim, device=device)
+        decoder_input = torch.zeros(batch_size, self.seq_length, self.output_dim, device=device)
+        
+        subj_len = subject_embedding.shape[1]
+        total_len = 2 * self.seq_length
+        
+        causal_mask = torch.triu(torch.ones(total_len, total_len, device=device) * float('-inf'), diagonal=1)
+        
         for t in range(self.seq_length):
-            tgt_mask = self.create_autoregressive_attention_mask(
-                t + 2).to(memory.device)
+            embedded, padded_mask = self.prepare_decoder_inputs_with_positioning(
+                decoder_input, subject_embedding, tgt_key_padding_mask)
+            
+            decoder_output = self.transformer_decoder(
+                tgt=embedded, 
+                memory=memory, 
+                tgt_mask=causal_mask[:embedded.size(0), :embedded.size(0)],
+                tgt_key_padding_mask=padded_mask
+            )
+            
+            decoder_output = decoder_output.transpose(0, 1)
+            current_pred = self.output_projection(decoder_output[:, subj_len + t, :])
+            
+            output_trajectory[:, t, :] = current_pred
+            
+            if t < self.seq_length - 1:
+                new_decoder_input = decoder_input.clone()
+                use_target = (target is not None and torch.rand(1).item() < teacher_forcing_ratio)
+                new_decoder_input[:, t, :] = target[:, t, :] if use_target else current_pred
+                decoder_input = new_decoder_input
+        
+        return output_trajectory
 
-            embedded, _ = self._process_inputs(
-                decoder_input, subject_embedding[:, t:t+1, :])
-
-            output = self.transformer_decoder(
-                tgt=embedded, memory=memory, tgt_mask=tgt_mask)
-            output = output.transpose(0, 1)
-            output = self.output_projection(
-                output[:, subject_embedding.size(1):, :])
-
-            outputs.append(output[:, -1:, :])
-
-            if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
-                decoder_input = torch.cat(
-                    [decoder_input, target[:, t:t+1, :]], dim=1)
-            else:
-                decoder_input = torch.cat(
-                    [decoder_input, output[:, -1:, :]], dim=1)
-
-            del output
-
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        return torch.cat(outputs, dim=1)
-
-    def forward(self, memory, subject_embedding, decode_mode='single_step', target=None, teacher_forcing_ratio=0.5, tgt_key_padding_mask=None):
+    def forward(self, memory, subject_embedding, decode_mode='single_step', target=None, teacher_forcing_ratio=0.0, tgt_key_padding_mask=None):
         if decode_mode == 'autoregressive':
-            return self.autoregressive_decode(memory, subject_embedding, target, teacher_forcing_ratio)
+            return self.autoregressive_decode(memory, subject_embedding, target, teacher_forcing_ratio, tgt_key_padding_mask)
         elif decode_mode == 'single_step':
             return self.single_step_decode(memory, subject_embedding, tgt_key_padding_mask)
         else:
