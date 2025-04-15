@@ -137,7 +137,8 @@ class MultiTaskAutoencoder(nn.Module):
         src_key_mask: Optional[torch.Tensor] = None,
         target: Optional[torch.Tensor] = None,
         caption_embedding: Optional[torch.Tensor] = None,
-        teacher_forcing_ratio: float = 0.5,
+        memory_teacher_forcing_ratio: float = 0.5,
+        trajectory_teacher_forcing_ratio: float = 0.0,
         mask_memory_prob: float = 0.0,
         decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
@@ -158,7 +159,7 @@ class MultiTaskAutoencoder(nn.Module):
         memory = self.prepare_embedding_memory_for_decoder(
             camera_embedding=camera_embedding.clone(),
             caption_embedding=caption_embedding,
-            teacher_forcing_ratio=teacher_forcing_ratio,
+            teacher_forcing_ratio=memory_teacher_forcing_ratio,
             mask_memory_prob=mask_memory_prob
         )
 
@@ -167,7 +168,7 @@ class MultiTaskAutoencoder(nn.Module):
             subject_embedding=subject_embedding_loc_rot_vol,
             decode_mode=decode_mode,
             target=target,
-            teacher_forcing_ratio=teacher_forcing_ratio,
+            teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
             tgt_key_padding_mask=tgt_key_padding_mask
         )
 
@@ -187,7 +188,8 @@ class MultiTaskAutoencoder(nn.Module):
         camera_trajectory: Optional[torch.Tensor] = None,
         subject_trajectory_loc_rot: Optional[torch.Tensor] = None,
         subject_volume: Optional[torch.Tensor] = None,
-        teacher_forcing_ratio: float = 0.0,
+        memory_teacher_forcing_ratio: float = 0.0,
+        trajectory_teacher_forcing_ratio: float = 0.0,
         src_key_mask: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
         decode_mode: str = 'single_step'
@@ -222,13 +224,14 @@ class MultiTaskAutoencoder(nn.Module):
                     subject_trajectory_loc_rot=subject_trajectory_loc_rot,
                     subject_volume=subject_volume,
                     caption_embedding=caption_embedding,
-                    teacher_forcing_ratio=teacher_forcing_ratio,
+                    memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
+                    trajectory_teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
                     src_key_mask=src_key_mask,
                     tgt_key_padding_mask=padding_mask,
                     decode_mode=decode_mode
                 )
             
-            # If no camera trajectory, use only the decoder
+            # If there is no camera trajectory, use only the decoder
             else:
                 subject_embedding_loc_rot = self.subject_projection_loc_rot(
                     subject_trajectory_loc_rot
@@ -241,14 +244,16 @@ class MultiTaskAutoencoder(nn.Module):
                 )
                 
                 memory = self.prepare_embedding_memory_for_decoder(
-                    caption_embedding=caption_embedding
+                    caption_embedding=caption_embedding,
+                    teacher_forcing_ratio=0.0
                 )
                 
                 reconstructed = self.decoder(
                     memory=memory,
                     subject_embedding=subject_embedding,
                     decode_mode=decode_mode,
-                    tgt_key_padding_mask=padding_mask
+                    tgt_key_padding_mask=padding_mask,
+                    teacher_forcing_ratio=0.0
                 )
                 
                 return {'reconstructed': reconstructed}

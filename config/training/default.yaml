@@ -67,7 +67,10 @@ mask:
   memory_ratio: 0.0
 
 teacher_forcing_schedule:
-  initial_ratio: 0.2
-  final_ratio: 0.8
+  memory_initial_ratio: 0.2
+  memory_final_ratio: 0.8
+  trajectory_initial_ratio: 1.0
+  trajectory_final_ratio: 0.1
 
 use_merged_memory: false
+decode_mode: "autoregressive"
