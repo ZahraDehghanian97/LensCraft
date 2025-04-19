@@ -42,13 +42,15 @@ def generate_metric_tags(cfg: DictConfig) -> List[str]:
                 tags["average_clip"] = ["train_average_clip_loss", "val_average_clip_loss"]
             
         if "trajectory" in subplots:
-            trajectory_tags = list()
-            trajectory_tags.extend(cfg.metrics.training)
-            trajectory_tags.extend(cfg.metrics.validation)
-            tags["trajectory_tags"] = trajectory_tags
+            tags["trajectory_tags"] = cfg.metrics.trajectory
 
         if "contrastive" in subplots:
-            pass # TODO
+            tags["contrastive_tags"] = cfg.metrics.contrastive
+
+        if "total" in subplots:
+            tags["total"] = cfg.metrics.total_loss
+
+            
     else:
         raise ValueError("The losses list must include at least one of the following: 'clip', 'trajectory', or 'contrastive'.")
     return tags
@@ -123,7 +125,7 @@ def get_label(tag: str) -> str:
 def get_title(subplot: str) -> str:
     title = subplot.replace("_tags", "")
     title = title.replace("_", " ") 
-    title = title + " losses"
+    title = title + " loss"
     title = string.capwords(title)
     title = title.replace("Clip", "CLIP")
     return title
