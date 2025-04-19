@@ -74,4 +74,4 @@ teacher_forcing_schedule:
   trajectory_final_ratio: 0.1
 
 use_merged_memory: false
-decode_mode: "autoregressive"
+decode_mode: "single_step"

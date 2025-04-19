@@ -8,7 +8,4 @@ defaults:
 checkpoint_path: ${oc.env:INFERENCE_CHECKPOINT_PATH}
 output_dir: ${oc.env:INFERENCE_OUTPUT_DIR,./inference_results}
 
-sample_id: null # If null, process all samples
-text_prompt: null # If null and sample has caption, will use sample caption
-
 device: cuda

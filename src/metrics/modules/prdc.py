@@ -54,12 +54,9 @@ class ManifoldMetrics(Metric):
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """Compute PRDC metrics for a single batch."""
         
-        real_nn_distances = self._compute_nn_distances(
-            real_features, nearest_k)
-        fake_nn_distances = self._compute_nn_distances(
-            fake_features, nearest_k)
-        distance_real_fake = self._compute_pairwise_distance(
-            real_features, fake_features)
+        real_nn_distances = self._compute_nn_distances(real_features, nearest_k)
+        fake_nn_distances = self._compute_nn_distances(fake_features, nearest_k)
+        distance_real_fake = self._compute_pairwise_distance(real_features, fake_features)
         
         '''print(f"Average real-real nearest neighbor distance: {real_nn_distances.mean().item()}")
         print(f"Average fake-fake nearest neighbor distance: {fake_nn_distances.mean().item()}")

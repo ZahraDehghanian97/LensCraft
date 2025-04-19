@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from metrics.modules.fcd import FrechetCLaTrDistance
 from metrics.modules.prdc import ManifoldMetrics
@@ -6,35 +6,31 @@ from metrics.modules.clatr_score import CLaTrScore
 
 
 class MetricCallback:
-    def __init__(
-        self,
-        num_cams: int,
-        device: str,
-    ):
+    def __init__(self, num_cams: int, device: str):
         self.num_cams = num_cams
 
         # Initialize metrics for each run type
         self.clatr_fd = {
-            "rec": FrechetCLaTrDistance(),
-            "prompt_gen": FrechetCLaTrDistance(), 
-            "hybrid_gen": FrechetCLaTrDistance(),
+            "reconstruction": FrechetCLaTrDistance(),
+            "prompt_generation": FrechetCLaTrDistance(), 
+            "hybrid_generation": FrechetCLaTrDistance(),
         }
         self.clatr_prdc = {
-            "rec": ManifoldMetrics(distance="euclidean"),
-            "prompt_gen": ManifoldMetrics(distance="euclidean"),
-            "hybrid_gen": ManifoldMetrics(distance="euclidean"),
+            "reconstruction": ManifoldMetrics(distance="euclidean"),
+            "prompt_generation": ManifoldMetrics(distance="euclidean"),
+            "hybrid_generation": ManifoldMetrics(distance="euclidean"),
         }
         self.clatr_score = {
-            "rec": CLaTrScore(),
-            "prompt_gen": CLaTrScore(),
-            "hybrid_gen": CLaTrScore(),
+            "reconstruction": CLaTrScore(),
+            "prompt_generation": CLaTrScore(),
+            "hybrid_generation": CLaTrScore(),
         }
 
         self.device = device
         self._move_to_device(device)
 
     def _move_to_device(self, device: str):
-        for run_type in ["rec", "prompt_gen", "hybrid_gen"]:
+        for run_type in ["reconstruction", "prompt_generation", "hybrid_generation"]:
             self.clatr_fd[run_type].to(device)
             self.clatr_prdc[run_type].to(device)
             self.clatr_score[run_type].to(device)
