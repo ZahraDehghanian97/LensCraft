@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 import torch
 import msgpack
 from pathlib import Path
+from .loader import parse_simulation_file_to_dict
 
 from .constants import (
     cinematography_struct,
@@ -10,14 +11,25 @@ from .constants import (
     simulation_struct,
     simulation_struct_size,
 )
-from .utils import extract_cinematography_parameters, convert_parameters_to_embedding_tensor
-from .loader import parse_simulation_file_to_dict
+
+from .utils import (
+    extract_cinematography_parameters, 
+    convert_parameters_to_embedding_tensor, 
+    load_clip_means,
+)
+
 
 class SimulationDataset(Dataset):
-    def __init__(self, data_path: str, clip_embeddings: Dict, embedding_dim: int):
-        self.clip_embeddings = clip_embeddings
-        self.embedding_dim = embedding_dim
+    def __init__(self, data_path: str, embedding_dim: int, fill_none_with_mean: bool, clip_embeddings: Dict):
         self.data_path = Path(data_path)
+        self.embedding_dim = embedding_dim
+        self.fill_none_with_mean = fill_none_with_mean
+        self.clip_embeddings = clip_embeddings
+
+        if self.fill_none_with_mean:
+            self.embedding_means = load_clip_means()
+        else:
+            self.embedding_means = None
         
         if not self.data_path.is_dir():
             raise ValueError(f"Expected directory at {data_path}")
@@ -37,7 +49,8 @@ class SimulationDataset(Dataset):
             raise ValueError(f"No simulation files found in {data_path}")
 
     def __len__(self) -> int:
-        return len(self.simulation_files)
+        # return len(self.simulation_files)
+        return 100000
 
     def __getitem__(self, index: int) -> Dict:
         file_path = self.simulation_files[index]
@@ -57,18 +70,24 @@ class SimulationDataset(Dataset):
         simulation_instruction = extract_cinematography_parameters(
             data=instruction,
             struct=simulation_struct,
-            clip_embeddings=self.clip_embeddings
+            clip_embeddings=self.clip_embeddings,
+            fill_none_with_mean=self.fill_none_with_mean,
+            embedding_means=self.embedding_means,
         )
+
         cinematography_prompt = extract_cinematography_parameters(
             data=prompt,
             struct=cinematography_struct,
-            clip_embeddings=self.clip_embeddings
+            clip_embeddings=self.clip_embeddings,
+            fill_none_with_mean=self.fill_none_with_mean,
+            embedding_means=self.embedding_means,
         )
 
         simulation_instruction_tensor = convert_parameters_to_embedding_tensor(
             simulation_instruction,
             simulation_struct_size
         )
+        
         cinematography_prompt_tensor = convert_parameters_to_embedding_tensor(
             cinematography_prompt,
             cinematography_struct_size

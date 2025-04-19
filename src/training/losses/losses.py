@@ -13,8 +13,9 @@ class CameraTrajectoryLoss:
                  weighted_clip_loss: bool=False,
                  weight_power: int=1,
                  clip_weights: dict=None,
+                 contrastive_loss_version: int=1,
                  clip_loss_scaling_factor: float=37500,
-                 trajectory_loss_ratio: float=10,
+                 trajectory_loss_scaling_factor: float=10,
                  contrastive_loss_scaling_factor: float=0.1,
                  angle_loss_scaling_factor: float=180,
                  clip_embeddings: dict=None,
@@ -30,9 +31,19 @@ class CameraTrajectoryLoss:
         self.weight_power = weight_power
         self.clip_weights = clip_weights
         self.sum_clip_weights = 0
+
+        self.contrastive_loss_version = contrastive_loss_version
+        if self.contrastive_loss_version == 1:
+            self.compute_contrastive_loss = self.compute_contrastive_loss_v1
+        elif self.contrastive_loss_version == 2:
+            self.compute_contrastive_loss = self.compute_contrastive_loss_v2
+        else:
+            raise ValueError("Contrastive loss version should be 1 or 2, you passed {}".format(self.contrastive_loss_version))
+
         self.clip_loss_scaling_factor = clip_loss_scaling_factor
-        self.trajectory_loss_ratio = trajectory_loss_ratio
+        self.trajectory_loss_scaling_factor = trajectory_loss_scaling_factor
         self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
+
         self.encoder_loss_function = encoder_loss_function
         self.clip_embeddings = clip_embeddings
 
@@ -64,16 +75,6 @@ class CameraTrajectoryLoss:
         total_loss = 0
         loss_dict = dict()
 
-        if "trajectory" in self.losses_list:
-            trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
-            total_loss += trajectory_loss
-            loss_dict["trajectory"] = trajectory_loss.item()
-        
-        if "contrastive" in self.losses_list:
-            contrastive_loss = self.compute_contrastive_loss(clip_target, clip_pred, self.n_clip_embs, self.contrastive_loss_margin, batch)
-            total_loss += contrastive_loss * self.contrastive_loss_scaling_factor
-            loss_dict["contrastive"] = contrastive_loss.item()
-
         if "clip" in self.losses_list:
             total_clip_loss_weighted, clip_losses, total_clip_loss = self.compute_clip_loss(
                 clip_target=clip_target, 
@@ -93,6 +94,21 @@ class CameraTrajectoryLoss:
 
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
             loss_dict["average_clip"] = total_clip_loss * 200
+            print("CLIP LOSS (NET): {:.3f}   |   CLIP LOSS (SCALED): {:.3f}".format(total_clip_loss, total_clip_loss * self.clip_loss_scaling_factor / clip_pred.shape[1]))
+
+        if "trajectory" in self.losses_list:
+            trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
+            total_loss += trajectory_loss * self.trajectory_loss_scaling_factor
+            loss_dict["trajectory"] = trajectory_loss.item()
+            print("TRAJ LOSS (NET): {:.3f}   |   TRAJ LOSS (SCALED): {:.3f}".format(trajectory_loss, trajectory_loss * self.trajectory_loss_scaling_factor))
+        
+        if "contrastive" in self.losses_list:
+            contrastive_loss = self.compute_contrastive_loss(clip_pred, batch)
+            total_loss += contrastive_loss * self.contrastive_loss_scaling_factor
+            loss_dict["contrastive"] = contrastive_loss.item()
+            print("CONT Loss (NET): {:.3f}   |   CONT Loss (SCALED): {:.3f}".format(contrastive_loss, contrastive_loss * self.contrastive_loss_scaling_factor))
+
+        print("TOTL LOSS: {:.3f}".format(total_loss))
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
@@ -123,7 +139,7 @@ class CameraTrajectoryLoss:
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         
-        return relative_loss * self.trajectory_loss_ratio + first_frame_loss
+        return relative_loss * self.trajectory_loss_scaling_factor + first_frame_loss
     
     @staticmethod
     def get_embedding_name(name: str) -> str:
@@ -158,7 +174,7 @@ class CameraTrajectoryLoss:
 
 
 
-    def compute_contrastive_loss(self, clip_target, clip_pred, n_clip_embs, margin, batch):
+    def compute_contrastive_loss_v1(self, clip_pred, batch):
         MIN_EMB_MOD_SIMILAR, MAX_EMB_MOD_SIMILAR = 1, 5
         MIN_EMB_MOD_DISSIMILAR, MAX_EMB_MOD_DISSIMILAR = 24, 28
 
@@ -168,30 +184,67 @@ class CameraTrajectoryLoss:
         N_SIMILAR_SAMPLES = random.randint(MIN_SIMILAR_SAMPLES, MAX_SIMILAR_SAMPLES)
         N_DISSIMILAR_SAMPLES = random.randint(MIN_DISSIMILAR_SAMPLES, MAX_DISSIMILAR_SAMPLES)
 
-        batch_size = clip_target.shape[1]
-        total_contrastive_loss = 0
+        batch_size = clip_pred.shape[1]
+        contrastive_loss = 0
 
         for sample_idx in range(batch_size):
-            clip_sample_target = clip_target[:, sample_idx, :]
             clip_sample_pred = clip_pred[:, sample_idx, :]
 
             clip_embedding_parameters = batch["cinematography_prompt_parameters"][sample_idx] +\
                                         batch["simulation_instruction_parameters"][sample_idx]
             
-            for _ in range(N_SIMILAR_SAMPLES): # Loop to compute loss of similar samples
+            for _ in range(N_SIMILAR_SAMPLES): 
                 n_modification = random.randint(MIN_EMB_MOD_SIMILAR, MAX_EMB_MOD_SIMILAR)
-                clip_sample_similar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device)
+                
+                clip_sample_similar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device) # FIXME
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_similar).mean()
                 loss = 1 - similarity
-                total_contrastive_loss += loss
+                contrastive_loss += loss
 
-            for _ in range(N_DISSIMILAR_SAMPLES): # Loop to compute loss of dissimilar samples
+            for _ in range(N_DISSIMILAR_SAMPLES):
                 n_modification = random.randint(MIN_EMB_MOD_DISSIMILAR, MAX_EMB_MOD_DISSIMILAR)
-                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device)
+                
+                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device) # FIXME
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_dissimilar).mean()
-                loss = -(1 - similarity) # FIXME: possible to get negative loss
-                total_contrastive_loss += loss
-        return total_contrastive_loss
+                loss = similarity + 1
+                contrastive_loss += loss
+        return contrastive_loss
+    
+
+
+
+    def compute_contrastive_loss_v2(self, clip_pred, batch):
+        contrastive_loss = 0
+
+        batch_size = len(batch["camera_trajectory"])
+        
+        for sample_idx in range(batch_size):
+            clip_sample_pred = clip_pred[:, sample_idx, :]
+            clip_embedding_parameters = batch["cinematography_prompt_parameters"][sample_idx] +\
+                                        batch["simulation_instruction_parameters"][sample_idx]
+            for emb_idx in range(len(clip_embedding_parameters)):
+                prefix, data_value, value_idx, _ = clip_embedding_parameters[emb_idx]
+
+                if value_idx == -1:
+                    continue
+
+                if prefix.count("_") > 1:
+                    prefix = "_".join(prefix.split("_")[-2:])
+                
+                if CLIP_PARAMETERS_DICT[prefix].__name__ == "bool":
+                    value_type = "boolean" 
+                else:
+                    value_type = CLIP_PARAMETERS_DICT[prefix].__name__
+                
+                for embedding_key in self.clip_embeddings[value_type].keys():
+                    if embedding_key != data_value:
+                        similarity = cosine_similarity(clip_sample_pred[emb_idx].unsqueeze(0).to(self.device), 
+                                        self.clip_embeddings[value_type][embedding_key].unsqueeze(0).to(self.device)).mean()
+                        contrastive_loss += similarity + 1
+                        
+        return torch.tensor(contrastive_loss).clone().detach()
+
+
 
     
     @staticmethod

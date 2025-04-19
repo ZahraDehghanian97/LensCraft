@@ -3,4 +3,4 @@ _partial_: true
 warmup_steps: 10
 rate: 0.5714
 n_th_root: 2
-base_lr: [0.0001] # FIXME: change to 0.0003
+base_lr: [0.0003]

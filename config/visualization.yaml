@@ -50,15 +50,21 @@ metrics:
   losses_list:
     - clip
     - trajectory
-    # - contrastive # TODO: not yet completed
-  validation:
-    - val_loss_epoch
+    - contrastive
+    - total
+
+  trajectory:
     - val_trajectory_epoch
-    - val_total_epoch
-  training:
-    - train_loss_epoch
     - train_trajectory_epoch
+
+  contrastive:
+    - val_contrastive_epoch
+    - train_contrastive_epoch
+
+  total_loss:
+    - val_total_epoch
     - train_total_epoch
+
   clips:
     num_clips: 28 
     categorize_embeddings: true

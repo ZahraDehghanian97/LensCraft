@@ -12,12 +12,13 @@ loss_module:
   losses_list:
     - clip 
     - trajectory
+    # - contrastive
   weighted_clip_loss: false
   weight_power: 1
-  clip_loss_scaling_factor: 37500  
-  trajectory_loss_ratio: 10
+  clip_loss_scaling_factor: 37500 
+  trajectory_loss_scaling_factor: 10
   contrastive_loss_scaling_factor: 0.1
-  angle_loss_scaling_factor: 180
+  angle_loss_scaling_factor: 180 # TODO: Format of this file should be similar to config/training/default.yaml
   clip_weights:    # EMBEDDING
     clip_0: 6      # initial_cameraAngle
     clip_1: 7      # initial_shotSize

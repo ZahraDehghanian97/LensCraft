@@ -12,13 +12,14 @@ loss_module:
   losses_list:
     - clip 
     - trajectory
-    # - contrastive
+    - contrastive
   weighted_clip_loss: false
   weight_power: 1
-  clip_loss_scaling_factor: 37500  
-  trajectory_loss_ratio: 10
-  contrastive_loss_scaling_factor: 0.1
+  clip_loss_scaling_factor: 80000         # Around 100 when converge
+  trajectory_loss_scaling_factor: 2       # Around 100 when converge
+  contrastive_loss_scaling_factor: 0.025  # For version 1: 0.5 | For version 2: 0.025
   angle_loss_scaling_factor: 180
+  contrastive_loss_version: 1             # Select between versions [1, 2] 
   clip_weights:    # EMBEDDING
     clip_0: 6      # initial_cameraAngle
     clip_1: 7      # initial_shotSize
