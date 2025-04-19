@@ -7,6 +7,7 @@ config:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${oc.env:SIMULATION_DATA_PATH}
   embedding_dim: ${clip.latent_dim}
+  fill_none_with_mean: false
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
