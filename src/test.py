@@ -70,19 +70,10 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Final Metrics: {metrics}")
 
 
-def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
-    tensor_keys = {
-        "camera_trajectory": "camera_trajectory",
-        "subject_traj_loc_rot": "subject_trajectory_loc_rot",
-        "subject_vol": "subject_volume",
-    }
+def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:    
+    prepared_data = {}
     
-    prepared_data = {
-        dest_key: batch[src_key].to(device)
-        for dest_key, src_key in tensor_keys.items()
-    }
-    
-    for key in ["padding_mask", "cinematography_prompt"]:
+    for key in ["camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask", "cinematography_prompt"]:
         if key in batch and batch[key] is not None:
             prepared_data[key] = batch[key].to(device)
         else:
@@ -93,11 +84,11 @@ def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> 
 
 def compute_subject_embedding(
     model: MultiTaskAutoencoder, 
-    subject_traj_loc_rot: torch.Tensor, 
-    subject_vol: torch.Tensor
+    subject_trajectory: torch.Tensor, 
+    subject_volume: torch.Tensor
 ) -> torch.Tensor:
-    subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_traj_loc_rot)
-    subject_embedding_vol = model.subject_projection_vol(subject_vol)
+    subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_trajectory)
+    subject_embedding_vol = model.subject_projection_vol(subject_volume)
     return torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
 
 
@@ -117,8 +108,8 @@ def generate_camera_trajectory(
     caption_embedding: Optional[torch.Tensor] = None
 ) -> Dict[str, Any]:
     generation_params = {
-        "subject_trajectory_loc_rot": data["subject_traj_loc_rot"],
-        "subject_volume": data["subject_vol"],
+        "subject_trajectory": data["subject_trajectory"],
+        "subject_volume": data["subject_volume"],
         "camera_trajectory": data["camera_trajectory"],
         "padding_mask": data["padding_mask"]
     }
@@ -154,7 +145,7 @@ def update_metrics(
     
     generation_embedding_reshaped = generation_embedding.permute(1, 0, 2).reshape(batch_size, -1)
     reference_embedding_reshaped = reference_embedding.permute(1, 0, 2).reshape(batch_size, -1)
-    text_prompt_reshaped = data.get('cinematography_prompt', None).permute(1, 0, 2).reshape(batch_size, -1) if data.get('cinematography_prompt', None) != None else None
+    text_prompt_reshaped = caption_embedding.permute(1, 0, 2).reshape(batch_size, -1) if caption_embedding != None else None
     
     metric_callback.update_clatr_metrics(
         metric_name,
@@ -175,8 +166,8 @@ def process_test_batch(
     
     subject_embedding = compute_subject_embedding(
         model, 
-        prepared_data["subject_traj_loc_rot"], 
-        prepared_data["subject_vol"]
+        prepared_data["subject_trajectory"], 
+        prepared_data["subject_volume"]
     )
     
     reference_embedding = compute_reference_embedding(
@@ -185,35 +176,35 @@ def process_test_batch(
         subject_embedding
     )
     
+    cinematography_prompt = prepared_data.get("cinematography_prompt")
+    
     update_metrics(
         model, 
         prepared_data,
         reference_embedding,
         metric_callback,
-        "reconstruction", 
-        memory_teacher_forcing_ratio=None,
-        caption_embedding=None
+        "reconstruction",
+        memory_teacher_forcing_ratio=0,
+        caption_embedding=cinematography_prompt
     )
     
     if dataset_type == 'simulation':
-        cinematography_prompt = prepared_data["cinematography_prompt"]
-        
         update_metrics(
-            model, 
+            model,
             prepared_data,
             reference_embedding,
             metric_callback,
-            "prompt_generation", 
+            "prompt_generation",
             memory_teacher_forcing_ratio=1.0,
             caption_embedding=cinematography_prompt
         )
         
         update_metrics(
-            model, 
+            model,
             prepared_data,
             reference_embedding,
             metric_callback,
-            "hybrid_generation", 
+            "hybrid_generation",
             memory_teacher_forcing_ratio=0.4,
             caption_embedding=cinematography_prompt
         )

@@ -49,7 +49,7 @@ class MultiDatasetTrainer(BaseTrainer):
     
     def _process_sim_batch(self, batch: Dict[str, Any], stage: str) -> Tuple[torch.Tensor, Dict[str, Any]]:
         camera_trajectory = batch['camera_trajectory']
-        subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot']
+        subject_trajectory = batch['subject_trajectory']
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
@@ -57,7 +57,7 @@ class MultiDatasetTrainer(BaseTrainer):
         
         output = self._forward_step(
             camera_trajectory,
-            subject_trajectory_loc_rot,
+            subject_trajectory,
             subject_volume,
             caption_embedding,
             tgt_key_padding_mask,
@@ -78,13 +78,13 @@ class MultiDatasetTrainer(BaseTrainer):
 
     def _process_ccdm_batch(self, batch: Dict[str, Any], stage: str) -> Tuple[torch.Tensor, Dict[str, Any]]:
         camera_trajectory = batch['camera_trajectory']
-        subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot']
+        subject_trajectory = batch['subject_trajectory']
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
         output = self._forward_step(
             camera_trajectory,
-            subject_trajectory_loc_rot,
+            subject_trajectory,
             subject_volume,
             caption_embedding=None,
             tgt_key_padding_mask=tgt_key_padding_mask,

@@ -36,7 +36,8 @@ class MetricCallback:
             self.clatr_score[run_type].to(device)
 
     def update_clatr_metrics(self, run_type: str, pred, ref, text):
-        self.clatr_score[run_type].update(pred, text)
+        if text != None:
+            self.clatr_score[run_type].update(pred, text)
         self.clatr_prdc[run_type].update(pred, ref)
         self.clatr_fd[run_type].update(pred, ref)
 

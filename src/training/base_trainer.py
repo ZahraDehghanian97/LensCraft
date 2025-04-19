@@ -93,7 +93,7 @@ class BaseTrainer(L.LightningModule):
     def _forward_step(
         self,
         camera_trajectory: torch.Tensor,
-        subject_trajectory_loc_rot: torch.Tensor,
+        subject_trajectory: torch.Tensor,
         subject_volume: torch.Tensor,
         caption_embedding: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor],
@@ -103,7 +103,7 @@ class BaseTrainer(L.LightningModule):
         if not is_training:
             return self.model(
                 camera_trajectory,
-                subject_trajectory_loc_rot,
+                subject_trajectory,
                 subject_volume,
                 tgt_key_padding_mask,
                 caption_embedding=caption_embedding,
@@ -129,7 +129,7 @@ class BaseTrainer(L.LightningModule):
 
         return self.model(
             noisy_masked_trajectory,
-            subject_trajectory_loc_rot,
+            subject_trajectory,
             subject_volume,
             tgt_key_padding_mask,
             src_key_mask,

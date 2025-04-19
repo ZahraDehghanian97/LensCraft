@@ -95,7 +95,7 @@ class SimulationDataset(Dataset):
 
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
-            "subject_trajectory_loc_rot": torch.tensor(subject_loc_rot, dtype=torch.float32),
+            "subject_trajectory": torch.tensor(subject_loc_rot, dtype=torch.float32),
             "subject_volume": torch.tensor(subject_vol, dtype=torch.float32),
             "simulation_instruction": simulation_instruction_tensor,
             "cinematography_prompt": cinematography_prompt_tensor,
@@ -145,12 +145,10 @@ class SimulationDataset(Dataset):
         return loc_rot, vol
 
 def collate_fn(batch):
-    vol_batch = torch.stack([item["subject_volume"] for item in batch])
-    
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory_loc_rot": torch.stack([item["subject_trajectory_loc_rot"] for item in batch]),
-        "subject_volume": vol_batch,
+        "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
+        "subject_volume": torch.stack([item["subject_volume"] for item in batch]),
         "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
         "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
         "simulation_instruction_parameters": [

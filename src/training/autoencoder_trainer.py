@@ -43,7 +43,7 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
 
     def _step(self, batch: Dict[str, Any], batch_idx: int, stage: str) -> torch.Tensor:
         camera_trajectory = batch['camera_trajectory']
-        subject_trajectory_loc_rot = batch['subject_trajectory_loc_rot']
+        subject_trajectory = batch['subject_trajectory']
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
         
@@ -51,7 +51,7 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
         
         output = self._forward_step(
             camera_trajectory,
-            subject_trajectory_loc_rot,
+            subject_trajectory,
             subject_volume,
             caption_embedding,
             tgt_key_padding_mask,

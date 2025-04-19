@@ -102,7 +102,7 @@ class CCDMDataset(Dataset):
         
         return {
             "camera_trajectory": camera_trajectory_sim,
-            "subject_trajectory_loc_rot": subject_loc_rot,
+            "subject_trajectory": subject_loc_rot,
             "subject_volume": subject_volume,
             "padding_mask": None if padding_mask is None else ~padding_mask,
             "caption_feat": text_embedding,
@@ -113,8 +113,8 @@ class CCDMDataset(Dataset):
 def collate_fn(batch):
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory_loc_rot": torch.stack([item["subject_trajectory_loc_rot"] for item in batch]),
-        "subject_volume": torch.stack([item["subject_volume"] for item in batch]).permute(0, 2, 1),
+        "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
+        "subject_volume": torch.stack([item["subject_volume"] for item in batch]),
         "padding_mask": torch.stack([item["padding_mask"] for item in batch]) if batch[0]["padding_mask"] is not None else None,
         "caption_feat": torch.stack([item["caption_feat"] for item in batch]),
         "original_camera_trajectory": torch.stack([item["original_camera_trajectory"] for item in batch]),

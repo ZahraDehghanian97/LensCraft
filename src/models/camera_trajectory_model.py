@@ -131,7 +131,7 @@ class MultiTaskAutoencoder(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        subject_trajectory_loc_rot: torch.Tensor,
+        subject_trajectory: torch.Tensor,
         subject_volume: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
         src_key_mask: Optional[torch.Tensor] = None,
@@ -143,7 +143,7 @@ class MultiTaskAutoencoder(nn.Module):
         decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
         subject_embedding_loc_rot = self.subject_projection_loc_rot(
-            subject_trajectory_loc_rot
+            subject_trajectory
         )
         subject_embedding_vol = self.subject_projection_vol(subject_volume)
         subject_embedding_loc_rot_vol = torch.cat(
@@ -186,7 +186,7 @@ class MultiTaskAutoencoder(nn.Module):
         self,
         caption_embedding: Optional[torch.Tensor] = None,
         camera_trajectory: Optional[torch.Tensor] = None,
-        subject_trajectory_loc_rot: Optional[torch.Tensor] = None,
+        subject_trajectory: Optional[torch.Tensor] = None,
         subject_volume: Optional[torch.Tensor] = None,
         memory_teacher_forcing_ratio: float = 0.0,
         trajectory_teacher_forcing_ratio: float = 0.0,
@@ -194,13 +194,13 @@ class MultiTaskAutoencoder(nn.Module):
         padding_mask: Optional[torch.Tensor] = None,
         decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
-        if subject_trajectory_loc_rot is None or subject_volume is None:
-            raise ValueError("subject_trajectory_loc_rot and subject_volume cannot be None")
+        if subject_trajectory is None or subject_volume is None:
+            raise ValueError("subject_trajectory and subject_volume cannot be None")
 
         with torch.no_grad():
             device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
             
-            subject_trajectory_loc_rot = subject_trajectory_loc_rot.to(device)
+            subject_trajectory = subject_trajectory.to(device)
             subject_volume = subject_volume.to(device)
             
             if caption_embedding is not None:
@@ -221,7 +221,7 @@ class MultiTaskAutoencoder(nn.Module):
                 
                 return self.forward(
                     src=camera_trajectory,
-                    subject_trajectory_loc_rot=subject_trajectory_loc_rot,
+                    subject_trajectory=subject_trajectory,
                     subject_volume=subject_volume,
                     caption_embedding=caption_embedding,
                     memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
@@ -234,7 +234,7 @@ class MultiTaskAutoencoder(nn.Module):
             # If there is no camera trajectory, use only the decoder
             else:
                 subject_embedding_loc_rot = self.subject_projection_loc_rot(
-                    subject_trajectory_loc_rot
+                    subject_trajectory
                 )
                 subject_embedding_vol = self.subject_projection_vol(
                     subject_volume
