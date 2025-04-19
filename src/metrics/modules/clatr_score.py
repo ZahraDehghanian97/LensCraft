@@ -21,7 +21,7 @@ class CLaTrScore(Metric):
 
     def compute(self) -> float:
         if len(self.traj_feat) == 0 or len(self.text_feats) == 0:
-            return 0
+            return torch.tensor(0.0)
         traj_feat = dim_zero_cat(self.traj_feat)
         text_feats = dim_zero_cat(self.text_feats)
         score = (100 * (traj_feat * text_feats).sum(axis=-1)).mean()
