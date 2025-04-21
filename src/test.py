@@ -96,7 +96,7 @@ def compute_subject_embedding(
     return torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
 
 
-def compute_reference_embedding(
+def compute_embedding(
     model: MultiTaskAutoencoder, 
     camera_trajectory: torch.Tensor, 
     subject_embedding: torch.Tensor
@@ -130,7 +130,6 @@ def generate_camera_trajectory(
 def update_metrics(
     model: MultiTaskAutoencoder,
     data: Dict[str, torch.Tensor],
-    reference_embedding: torch.Tensor,
     metric_callback: MetricCallback,
     metric_name: str,
     memory_teacher_forcing_ratio: Optional[float] = None,
@@ -143,7 +142,19 @@ def update_metrics(
         caption_embedding
     )
     
-    generation_embedding = generation['embeddings'][:model.memory_tokens_count, ...]
+    reference_embedding = generation['embeddings'][:model.memory_tokens_count, ...]
+
+    subject_embedding = compute_subject_embedding(
+        model, 
+        data["subject_trajectory"], 
+        data["subject_volume"]
+    )
+    
+    generation_embedding = compute_embedding(
+        model, 
+        generation["reconstructed"], 
+        subject_embedding
+    ).detach().clone()        
     
     batch_size = generation_embedding.shape[1]
     
@@ -168,24 +179,11 @@ def process_test_batch(
 ) -> None:
     prepared_data = prepare_batch_data(batch, device)
     
-    subject_embedding = compute_subject_embedding(
-        model, 
-        prepared_data["subject_trajectory"], 
-        prepared_data["subject_volume"]
-    )
-    
-    reference_embedding = compute_reference_embedding(
-        model, 
-        prepared_data["camera_trajectory"], 
-        subject_embedding
-    )
-    
     cinematography_prompt = prepared_data.get("cinematography_prompt")
     
     update_metrics(
         model, 
         prepared_data,
-        reference_embedding,
         metric_callback,
         "reconstruction",
         memory_teacher_forcing_ratio=0,
@@ -196,7 +194,6 @@ def process_test_batch(
         update_metrics(
             model,
             prepared_data,
-            reference_embedding,
             metric_callback,
             "prompt_generation",
             memory_teacher_forcing_ratio=1.0,
@@ -206,7 +203,6 @@ def process_test_batch(
         update_metrics(
             model,
             prepared_data,
-            reference_embedding,
             metric_callback,
             "hybrid_generation",
             memory_teacher_forcing_ratio=0.4,
