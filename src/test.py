@@ -11,6 +11,7 @@ from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
 from metrics.callback import MetricCallback
 from utils.checkpoint import load_checkpoint
+from visualization import tSNE_visualize_embeddings  
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -55,6 +56,9 @@ def main(cfg: DictConfig) -> None:
             
             if (batch_idx + 1) % log_interval == 0:
                 logger.info(f"Processed {batch_idx + 1}/{len(test_dataloader)} batches")
+
+    tSNE_visualize_embeddings({"GT": metric_callback.clatr_prdc["reconstruction"].real_features, 
+                               "GEN": metric_callback.clatr_prdc["reconstruction"].fake_features })
     
     metric_items = (
         ["reconstruction", "prompt_generation", "hybrid_generation"] 
