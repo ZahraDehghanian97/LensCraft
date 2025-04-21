@@ -143,9 +143,9 @@ def update_metrics(
     
     batch_size = generation_embedding.shape[1]
     
-    generation_embedding_reshaped = generation_embedding.permute(1, 0, 2).reshape(batch_size, -1)
-    reference_embedding_reshaped = reference_embedding.permute(1, 0, 2).reshape(batch_size, -1)
-    text_prompt_reshaped = caption_embedding.permute(1, 0, 2).reshape(batch_size, -1) if caption_embedding != None else None
+    generation_embedding_reshaped = generation_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone()
+    reference_embedding_reshaped = reference_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone()
+    text_prompt_reshaped = caption_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone() if caption_embedding != None else None
     
     metric_callback.update_clatr_metrics(
         metric_name,
