@@ -4,6 +4,8 @@ from .angle_loss import AngleLoss
 import random
 import numpy as np
 from data.simulation.constants import CLIP_PARAMETERS_DICT
+import time
+
 
 class CameraTrajectoryLoss:
     def __init__(self, 
@@ -56,6 +58,7 @@ class CameraTrajectoryLoss:
                 self.sum_clip_weights += self.clip_weights[embedding]
 
 
+
     def __call__(self, model_output, camera_trajectory, clip_target, batch, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed']
         clip_pred = model_output['embeddings']
@@ -67,6 +70,8 @@ class CameraTrajectoryLoss:
             clip_target,
             batch
         )
+
+
 
     def compute_total_loss(self, trajectory_pred, trajectory_target, clip_pred, clip_target, batch):
         if len(self.losses_list) == 0:
@@ -103,7 +108,7 @@ class CameraTrajectoryLoss:
             print("TRAJ LOSS (NET): {:.3f}   |   TRAJ LOSS (SCALED): {:.3f}".format(trajectory_loss, trajectory_loss * self.trajectory_loss_scaling_factor))
         
         if "contrastive" in self.losses_list:
-            contrastive_loss = self.compute_contrastive_loss(clip_pred, batch)
+            contrastive_loss = self.compute_contrastive_loss(clip_pred, clip_target, batch)
             total_loss += contrastive_loss * self.contrastive_loss_scaling_factor
             loss_dict["contrastive"] = contrastive_loss.item()
             print("CONT Loss (NET): {:.3f}   |   CONT Loss (SCALED): {:.3f}".format(contrastive_loss, contrastive_loss * self.contrastive_loss_scaling_factor))
@@ -113,6 +118,8 @@ class CameraTrajectoryLoss:
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
     
+
+
     def compute_trajectory_only_loss(self, model_output, camera_trajectory, tgt_key_padding_mask=None):
         reconstructed = model_output['reconstructed']
         trajectory_loss = self.compute_trajectory_loss(reconstructed, camera_trajectory)
@@ -123,6 +130,8 @@ class CameraTrajectoryLoss:
         }
         
         return trajectory_loss, loss_dict
+
+
 
     def compute_component_losses(self, pred, target):
         position_loss = mse_loss(
@@ -135,12 +144,16 @@ class CameraTrajectoryLoss:
         )
         return position_loss + rotation_loss
 
+
+
     def compute_trajectory_loss(self, pred, target):
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
         
         return relative_loss * self.trajectory_loss_scaling_factor + first_frame_loss
     
+
+
     @staticmethod
     def get_embedding_name(name: str) -> str:
         embedding_name = str(name).split(".")[-1].lower()
@@ -148,72 +161,75 @@ class CameraTrajectoryLoss:
         embedding_name = embedding_name[0] + "".join([item.capitalize() for item in embedding_name[1:]])
         return embedding_name
     
-    def modify_sample(self, clip_embedding_parameters: list[torch.tensor], n_modification: int) -> torch.tensor:
+
+
+    def modify_sample(self, 
+                      clip_embedding_parameters: list[torch.tensor], 
+                      clip_sample_target: torch.tensor, 
+                      n_modification: int) -> torch.tensor:
+
         n_embeddings = len(clip_embedding_parameters)
-        embedding_dim = len(clip_embedding_parameters[0][-1])
-        indices_to_modify = np.random.choice(range(0, n_embeddings), n_modification, replace=False)
-        modified_sample = torch.full((n_embeddings, embedding_dim), -1, dtype=torch.float)
+        indices_to_modify = np.random.permutation(n_embeddings)[:n_modification]
+        modified_sample = clip_sample_target.clone()
+
         for index, (parameter, value, value_index, embedding) in enumerate(clip_embedding_parameters):
-            if embedding is not None:
-                if index in indices_to_modify:
-                    if parameter.count("_") > 1: 
-                        parameter = "_".join(parameter.split("_")[-2:])
-                    embedding_type_enum = CLIP_PARAMETERS_DICT[parameter]
-                    embedding_type_name = embedding_type_enum.__name__
-                    n_embedding_values = len(embedding_type_enum)
-                    valid_indices = np.setdiff1d(np.arange(0, n_embedding_values), [value_index])
-                    random_index = np.random.choice(valid_indices)
-                    random_embedding_name = list(embedding_type_enum)[random_index]
-                    random_embedding_name = self.get_embedding_name(random_embedding_name)
-                    random_embedding_vector = self.clip_embeddings[embedding_type_name][random_embedding_name] # FIXME: decide clip embedding
-                    modified_sample[index] = random_embedding_vector
-                else:
-                    modified_sample[index] = embedding
+            if index in indices_to_modify and value_index != -1:
+
+                if parameter.count("_") > 1: 
+                    parameter = "_".join(parameter.split("_")[-2:])
+                embedding_type_enum = CLIP_PARAMETERS_DICT[parameter]
+                embedding_type_name = embedding_type_enum.__name__
+                n_embedding_values = len(embedding_type_enum)
+                
+                random_index = random.randint(0, n_embedding_values - 1)
+                if random_index == value_index:
+                    random_index = (random_index + 1) % n_embedding_values
+
+                random_embedding_name = list(embedding_type_enum)[random_index]
+                random_embedding_name = self.get_embedding_name(random_embedding_name)
+                modified_sample[index] = self.clip_embeddings[embedding_type_name][random_embedding_name]
+        
         return modified_sample
 
 
 
-
-    def compute_contrastive_loss_v1(self, clip_pred, batch):
-        MIN_EMB_MOD_SIMILAR, MAX_EMB_MOD_SIMILAR = 1, 5
-        MIN_EMB_MOD_DISSIMILAR, MAX_EMB_MOD_DISSIMILAR = 24, 28
-
-        MIN_SIMILAR_SAMPLES, MAX_SIMILAR_SAMPLES = 1, 5
-        MIN_DISSIMILAR_SAMPLES, MAX_DISSIMILAR_SAMPLES = 1, 5
-
-        N_SIMILAR_SAMPLES = random.randint(MIN_SIMILAR_SAMPLES, MAX_SIMILAR_SAMPLES)
-        N_DISSIMILAR_SAMPLES = random.randint(MIN_DISSIMILAR_SAMPLES, MAX_DISSIMILAR_SAMPLES)
+    def compute_contrastive_loss_v1(self, clip_pred, clip_target, batch):
+        N_SIMILAR_SAMPLES = 3
+        N_DISSIMILAR_SAMPLES = 3
 
         batch_size = clip_pred.shape[1]
         contrastive_loss = 0
 
         for sample_idx in range(batch_size):
             clip_sample_pred = clip_pred[:, sample_idx, :]
+            clip_sample_target = clip_target[:, sample_idx, :]
 
             clip_embedding_parameters = batch["cinematography_prompt_parameters"][sample_idx] +\
                                         batch["simulation_instruction_parameters"][sample_idx]
-            
+
             for _ in range(N_SIMILAR_SAMPLES): 
-                n_modification = random.randint(MIN_EMB_MOD_SIMILAR, MAX_EMB_MOD_SIMILAR)
-                
-                clip_sample_similar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device) # FIXME
+                n_modification = random.randint(1, 4)
+                start = time.perf_counter()
+                clip_sample_similar = self.modify_sample(clip_embedding_parameters, 
+                                                         clip_sample_target, 
+                                                         n_modification).to(self.device)
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_similar).mean()
-                loss = 1 - similarity
-                contrastive_loss += loss
+                contrastive_loss += 1 - similarity
+
 
             for _ in range(N_DISSIMILAR_SAMPLES):
-                n_modification = random.randint(MIN_EMB_MOD_DISSIMILAR, MAX_EMB_MOD_DISSIMILAR)
-                
-                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters, n_modification).to(self.device) # FIXME
+                n_modification = random.randint(25, 28)
+                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters, 
+                                                            clip_sample_target, 
+                                                            n_modification).to(self.device)
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_dissimilar).mean()
-                loss = similarity + 1
-                contrastive_loss += loss
+                contrastive_loss += similarity + 1
+
         return contrastive_loss
     
 
 
-
-    def compute_contrastive_loss_v2(self, clip_pred, batch):
+    def compute_contrastive_loss_v2(self, clip_pred, clip_target, batch):
         contrastive_loss = 0
 
         batch_size = len(batch["camera_trajectory"])
@@ -273,6 +289,7 @@ class CameraTrajectoryLoss:
         total_clip_loss = total_clip_loss / n_clip_embs
         return total_clip_loss_weighted, clip_losses, total_clip_loss
     
+
 
     @staticmethod
     def _find_label_indices(all_embeds, target_embeds):
