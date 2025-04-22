@@ -3,7 +3,6 @@ import math
 import numpy as np
 from pathlib import Path
 from typing import Any, Dict, Optional
-import torch.nn.functional as F
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
 
@@ -13,7 +12,7 @@ class CCDMDataset(Dataset):
         data_path: str,
         clip_model_name: str = "openai/clip-vit-large-patch14",
         embedding_dim: int = 512,
-        standardize: bool = True,
+        standardize: bool = False,
         seq_len: int = 30,
         default_focal_length: Optional[float] = None,
         fov_degrees: float = 45.0,
@@ -27,6 +26,10 @@ class CCDMDataset(Dataset):
         self.standardize = standardize
         self.seq_len = seq_len
 
+        self.fov_degrees = fov_degrees
+        self.fov_rad = math.radians(fov_degrees)
+        self.sensor_height = sensor_height
+        self.sensor_width = sensor_width
         if default_focal_length is not None:
             self.focal_length_mm = float(default_focal_length)
         else:
@@ -59,22 +62,22 @@ class CCDMDataset(Dataset):
     def __len__(self) -> int:
         return len(self.camera_trajectories)
     
-    def _transform_camera_format_to_simulation(self, camera_trajectory: torch.Tensor) -> torch.Tensor:
-        frames_count = camera_trajectory.shape[0]
-        simulation_format = torch.zeros((frames_count, 7), dtype=torch.float32)
+    def _transform_5dof_to_7dof(self, camera_trajectory: torch.Tensor) -> torch.Tensor:
+        x, y, z = camera_trajectory[:,0], camera_trajectory[:,1], camera_trajectory[:,2]
+        px, py   = camera_trajectory[:,3], camera_trajectory[:,4]
+
+        yaw_center = torch.atan2(x, z)
+        pitch_center = torch.atan2(y, torch.hypot(x, z))
+
+        delta_pitch_rad = torch.atan((py - 0.5) * self.sensor_height / self.focal_length_mm)
+        delta_yaw_rad = torch.atan((px - 0.5) * self.sensor_width / self.focal_length_mm)
+
+        yaw = torch.rad2deg(yaw_center + delta_yaw_rad)
+        pitch = torch.rad2deg(pitch_center + delta_pitch_rad)
+        roll = torch.zeros_like(yaw)
+        focal = torch.full_like(yaw, self.focal_length_mm)
         
-        simulation_format[:, 0:3] = camera_trajectory[:, 0:3]
-        
-        for i in range(frames_count):
-            p_x, p_y = camera_trajectory[i, 3:5]
-            
-            rot_x = torch.atan2(p_y, torch.tensor(1.0, dtype=torch.float32))
-            rot_y = torch.atan2(p_x, torch.tensor(1.0, dtype=torch.float32))
-            rot_z = torch.tensor(0.0, dtype=torch.float32)
-            
-            simulation_format[i, 3:7] = torch.tensor([rot_x, rot_y, rot_z, self.default_focal_length], dtype=torch.float32)
-        
-        return simulation_format
+        return torch.stack([x, y, z, yaw, pitch, roll, focal], dim=1)
     
     def __getitem__(self, index: int) -> Dict[str, Any]:
         camera_trajectory = self.camera_trajectories[index]
@@ -94,7 +97,7 @@ class CCDMDataset(Dataset):
             indices = torch.linspace(0, traj_length - 1, self.seq_len).long()
             camera_trajectory = camera_trajectory[indices]
         
-        camera_trajectory_sim = self._transform_camera_format_to_simulation(camera_trajectory)
+        camera_trajectory_sim = self._transform_5dof_to_7dof(camera_trajectory)
         
         text = " ".join(text_description)
         with torch.no_grad():
