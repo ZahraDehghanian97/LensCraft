@@ -261,13 +261,20 @@ class MultiTaskAutoencoder(nn.Module):
     
     def load_means_and_stds(self):
         with open("embedding_means.pkl", 'rb') as f:
-            embedding_means = pickle.load(f)
+            embedding_means_raw = pickle.load(f)
         with open("embedding_stds.pkl", "rb") as f:
-            embedding_stds = pickle.load(f)
+            embedding_stds_raw = pickle.load(f)
+            
+        embedding_means = {}
+        embedding_stds = {}
+        for feature, value in embedding_means_raw.items():
+            embedding_means[feature] = torch.tensor(value, device=self.device)
+        
+        for feature, value in embedding_stds_raw.items():
+            embedding_stds[feature] = torch.tensor(value, device=self.device)
+            
         return embedding_means, embedding_stds
     
     
     def get_mean_and_std(self, feature):
-        mean = torch.tensor(self.embedding_means[feature], device=self.device)
-        std = torch.tensor(self.embedding_stds[feature], device=self.device)
-        return mean, std
+        return self.embedding_means[feature], self.embedding_stds[feature]
