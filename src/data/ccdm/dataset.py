@@ -1,7 +1,9 @@
 import torch
+import math
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, Optional
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
 
@@ -13,45 +15,46 @@ class CCDMDataset(Dataset):
         embedding_dim: int = 512,
         standardize: bool = True,
         seq_len: int = 30,
-        default_focal_length: float = 50,
-    ):
+        default_focal_length: Optional[float] = None,
+        fov_degrees: float = 45.0,
+        sensor_width: float = 36.0,
+        sensor_height: float = 24.0,
+        device: str | torch.device | None = None,
+    ) -> None:
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
         self.clip_model_name = clip_model_name
         self.standardize = standardize
         self.seq_len = seq_len
-        self.default_focal_length = default_focal_length
-        
+
+        if default_focal_length is not None:
+            self.focal_length_mm = float(default_focal_length)
+        else:
+            diag = math.hypot(sensor_width, sensor_height)
+            self.focal_length_mm = diag / (2 * math.tan(math.radians(fov_degrees * 0.5)))
+
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.clip_embedder = CLIPEmbedder(model_name=self.clip_model_name, device=self.device)
+
         self._load_camera_trajectory_data()
-        self.clip_embedder = CLIPEmbedder(
-            model_name=self.clip_model_name,
-            device="cuda" if torch.cuda.is_available() else "cpu"
-        )
-    
-    def _load_camera_trajectory_data(self):
-        data_file = self.data_path
-        if not data_file.exists():
-            raise FileNotFoundError(f"Data file not found at {data_file}")
-        
-        data = np.load(data_file, allow_pickle=True)[()]
-        
-        self.camera_trajectories = [torch.tensor(cam, dtype=torch.float32) for cam in data['cam']]
-        self.text_descriptions = data['info']
-        
+
+    def _load_camera_trajectory_data(self) -> None:
+        if not self.data_path.exists():
+            raise FileNotFoundError(f"Data file not found at {self.data_path}")
+
+        raw = np.load(self.data_path, allow_pickle=True)[()]
+        self.camera_trajectories = [torch.tensor(camera_trajectory, dtype=torch.float32) for camera_trajectory in raw["camera_trajectory"]]
+        self.text_descriptions = raw["info"]
+
         if self.standardize:
-            mean_std_file = self.data_path.parent / "Mean_Std.npy"
-            if mean_std_file.exists():
-                mean_std_data = np.load(mean_std_file, allow_pickle=True)[()]
-                self.mean = torch.tensor(mean_std_data['Mean'], dtype=torch.float32)
-                self.std = torch.tensor(mean_std_data['Std'], dtype=torch.float32)
-            else:
-                d = torch.cat(self.camera_trajectories, dim=0)
-                self.mean = torch.mean(d, dim=0)
-                self.std = torch.std(d, dim=0)
-                np.save(mean_std_file, {"Mean": self.mean.cpu().numpy(), "Std": self.std.cpu().numpy()})
-            
-            for i in range(len(self.camera_trajectories)):
-                self.camera_trajectories[i] = (self.camera_trajectories[i] - self.mean.unsqueeze(0)) / (self.std.unsqueeze(0) + 1e-8)
+            stats_file = self.data_path.parent / "Mean_Std.npy"
+            stats = np.load(stats_file, allow_pickle=True)[()]
+            self.mean = torch.tensor(stats["Mean"], dtype=torch.float32)
+            self.std = torch.tensor(stats["Std"], dtype=torch.float32)
+            self.camera_trajectories = [(c - self.mean) / (self.std + 1e-8) for c in self.camera_trajectories]
+        else:
+            self.mean = torch.zeros(5)
+            self.std = torch.ones(5)
     
     def __len__(self) -> int:
         return len(self.camera_trajectories)
@@ -84,7 +87,7 @@ class CCDMDataset(Dataset):
             padding = camera_trajectory[-1:].repeat(self.seq_len - traj_length, 1)
             camera_trajectory = torch.cat([camera_trajectory, padding], dim=0)
             padding_mask = torch.cat([
-                torch.ones(traj_length, dtype=torch.bool), 
+                torch.ones(traj_length, dtype=torch.bool),
                 torch.zeros(self.seq_len - traj_length, dtype=torch.bool)
             ])
         else:
@@ -97,7 +100,7 @@ class CCDMDataset(Dataset):
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
         
-        subject_loc_rot = torch.zeros((self.seq_len, 6), dtype=torch.float32)        
+        subject_loc_rot = torch.zeros((self.seq_len, 6), dtype=torch.float32)
         subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
         
         return {
