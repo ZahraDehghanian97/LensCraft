@@ -12,7 +12,7 @@ loss_module:
   losses_list:
     - clip 
     - trajectory
-    - contrastive
+    # - contrastive
   weighted_clip_loss: false
   weight_power: 1
   clip_loss_scaling_factor: 80000         # Around 100 when converge
