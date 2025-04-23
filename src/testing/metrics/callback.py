@@ -1,25 +1,24 @@
 from typing import Any, Dict
 import torch
 
-from metrics.modules.fcd import FrechetCLaTrDistance
-from metrics.modules.prdc import ManifoldMetrics
-from metrics.modules.clatr_score import CLaTrScore
+from testing.metrics.modules.fcd import FrechetCLaTrDistance
+from testing.metrics.modules.prdc import ManifoldMetrics
+from testing.metrics.modules.clatr_score import CLaTrScore
 
 
 class MetricCallback:
     def __init__(self, num_cams: int, device: str):
         self.num_cams = num_cams
         self.device = device
-        self.dtype = torch.float16 if 'cuda' in device else torch.float32
         self.metrics = {}
         self.active_metrics = set()
         
     def _get_or_create_metric(self, run_type: str):
         if run_type not in self.metrics:
             self.metrics[run_type] = {
-                "clatr_fd": FrechetCLaTrDistance(dtype=self.dtype),
-                "clatr_prdc": ManifoldMetrics(distance="euclidean", dtype=self.dtype),
-                "clatr_score": CLaTrScore(dtype=self.dtype)
+                "clatr_fd": FrechetCLaTrDistance(),
+                "clatr_prdc": ManifoldMetrics(distance="euclidean"),
+                "clatr_score": CLaTrScore()
             }
             for metric in self.metrics[run_type].values():
                 metric.to(self.device)
@@ -30,11 +29,11 @@ class MetricCallback:
     def update_clatr_metrics(self, run_type: str, pred, ref, text):
         metrics = self._get_or_create_metric(run_type)
         
-        pred = pred.to(self.dtype)
-        ref = ref.to(self.dtype)
+        pred = pred.to(torch.float16)
+        ref = ref.to(torch.float16)
         
         if text is not None:
-            text = text.to(self.dtype)
+            text = text.to(torch.float16)
             metrics["clatr_score"].update(pred, text)
             
         metrics["clatr_prdc"].update(pred, ref)
@@ -68,10 +67,10 @@ class MetricCallback:
             torch.cuda.empty_cache()
 
         return {
-            f"{run_type}/clatr_score": clatr_score.item(),
-            f"{run_type}/precision": clatr_p.item(),
-            f"{run_type}/recall": clatr_r.item(),
-            f"{run_type}/density": clatr_d.item(),
-            f"{run_type}/coverage": clatr_c.item(),
-            f"{run_type}/fcd": fcd.item(),
+            f"{run_type}/clatr_score": float(clatr_score.item()),
+            f"{run_type}/precision": float(clatr_p.item()),
+            f"{run_type}/recall": float(clatr_r.item()),
+            f"{run_type}/density": float(clatr_d.item()),
+            f"{run_type}/coverage": float(clatr_c.item()),
+            f"{run_type}/fcd": float(fcd.item()),
         }

@@ -64,7 +64,7 @@ class CCDMDataset(Dataset):
     
     def _transform_5dof_to_7dof(self, camera_trajectory: torch.Tensor) -> torch.Tensor:
         x, y, z = camera_trajectory[:,0], camera_trajectory[:,1], camera_trajectory[:,2]
-        px, py   = camera_trajectory[:,3], camera_trajectory[:,4]
+        px, py = camera_trajectory[:,3], camera_trajectory[:,4]
 
         yaw_center = torch.atan2(x, z)
         pitch_center = torch.atan2(y, torch.hypot(x, z))
@@ -75,7 +75,7 @@ class CCDMDataset(Dataset):
         yaw = torch.rad2deg(yaw_center + delta_yaw_rad)
         pitch = torch.rad2deg(pitch_center + delta_pitch_rad)
         roll = torch.zeros_like(yaw)
-        focal = torch.full_like(yaw, self.focal_length_mm)
+        focal = torch.full_like(yaw, 37.52) # self.focal_length_mm)
         
         return torch.stack([x, y, z, yaw, pitch, roll, focal], dim=1)
     

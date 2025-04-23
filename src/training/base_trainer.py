@@ -185,7 +185,7 @@ class BaseTrainer(L.LightningModule):
         if "trajectory" in loss_dict:
             trajectory_val = loss_dict["trajectory"] if isinstance(loss_dict["trajectory"], float) else loss_dict["trajectory"].item()
             self.log(
-                "tr", 
+                "tr",
                 trajectory_val,
                 on_step=True, 
                 on_epoch=False,

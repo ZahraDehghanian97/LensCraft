@@ -1,0 +1,13 @@
+defaults:
+  - _self_
+  - clip: default
+  - data: default
+  - training: default
+  - hydra: default
+
+use_ccdm: true
+ccdm_checkpoint_path: "third_parties/Camera-control/[2024][EG]Text+keyframe/weight/latest.pth"
+guidance_scale: 2.0
+checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH,null}
+output_dir: ${oc.env:CCDM_OUTPUT_DIR,./ccdm_results}
+device: cuda

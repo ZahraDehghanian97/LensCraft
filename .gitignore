@@ -148,3 +148,5 @@ multirun
 
 datasets/files
 *.pkl
+
+test_results
