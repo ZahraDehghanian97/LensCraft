@@ -277,8 +277,11 @@ class CameraTrajectoryLoss:
         for i in range(n_clip_embs):
             embedding_none_mask = none_mask[:, i]
             if encoder_loss_function == "clip":
-                similarity = cosine_similarity(clip_target[i], clip_pred[i])
-                current_loss = 1 - similarity[embedding_none_mask].mean()
+                similarity = cosine_similarity(clip_target[i], clip_pred[i])[embedding_none_mask]
+                if len(similarity) != 0:
+                    current_loss = 1 - similarity.mean()
+                else:
+                    current_loss = 0
             elif encoder_loss_function == "mse":
                 current_loss = mse_loss(clip_target[i], clip_pred[i])
             clip_losses.append(current_loss) 
