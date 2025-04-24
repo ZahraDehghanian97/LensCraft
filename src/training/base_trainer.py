@@ -208,20 +208,18 @@ class BaseTrainer(L.LightningModule):
                 logger=True,
                 batch_size=batch_size
             )
-        elif "clip" in loss_dict and isinstance(loss_dict["clip"], dict):
-            clip_values = list(loss_dict["clip"].values())
-            if clip_values:
-                clip_avg = sum(clip_values) / len(clip_values)
-                clip_avg = clip_avg if isinstance(clip_avg, float) else clip_avg.item()
-                self.log(
-                    "cl",
-                    clip_avg,
-                    on_step=True,
-                    on_epoch=False,
-                    prog_bar=True,
-                    logger=True,
-                    batch_size=batch_size
-                )
+        
+        if "average_cycle" in loss_dict:
+            cycle_val = loss_dict["average_cycle"] if isinstance(loss_dict["average_cycle"], float) else loss_dict["average_cycle"].item()
+            self.log(
+                "cc",
+                cycle_val,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=True,
+                logger=True,
+                batch_size=batch_size
+            )
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):
