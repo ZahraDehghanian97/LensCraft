@@ -24,9 +24,6 @@ class CameraTrajectoryLoss:
         self.angle_loss = AngleLoss(angle_loss_scaling_factor)
         self.clip_loss = ClipLoss(clip_weights=clip_weights, weight_power=weight_power)
         
-        self.position_slice = slice(0, 4)
-        self.rotation_slice = slice(4, None)
-        
         self.contrastive_loss_margin = contrastive_loss_margin
         self.n_clip_embs = n_clip_embs
         self.losses_list = losses_list
@@ -122,12 +119,12 @@ class CameraTrajectoryLoss:
 
     def compute_component_losses(self, pred, target):
         position_loss = mse_loss(
-            pred[..., self.position_slice], 
-            target[..., self.position_slice]
+            pred[..., :3], 
+            target[..., :3]
         )
         rotation_loss = self.angle_loss(
-            pred[..., self.rotation_slice], 
-            target[..., self.rotation_slice]
+            pred[..., 3:], 
+            target[..., 3:]
         )
         return position_loss + rotation_loss
 

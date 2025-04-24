@@ -1,7 +1,7 @@
 info:
   max_seq_length: 30
   seq_length: 30
-  feature_dim: 7
+  feature_dim: 6
 
 config:
   _target_: data.simulation.dataset.SimulationDataset

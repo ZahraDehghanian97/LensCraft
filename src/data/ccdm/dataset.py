@@ -82,9 +82,9 @@ class CCDMDataset(Dataset):
         yaw = torch.rad2deg(yaw_center_rad + delta_yaw_rad)
         pitch = torch.rad2deg(pitch_center_rad + delta_pitch_rad)
         roll = torch.zeros_like(yaw)
-        focal = torch.full_like(yaw, 37.52) # self.focal_length_mm)
+        focal = torch.full_like(yaw, self.focal_length_mm)
         
-        return torch.stack([x, y, z, yaw, pitch, roll, focal], dim=1)
+        return torch.stack([x, y, z, yaw, pitch, roll], dim=1)
     
     def __getitem__(self, index: int) -> Dict[str, Any]:
         camera_trajectory = self.camera_trajectories[index]

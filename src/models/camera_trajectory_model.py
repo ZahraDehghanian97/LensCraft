@@ -12,7 +12,7 @@ from data.simulation.constants import cinematography_struct_size, simulation_str
 class MultiTaskAutoencoder(nn.Module):
     def __init__(
         self, 
-        input_dim: int = 7, 
+        input_dim: int = 6, 
         subject_dim: int = 6,
         nhead: int = 4, 
         num_encoder_layers: int = 3, 
