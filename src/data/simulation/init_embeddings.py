@@ -65,7 +65,7 @@ def pca_embeddings(embeddings_data: dict, n_components: int) -> tuple[dict, dict
 
         while feature_embeddings.shape[0] < n_components:
             noise = np.random.randn(*feature_embeddings.shape) * (std * 10e-4)
-            feature_embeddings = np.concatenate([feature_embeddings, 
+            feature_embeddings = np.concatenate([feature_embeddings,
                                                  feature_embeddings + noise], axis=0)
 
         pca = PCA(n_components=n_components)

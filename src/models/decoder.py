@@ -62,8 +62,8 @@ class Decoder(nn.Module):
                 decoder_input, subject_embedding, tgt_key_padding_mask)
                         
             decoder_output = self.transformer_decoder(
-                tgt=embedded, 
-                memory=memory, 
+                tgt=embedded,
+                memory=memory,
                 tgt_mask=causal_mask[:embedded.size(0), :embedded.size(0)],
                 tgt_key_padding_mask=padded_mask
             )

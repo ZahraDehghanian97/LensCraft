@@ -11,7 +11,7 @@ plot:
     height: 18
   style:
     plt_style: "bmh"
-    major_grid_style: 
+    major_grid_style:
       which: "major"
       linestyle: "-"
       linewidth: 1.0
@@ -66,7 +66,7 @@ metrics:
     - train_total_epoch
 
   clips:
-    num_clips: 28 
+    num_clips: 28
     categorize_embeddings: true
     average_clip_loss: true # to enable this option, 'clip' should be in 'losses_list'
     include_validation: true
@@ -111,43 +111,43 @@ legend:
 
 
 color_map:
-  clip_loss: 
+  clip_loss:
   # Cinematography Prompt:
     # Initial:
-    - clip_0:  "#E9C46A" 
+    - clip_0:  "#E9C46A"
     - clip_1:  "#2A9D8F"
     - clip_2:  "#E63946"
     - clip_3:  "#9B5DE5"
-    # Movement: 
+    # Movement:
     - clip_4:  "#457B9D"
     - clip_5:  "#9B5DE5"
     # Final: Red
-    - clip_6:  "#E63946" 
+    - clip_6:  "#E63946"
     - clip_7:  "#F4A261"
     - clip_8:  "#E9C46A"
     - clip_9:  "#2A9D8F"
   # Simulation Instruction:
-    # Initial Setup: 
+    # Initial Setup:
     - clip_10: "#E63946"
     - clip_11: "#9B5DE5"
     - clip_12: "#E9C46A"
     - clip_13: "#2A9D8F"
     - clip_14: "#457B9D"
-    # Dynamic: 
-    - clip_15: "#E63946" 
+    # Dynamic:
+    - clip_15: "#E63946"
     - clip_16: "#F4A261"
     - clip_17: "#E9C46A"
     - clip_18: "#DA70D6"
     - clip_19: "#457B9D"
-    - clip_20: "#9B5DE5" 
-    - clip_21: "#D08C60" 
-    - clip_22: "#00A896" 
-    - clip_23: "#F4D35E" 
-    - clip_24: "#5E60CE" 
-    # Constraints: 
-    - clip_25: "#E63946" 
-    - clip_26: "#2A9D8F" 
-    - clip_27: "#5E60CE" 
+    - clip_20: "#9B5DE5"
+    - clip_21: "#D08C60"
+    - clip_22: "#00A896"
+    - clip_23: "#F4D35E"
+    - clip_24: "#5E60CE"
+    # Constraints:
+    - clip_25: "#E63946"
+    - clip_26: "#2A9D8F"
+    - clip_27: "#5E60CE"
   trajectory_loss:
     - los: "#457B9D"
     - trajectory: "#D08C60"

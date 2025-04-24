@@ -6,10 +6,10 @@ from .clip_loss import ClipLoss
 
 
 class CameraTrajectoryLoss:
-    def __init__(self, 
-                 contrastive_loss_margin: int=5, 
-                 n_clip_embs: int=28, 
-                 losses_list: list=[], 
+    def __init__(self,
+                 contrastive_loss_margin: int=5,
+                 n_clip_embs: int=28,
+                 losses_list: list=[],
                  weighted_clip_loss: bool=False,
                  weight_power: int=1,
                  clip_weights: dict=None,
@@ -74,9 +74,9 @@ class CameraTrajectoryLoss:
 
         if "clip" in self.losses_list:
             total_clip_loss_weighted, clip_losses, total_clip_loss = self.clip_loss.compute(
-                clip_target=clip_target, 
-                clip_pred=clip_pred, 
-                n_clip_embs=self.n_clip_embs, 
+                clip_target=clip_target,
+                clip_pred=clip_pred,
+                n_clip_embs=self.n_clip_embs,
                 weighted_clip_loss=self.weighted_clip_loss,
                 batch=batch,
                 encoder_loss_function=self.encoder_loss_function
@@ -119,11 +119,11 @@ class CameraTrajectoryLoss:
 
     def compute_component_losses(self, pred, target):
         position_loss = mse_loss(
-            pred[..., :3], 
+            pred[..., :3],
             target[..., :3]
         )
         rotation_loss = self.angle_loss(
-            pred[..., 3:], 
+            pred[..., 3:],
             target[..., 3:]
         )
         return position_loss + rotation_loss

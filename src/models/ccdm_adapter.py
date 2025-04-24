@@ -148,7 +148,7 @@ class CCDMAdapter:
     
     def process_batch(self, batch):
         text_prompts = [
-            self.extract_text_prompt(params) 
+            self.extract_text_prompt(params)
             for params in batch["cinematography_prompt_parameters"]
         ]
         
@@ -177,8 +177,8 @@ class CCDMAdapter:
             adjusted_trajectories = self._adjust_sequence_length(processed_trajectories, seq_length)
             
             trajectories_tensor = torch.tensor(
-                np.array(adjusted_trajectories), 
-                dtype=torch.float32, 
+                np.array(adjusted_trajectories),
+                dtype=torch.float32,
                 device=self.device
             )
             

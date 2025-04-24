@@ -98,7 +98,7 @@ def parse_simulation_file_to_dict(file_path: Path, parameter_dictionary: Dict) -
         cinematography_refs, simulation_refs, subjects_info, camera_frames = data
         
         cinematography_prompts = reconstruct_from_reference(
-            cinematography_refs, 
+            cinematography_refs,
             parameter_dictionary
         )['cinematography']
         simulation_instructions = reconstruct_from_reference(

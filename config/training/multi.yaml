@@ -10,12 +10,12 @@ loss_module:
   contrastive_loss_margin: 5
   n_clip_embs: 28
   losses_list:
-    - clip 
+    - clip
     - trajectory
     # - contrastive
   weighted_clip_loss: false
   weight_power: 1
-  clip_loss_scaling_factor: 37500 
+  clip_loss_scaling_factor: 37500
   trajectory_loss_scaling_factor: 10
   contrastive_loss_scaling_factor: 0.1
   angle_loss_scaling_factor: 180 # TODO: Format of this file should be similar to config/training/default.yaml

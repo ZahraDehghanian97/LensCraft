@@ -20,8 +20,8 @@ def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> 
 
 
 def compute_subject_embedding(
-    model: MultiTaskAutoencoder, 
-    subject_trajectory: torch.Tensor, 
+    model: MultiTaskAutoencoder,
+    subject_trajectory: torch.Tensor,
     subject_volume: torch.Tensor
 ) -> torch.Tensor:
     subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_trajectory)
@@ -30,8 +30,8 @@ def compute_subject_embedding(
 
 
 def compute_encoder_embedding(
-    model: MultiTaskAutoencoder, 
-    camera_trajectory: torch.Tensor, 
+    model: MultiTaskAutoencoder,
+    camera_trajectory: torch.Tensor,
     subject_embedding: torch.Tensor
 ) -> torch.Tensor:
     return model.encoder(camera_trajectory, subject_embedding)[:model.memory_tokens_count, ...]
@@ -77,14 +77,14 @@ def update_metrics(
     encoder_embedding = generation_output['embeddings'][:model.memory_tokens_count, ...]
 
     subject_embedding = compute_subject_embedding(
-        model, 
-        data["subject_trajectory"], 
+        model,
+        data["subject_trajectory"],
         data["subject_volume"]
     )
     
     reconstructed_embedding = compute_encoder_embedding(
-        model, 
-        generation_output["reconstructed"], 
+        model,
+        generation_output["reconstructed"],
         subject_embedding
     ).detach().clone()        
     
@@ -116,7 +116,7 @@ def process_lens_craft_batch(
     caption_embedding = prepared_data.get("cinematography_prompt")
     
     update_metrics(
-        model, 
+        model,
         prepared_data,
         metric_callback,
         "reconstruction",

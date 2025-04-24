@@ -25,7 +25,7 @@ def extract_cinematography_parameters(
     struct: List,
     clip_embeddings: Optional[Dict] = None,
     prefix: str = "",
-    fill_none_with_mean: bool = False, 
+    fill_none_with_mean: bool = False,
     embedding_means = None,
 ) -> List[Tuple[str, Any, int, Optional[torch.Tensor]]]:
     parameters = []
@@ -50,7 +50,7 @@ def extract_cinematography_parameters(
             if data_value is None:
                 index = -1
                 if fill_none_with_mean:
-                    embedding = get_mean_embedding(value_type, embedding_means) 
+                    embedding = get_mean_embedding(value_type, embedding_means)
 
             elif isinstance(data_value, bool):
                 index = 1 if data_value else 0
@@ -69,11 +69,11 @@ def extract_cinematography_parameters(
                 nested_data = {}
 
             nested_params = extract_cinematography_parameters(
-                data=nested_data, 
-                struct=value_type, 
-                clip_embeddings=clip_embeddings, 
+                data=nested_data,
+                struct=value_type,
+                clip_embeddings=clip_embeddings,
                 fill_none_with_mean=fill_none_with_mean,
-                prefix=current_prefix, 
+                prefix=current_prefix,
                 embedding_means=embedding_means,
             )
             parameters.extend(nested_params)

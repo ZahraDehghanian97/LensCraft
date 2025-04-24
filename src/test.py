@@ -66,14 +66,14 @@ def main(cfg: DictConfig) -> None:
     
     if use_ccdm:
         metric_items = (
-            ["reconstruction", "prompt_generation", "hybrid_generation"] 
+            ["reconstruction", "prompt_generation", "hybrid_generation"]
             if dataset_type == 'simulation' or dataset_type == 'ccdm'
             else ["reconstruction"]
         )
     else:
         metric_items = (
-            ["reconstruction", "prompt_generation", "hybrid_generation"] 
-            if dataset_type == 'simulation' 
+            ["reconstruction", "prompt_generation", "hybrid_generation"]
+            if dataset_type == 'simulation'
             else ["reconstruction"]
         )
     
@@ -109,7 +109,7 @@ def main(cfg: DictConfig) -> None:
             )
     
     metrics = {
-        item: metric_callback.compute_clatr_metrics(item) 
+        item: metric_callback.compute_clatr_metrics(item)
         for item in metric_items if item in metric_callback.active_metrics
     }
     

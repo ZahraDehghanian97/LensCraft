@@ -13,8 +13,8 @@ from .constants import (
 )
 
 from .utils import (
-    extract_cinematography_parameters, 
-    convert_parameters_to_embedding_tensor, 
+    extract_cinematography_parameters,
+    convert_parameters_to_embedding_tensor,
     load_clip_means,
 )
 
@@ -124,8 +124,8 @@ class SimulationDataset(Dataset):
         
         loc_rot = [
             [
-                frame["position"]["x"], 
-                frame["position"]["y"], 
+                frame["position"]["x"],
+                frame["position"]["y"],
                 frame["position"]["z"],
                 frame["rotation"]["x"],
                 frame["rotation"]["y"],

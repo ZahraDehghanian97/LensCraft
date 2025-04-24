@@ -15,10 +15,10 @@ class ClipLoss:
                 self.sum_clip_weights += self.clip_weights[embedding]
     
     def compute(self,
-                clip_target, 
-                clip_pred, 
-                n_clip_embs, 
-                weighted_clip_loss, 
+                clip_target,
+                clip_pred,
+                n_clip_embs,
+                weighted_clip_loss,
                 batch,  
                 encoder_loss_function="clip"):
         none_mask = self.create_none_mask_matrix(batch, n_clip_embs)
@@ -37,7 +37,7 @@ class ClipLoss:
             elif encoder_loss_function == "mse":
                 current_loss = mse_loss(clip_target[i], clip_pred[i])
             
-            clip_losses.append(current_loss) 
+            clip_losses.append(current_loss)
             
             if weighted_clip_loss and self.clip_weights:
                 total_clip_loss_weighted += current_loss * self.clip_weights[f"clip_{i}"]

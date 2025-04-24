@@ -12,14 +12,14 @@ import random
 # N_BINS = 20
 # PARAMETERS = [
 #     "CameraVerticalAngle",
-#     "ShotSize", 
-#     "SubjectView", 
-#     "SubjectInFramePosition", 
-#     "CameraMovementType", 
-#     "MovementSpeed", 
+#     "ShotSize",
+#     "SubjectView",
+#     "SubjectInFramePosition",
+#     "CameraMovementType",
+#     "MovementSpeed",
 
-#     "Scale", 
-#     "MovementEasing", 
+#     "Scale",
+#     "MovementEasing",
 #     "Direction",
 #     "MovementMode",
 #     "boolean",
@@ -82,10 +82,10 @@ import random
 #     return combined_clip_vector
 
 
-# def visualize_histogram(data: list, 
-#                         title: str, 
-#                         path_to_save: str, 
-#                         bins: int=N_BINS, 
+# def visualize_histogram(data: list,
+#                         title: str,
+#                         path_to_save: str,
+#                         bins: int=N_BINS,
 #                         xlim: tuple=(-1, 1)):
 #     plt.figure(figsize=(12, 8))
 #     plt.hist(data, bins=bins)
@@ -107,8 +107,8 @@ import random
 #         combined_clip_2 = get_combined_clip_vector(means, stds, True)
 #         cosine_similarity = compute_cosine_similarity(combined_clip_1, combined_clip_2)
 #         similarities.append(cosine_similarity)
-#     visualize_histogram(similarities, 
-#                         "Cosine Similarity Hsitogram", 
+#     visualize_histogram(similarities,
+#                         "Cosine Similarity Hsitogram",
 #                         "cosine_similarities_hist.jpeg")
 
 
@@ -130,7 +130,7 @@ import random
 #                     cosine_similarity = compute_cosine_similarity(embedding_1, embedding_2)
 #                     similarities.append(cosine_similarity)
 #             visualize_histogram(similarities,
-#                                 "Cosine Similarity Hsitogram - {}".format(key), 
+#                                 "Cosine Similarity Hsitogram - {}".format(key),
 #                                 "cosine_similarities_hist_{}.jpeg".format(key),
 #                                 bins=10)
 

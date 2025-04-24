@@ -11,16 +11,16 @@ from data.simulation.constants import cinematography_struct_size, simulation_str
 
 class MultiTaskAutoencoder(nn.Module):
     def __init__(
-        self, 
-        input_dim: int = 6, 
+        self,
+        input_dim: int = 6,
         subject_dim: int = 6,
-        nhead: int = 4, 
-        num_encoder_layers: int = 3, 
-        num_decoder_layers: int = 3, 
-        dim_feedforward: int = 2048, 
-        dropout_rate: float = 0.1, 
-        seq_length: int = 30, 
-        latent_dim: int = 512, 
+        nhead: int = 4,
+        num_encoder_layers: int = 3,
+        num_decoder_layers: int = 3,
+        dim_feedforward: int = 2048,
+        dropout_rate: float = 0.1,
+        seq_length: int = 30,
+        latent_dim: int = 512,
         use_merged_memory: bool = False,
         denormalize_memory: bool = False
     ):
@@ -107,8 +107,8 @@ class MultiTaskAutoencoder(nn.Module):
                         feature = self.cinematography_features[i]
                         mean, std = self.get_mean_and_std(feature)
                         merged_memory[i, :, :] = (
-                            (1 - teacher_forcing_ratio) * (merged_memory[i, :, :] * std + mean) + 
-                            teacher_forcing_ratio * (caption_embedding[i, :, :] * std + mean) 
+                            (1 - teacher_forcing_ratio) * (merged_memory[i, :, :] * std + mean) +
+                            teacher_forcing_ratio * (caption_embedding[i, :, :] * std + mean)
                         )
                 else:
                     merged_memory = (
@@ -151,8 +151,8 @@ class MultiTaskAutoencoder(nn.Module):
         )
         
         camera_embedding = self.encoder(
-            src, 
-            subject_embedding_loc_rot_vol, 
+            src,
+            subject_embedding_loc_rot_vol,
             src_key_mask
         )     
 

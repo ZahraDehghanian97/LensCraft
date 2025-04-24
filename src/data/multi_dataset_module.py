@@ -9,12 +9,12 @@ from .combined_dataloader import CombinedDataLoader
 
 class MultiDatasetModule(L.LightningDataModule):
     def __init__(
-        self, 
-        simulation_config, 
-        ccdm_config, 
-        batch_size, 
-        num_workers=None, 
-        val_size=0.1, 
+        self,
+        simulation_config,
+        ccdm_config,
+        batch_size,
+        num_workers=None,
+        val_size=0.1,
         test_size=0.1,
         sim_ratio=0.5  # Ratio of simulation samples in each batch
     ):
@@ -107,15 +107,15 @@ class MultiDatasetModule(L.LightningDataModule):
         kwargs = self._get_dataloader_kwargs(shuffle=True)
         
         sim_loader = DataLoader(
-            self.sim_train, 
-            batch_size=self.sim_batch_size, 
+            self.sim_train,
+            batch_size=self.sim_batch_size,
             collate_fn=self.sim_collate_fn,
             **kwargs
         )
         
         ccdm_loader = DataLoader(
-            self.ccdm_train, 
-            batch_size=self.ccdm_batch_size, 
+            self.ccdm_train,
+            batch_size=self.ccdm_batch_size,
             collate_fn=self.ccdm_collate_fn,
             **kwargs
         )
@@ -129,15 +129,15 @@ class MultiDatasetModule(L.LightningDataModule):
         kwargs = self._get_dataloader_kwargs()
         
         sim_loader = DataLoader(
-            self.sim_val, 
-            batch_size=self.sim_batch_size, 
+            self.sim_val,
+            batch_size=self.sim_batch_size,
             collate_fn=self.sim_collate_fn,
             **kwargs
         )
         
         ccdm_loader = DataLoader(
-            self.ccdm_val, 
-            batch_size=self.ccdm_batch_size, 
+            self.ccdm_val,
+            batch_size=self.ccdm_batch_size,
             collate_fn=self.ccdm_collate_fn,
             **kwargs
         )
@@ -148,15 +148,15 @@ class MultiDatasetModule(L.LightningDataModule):
         kwargs = self._get_dataloader_kwargs()
         
         sim_loader = DataLoader(
-            self.sim_test, 
-            batch_size=self.sim_batch_size, 
+            self.sim_test,
+            batch_size=self.sim_batch_size,
             collate_fn=self.sim_collate_fn,
             **kwargs
         )
         
         ccdm_loader = DataLoader(
-            self.ccdm_test, 
-            batch_size=self.ccdm_batch_size, 
+            self.ccdm_test,
+            batch_size=self.ccdm_batch_size,
             collate_fn=self.ccdm_collate_fn,
             **kwargs
         )

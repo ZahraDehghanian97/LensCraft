@@ -122,7 +122,7 @@ class MultiDatasetTrainer(BaseTrainer):
             "sim_contribution": (self.sim_weight * sim_loss).item(),
             "ccdm_contribution": (self.ccdm_weight * ccdm_loss).item()
         }
-        self._log_metrics("train", combined_loss, combined_loss_dict, 
+        self._log_metrics("train", combined_loss, combined_loss_dict,
                         len(sim_batch['camera_trajectory']) + len(ccdm_batch['camera_trajectory']))
         
         self.train_step_count += 1

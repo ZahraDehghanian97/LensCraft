@@ -6,8 +6,8 @@ from testing.metrics.callback import MetricCallback
 
 def process_ccdm_batch(
     ccdm_adapter: Any,
-    batch: Dict[str, torch.Tensor], 
-    metric_callback: MetricCallback, 
+    batch: Dict[str, torch.Tensor],
+    metric_callback: MetricCallback,
     device: torch.device
 ) -> None:
     batch_data = {

@@ -128,7 +128,7 @@ def get_label(tag: str) -> str:
 
 def get_title(subplot: str) -> str:
     title = subplot.replace("_tags", "")
-    title = title.replace("_", " ") 
+    title = title.replace("_", " ")
     title = title + " loss"
     title = string.capwords(title)
     title = title.replace("Clip", "CLIP")
@@ -146,14 +146,14 @@ def calc_dimensions(cfg: DictConfig, subplots: List[str]) -> tuple:
 
 
 def get_average_embedding_loss(
-        clip_losses: dict[str, dict[str, list]], 
-        plot_list: list[str], 
+        clip_losses: dict[str, dict[str, list]],
+        plot_list: list[str],
         n_clip_embeddings: int) -> dict[str, list]:
     steps = clip_losses["val_clip_0_epoch"]["steps"]
     train_values = np.zeros(len(steps))
     valid_values = np.zeros(len(steps))
     for item, value in zip(["train", "val"], [train_values, valid_values]):
-        for i in range(n_clip_embeddings): 
+        for i in range(n_clip_embeddings):
             value += np.array(clip_losses[f"{item}_clip_{i}_epoch"]["values"])
     average_embedding_loss_train = {"steps": steps, "values": list(train_values / n_clip_embeddings)}
     average_embedding_loss_valid = {"steps": steps, "values": list(valid_values / n_clip_embeddings)}
@@ -165,7 +165,7 @@ def get_average_embedding_loss(
 
 
 def plot_scalars(
-    scalar_data: Dict[str, Dict[str, List[float]]], 
+    scalar_data: Dict[str, Dict[str, List[float]]],
     metric_tags: List[str],
     cfg: DictConfig,
     save_path: str = None
@@ -180,9 +180,9 @@ def plot_scalars(
 
     fig, ax = plt.subplots(n_rows, n_cols, figsize=(width, height))
     fig.suptitle(
-        cfg.plot.style.title + f" ({model_version})", 
-        fontsize=cfg.plot.style.suptitle_font_size, 
-        y=cfg.plot.style.suptitle_offset, 
+        cfg.plot.style.title + f" ({model_version})",
+        fontsize=cfg.plot.style.suptitle_font_size,
+        y=cfg.plot.style.suptitle_offset,
         fontweight=cfg.plot.style.suptitle_font_weight
     )
 
@@ -191,8 +191,8 @@ def plot_scalars(
         row = i // n_cols
         if subplot == "average_clip":
             scalar_data_item = get_average_embedding_loss(
-                scalar_data["clip_tags"], 
-                metric_tags["average_clip"], 
+                scalar_data["clip_tags"],
+                metric_tags["average_clip"],
                 n_clip_embeddings=cfg.metrics.clips.num_clips
                 )
         else:
@@ -220,7 +220,7 @@ def plot_scalars(
         if subplot.startswith("clip") and cfg.plot.style.apply_fixed_ylim_clip:
             ax[row, col].set_ylim(0, 1)
 
-    if cfg.plot.tight_layout: 
+    if cfg.plot.tight_layout:
         plt.tight_layout()
 
     if save_path and cfg.output.save_plot:
@@ -285,8 +285,8 @@ def tSNE_visualize_embeddings(
     
     # Run t-SNE
     if verbose: print(f"Performing t-SNE on {len(all_embeddings := np.vstack(all_embeddings))} points...")
-    embeddings_2d = TSNE(n_components=2, random_state=random_state, 
-                         perplexity=min(perplexity, len(all_embeddings) - 1), 
+    embeddings_2d = TSNE(n_components=2, random_state=random_state,
+                         perplexity=min(perplexity, len(all_embeddings) - 1),
                          n_jobs=-1).fit_transform(all_embeddings)
     
     # Plot results
@@ -298,14 +298,14 @@ def tSNE_visualize_embeddings(
         points = embeddings_2d[mask]
         
         # Plot points
-        ax.scatter(points[:, 0], points[:, 1], 
-                  label=f"{label} (n={model_counts[label]})", 
+        ax.scatter(points[:, 0], points[:, 1],
+                  label=f"{label} (n={model_counts[label]})",
                   alpha=point_alpha, s=point_size, color=color)
         
         # Add density contours if possible
         if add_density and sum(mask) >= 5:
             try:
-                sns.kdeplot(x=points[:, 0], y=points[:, 1], levels=3, 
+                sns.kdeplot(x=points[:, 0], y=points[:, 1], levels=3,
                            color=color, alpha=0.3, linewidths=1, ax=ax)
             except Exception as e:
                 if verbose: print(f"Could not create density plot for {label}: {e}")

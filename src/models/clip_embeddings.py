@@ -60,7 +60,7 @@ class CLIPEmbedder:
         pad_seq: bool = False
     ) -> Union[torch.Tensor, CLIPFeatures]:
         num_texts = len(texts)
-        chunks = [texts[i:i + self.chunk_size] 
+        chunks = [texts[i:i + self.chunk_size]
                  for i in range(0, num_texts, self.chunk_size)]
         
         all_sequence_features = []

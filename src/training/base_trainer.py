@@ -115,7 +115,7 @@ class BaseTrainer(L.LightningModule):
         ratios = self._calculate_schedule_parameters()
         
         valid_len = (
-            (~tgt_key_padding_mask).sum(dim=1) 
+            (~tgt_key_padding_mask).sum(dim=1)
             if tgt_key_padding_mask is not None else None
         )
         
@@ -143,42 +143,42 @@ class BaseTrainer(L.LightningModule):
 
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:
         self.log(
-            f"{stage}_loss", 
-            loss, 
-            on_step=True, 
+            f"{stage}_loss",
+            loss,
+            on_step=True,
             on_epoch=True,
-            # prog_bar=True, 
-            logger=True, 
+            # prog_bar=True,
+            logger=True,
             batch_size=batch_size
         )
         
         if stage == "train":
             self.log(
-                "ts", 
-                loss, 
-                on_step=True, 
+                "ts",
+                loss,
+                on_step=True,
                 on_epoch=False,
-                prog_bar=True, 
-                logger=True, 
+                prog_bar=True,
+                logger=True,
                 batch_size=batch_size
             )
             self.log(
-                "te", 
-                loss, 
-                on_step=False, 
+                "te",
+                loss,
+                on_step=False,
                 on_epoch=True,
-                prog_bar=True, 
-                logger=True, 
+                prog_bar=True,
+                logger=True,
                 batch_size=batch_size
             )
         elif stage == "val":
             self.log(
-                "ve", 
-                loss, 
-                on_step=False, 
+                "ve",
+                loss,
+                on_step=False,
                 on_epoch=True,
-                prog_bar=True, 
-                logger=True, 
+                prog_bar=True,
+                logger=True,
                 batch_size=batch_size
             )
         
@@ -187,22 +187,22 @@ class BaseTrainer(L.LightningModule):
             self.log(
                 "tr",
                 trajectory_val,
-                on_step=True, 
+                on_step=True,
                 on_epoch=False,
-                prog_bar=True, 
-                logger=True, 
+                prog_bar=True,
+                logger=True,
                 batch_size=batch_size
             )
         
         if "average_clip" in loss_dict:
             clip_val = loss_dict["average_clip"] if isinstance(loss_dict["average_clip"], float) else loss_dict["average_clip"].item()
             self.log(
-                "cl", 
+                "cl",
                 clip_val,
-                on_step=True, 
+                on_step=True,
                 on_epoch=False,
-                prog_bar=True, 
-                logger=True, 
+                prog_bar=True,
+                logger=True,
                 batch_size=batch_size
             )
         elif "clip" in loss_dict and isinstance(loss_dict["clip"], dict):
@@ -211,12 +211,12 @@ class BaseTrainer(L.LightningModule):
                 clip_avg = sum(clip_values) / len(clip_values)
                 clip_avg = clip_avg if isinstance(clip_avg, float) else clip_avg.item()
                 self.log(
-                    "cl", 
+                    "cl",
                     clip_avg,
-                    on_step=True, 
+                    on_step=True,
                     on_epoch=False,
-                    prog_bar=True, 
-                    logger=True, 
+                    prog_bar=True,
+                    logger=True,
                     batch_size=batch_size
                 )
         
@@ -224,20 +224,20 @@ class BaseTrainer(L.LightningModule):
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
                     self.log(
-                        f"{stage}_{key}_{subkey}", 
+                        f"{stage}_{key}_{subkey}",
                         subvalue,
-                        on_step=True, 
+                        on_step=True,
                         on_epoch=True,
-                        logger=True, 
+                        logger=True,
                         batch_size=batch_size
                     )
             else:
                 self.log(
-                    f"{stage}_{key}", 
+                    f"{stage}_{key}",
                     value,
-                    on_step=True, 
+                    on_step=True,
                     on_epoch=True,
-                    logger=True, 
+                    logger=True,
                     batch_size=batch_size
                 )
 
@@ -248,7 +248,7 @@ class BaseTrainer(L.LightningModule):
             total_steps = self._get_total_steps()
             
             scheduler = self.lr_scheduler(
-                optimizer=optimizer, 
+                optimizer=optimizer,
                 total_steps=total_steps
             )
             return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
@@ -260,8 +260,8 @@ class BaseTrainer(L.LightningModule):
         raise NotImplementedError
     
     def lr_scheduler_step(
-        self, 
-        scheduler: torch.optim.lr_scheduler._LRScheduler, 
+        self,
+        scheduler: torch.optim.lr_scheduler._LRScheduler,
         metric: Any
     ) -> None:
         scheduler.step(self.global_step)
