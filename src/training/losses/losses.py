@@ -126,8 +126,8 @@ class CameraTrajectoryLoss:
                     cycle_loss_value = total_cycle_loss / cycle_embeddings.shape[1] * 12800
             
             total_loss += cycle_loss_value
-            loss_dict["cycle"] = {i: cycle_losses[i].item() if hasattr(cycle_losses[i], 'item') else cycle_losses[i] for i in range(self.n_clip_embs)}
-            loss_dict["average_cycle"] = total_cycle_loss.item() if hasattr(total_cycle_loss, 'item') else total_cycle_loss * 200
+            loss_dict["cycle"] = {i: cycle_losses[i] for i in range(self.n_clip_embs)}
+            loss_dict["average_cycle"] = total_cycle_loss * 200
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
