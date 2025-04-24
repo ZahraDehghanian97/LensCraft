@@ -30,6 +30,13 @@ class CCDMDataset(Dataset):
         self.fov_rad = math.radians(fov_degrees)
         self.sensor_height = sensor_height
         self.sensor_width = sensor_width
+        aspect = self.sensor_width / self.sensor_height
+        self.fov_y_rad = self.fov_rad
+        self.fov_x_rad = 2.0 * math.atan(math.tan(self.fov_y_rad * 0.5) * aspect)
+        
+        self.tan_half_fov_y = math.tan(self.fov_y_rad * 0.5)
+        self.tan_half_fov_x = math.tan(self.fov_x_rad * 0.5)
+        
         if default_focal_length is not None:
             self.focal_length_mm = float(default_focal_length)
         else:
@@ -66,14 +73,14 @@ class CCDMDataset(Dataset):
         x, y, z = camera_trajectory[:,0], camera_trajectory[:,1], camera_trajectory[:,2]
         px, py = camera_trajectory[:,3], camera_trajectory[:,4]
 
-        yaw_center = torch.atan2(x, z)
-        pitch_center = torch.atan2(y, torch.hypot(x, z))
+        yaw_center_rad = torch.atan2(x, z)
+        pitch_center_rad = torch.atan2(y, torch.hypot(x, z))
 
-        delta_pitch_rad = torch.atan((py - 0.5) * self.sensor_height / self.focal_length_mm)
-        delta_yaw_rad = torch.atan((px - 0.5) * self.sensor_width / self.focal_length_mm)
+        delta_pitch_rad = -torch.atan(py * self.tan_half_fov_y)
+        delta_yaw_rad = -torch.atan(px * self.tan_half_fov_x)
 
-        yaw = torch.rad2deg(yaw_center + delta_yaw_rad)
-        pitch = torch.rad2deg(pitch_center + delta_pitch_rad)
+        yaw = torch.rad2deg(yaw_center_rad + delta_yaw_rad)
+        pitch = torch.rad2deg(pitch_center_rad + delta_pitch_rad)
         roll = torch.zeros_like(yaw)
         focal = torch.full_like(yaw, 37.52) # self.focal_length_mm)
         
