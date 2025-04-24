@@ -67,5 +67,5 @@ def test_angle_loss():
     print("\nTest case 3:")
     print(f"Batch loss: {loss_batch.item():.6f}")
 
-if __name__ == 'main':
+if __name__ == '__main__':
     test_angle_loss()
