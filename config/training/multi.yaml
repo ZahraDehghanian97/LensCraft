@@ -12,6 +12,7 @@ loss_module:
   losses_list:
     - clip
     - trajectory
+    - cycle
     # - contrastive
   weighted_clip_loss: false
   weight_power: 1
