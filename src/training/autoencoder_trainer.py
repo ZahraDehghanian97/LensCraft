@@ -18,7 +18,8 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
         compile_enabled: bool = True,
         dataset_mode: str = 'simulation',
         use_merged_memory: bool = True,
-        decode_mode: str = 'single_step'
+        decode_mode: str = 'single_step',
+        use_cycle_consistency: bool = False
     ):
         super().__init__(
             model,
@@ -34,6 +35,7 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
         )
         self.dataset_mode = dataset_mode
         self.decode_mode = decode_mode
+        self.use_cycle_consistency = use_cycle_consistency
 
     def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
         if self.dataset_mode == 'et' or self.use_merged_memory:
@@ -49,6 +51,8 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
         
         [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
         
+        compute_cycle = self.use_cycle_consistency and stage == "train" and self.dataset_mode == 'simulation'
+        
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
@@ -56,7 +60,8 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
             caption_embedding,
             tgt_key_padding_mask,
             is_training=(stage == "train"),
-            decode_mode=self.decode_mode
+            decode_mode=self.decode_mode,
+            compute_cycle_embeddings=compute_cycle
         )
         
         merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)

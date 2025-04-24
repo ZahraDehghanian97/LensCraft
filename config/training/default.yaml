@@ -75,3 +75,4 @@ teacher_forcing_schedule:
 
 use_merged_memory: false
 decode_mode: "single_step"
+use_cycle_consistency: true

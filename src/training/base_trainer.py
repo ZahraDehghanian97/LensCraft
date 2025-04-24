@@ -98,7 +98,8 @@ class BaseTrainer(L.LightningModule):
         caption_embedding: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False,
-        decode_mode: str = 'single_step'
+        decode_mode: str = 'single_step',
+        compute_cycle_embeddings: bool = False
     ) -> Dict[str, torch.Tensor]:
         if not is_training:
             return self.model(
@@ -109,7 +110,8 @@ class BaseTrainer(L.LightningModule):
                 caption_embedding=caption_embedding,
                 memory_teacher_forcing_ratio=0.5,
                 trajectory_teacher_forcing_ratio=0.0,
-                decode_mode=decode_mode
+                decode_mode=decode_mode,
+                compute_cycle_embeddings=compute_cycle_embeddings
             )
 
         ratios = self._calculate_schedule_parameters()
@@ -139,8 +141,9 @@ class BaseTrainer(L.LightningModule):
             ratios['trajectory_teacher_forcing_ratio'],
             ratios['memory_mask_ratio'],
             decode_mode,
+            compute_cycle_embeddings
         )
-
+    
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:
         self.log(
             f"{stage}_loss",

@@ -62,7 +62,8 @@ class MultiDatasetTrainer(BaseTrainer):
             caption_embedding,
             tgt_key_padding_mask,
             is_training=(stage == "train"),
-            decode_mode=self.decode_mode
+            decode_mode=self.decode_mode,
+            compute_cycle_embeddings=True
         )
         
         merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)
@@ -71,11 +72,12 @@ class MultiDatasetTrainer(BaseTrainer):
             output,
             camera_trajectory,
             merge_embeddings,
+            batch,
             tgt_key_padding_mask
         )
         
         return loss, loss_dict
-
+    
     def _process_ccdm_batch(self, batch: Dict[str, Any], stage: str) -> Tuple[torch.Tensor, Dict[str, Any]]:
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']

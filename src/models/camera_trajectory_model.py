@@ -140,7 +140,8 @@ class MultiTaskAutoencoder(nn.Module):
         memory_teacher_forcing_ratio: float = 0.5,
         trajectory_teacher_forcing_ratio: float = 0.0,
         mask_memory_prob: float = 0.0,
-        decode_mode: str = 'single_step'
+        decode_mode: str = 'single_step',
+        compute_cycle_embeddings: bool = False
     ) -> Dict[str, torch.Tensor]:
         subject_embedding_loc_rot = self.subject_projection_loc_rot(
             subject_trajectory
@@ -179,9 +180,17 @@ class MultiTaskAutoencoder(nn.Module):
         
         if self.use_merged_memory:
             output['cls_embedding'] = memory[0]
+            
+        if compute_cycle_embeddings:
+            cycle_embeddings = self.encoder(
+                reconstructed,
+                subject_embedding_loc_rot_vol,
+                src_key_mask
+            )
+            output['cycle_embeddings'] = cycle_embeddings
 
         return output
-
+    
     def generate_camera_trajectory(
         self,
         caption_embedding: Optional[torch.Tensor] = None,
