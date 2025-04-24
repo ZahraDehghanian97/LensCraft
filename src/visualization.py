@@ -259,7 +259,7 @@ def tSNE_visualize_embeddings(
     point_size: int = 50,
     point_alpha: float = 0.6,
     verbose: bool = True,
-    save_path: str = "./inference_results/embeddings_tSNE.png"
+    save_path: str = "./test_results/embeddings_tSNE.png"
 ) -> plt.Figure:
     """Visualize embeddings from different models in 2D using t-SNE."""
     # Process embeddings

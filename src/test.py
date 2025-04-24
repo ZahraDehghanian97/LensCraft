@@ -1,17 +1,22 @@
 import logging
-from typing import Dict, Optional, Literal, Any
+import os
+from typing import Literal
 
 import hydra
 import torch
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
 
 from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
-from metrics.callback import MetricCallback
+from testing.metrics.callback import MetricCallback
 from utils.checkpoint import load_checkpoint
 from visualization import tSNE_visualize_embeddings  
+from models.ccdm_adapter import CCDMAdapter
+from testing.ccdm import process_ccdm_batch
+from testing.lens_craft import process_lens_craft_batch
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -28,10 +33,20 @@ def main(cfg: DictConfig) -> None:
     
     device = torch.device(cfg.device if cfg.device else "cuda" if torch.cuda.is_available() else "cpu")
     
-    model: MultiTaskAutoencoder = instantiate(cfg.training.model)
-    model = load_checkpoint(cfg.checkpoint_path, model, device)
-    model.to(device)
-    model.eval()
+    use_ccdm = cfg.get("use_ccdm", False)
+    ccdm_adapter = None
+    
+    if use_ccdm:
+        if CCDMAdapter is None:
+            raise ImportError("CCDM adapter not found. Please ensure models/ccdm_adapter.py exists.")
+        logger.info("Using CCDM model for inference")
+        ccdm_adapter = CCDMAdapter(cfg, device)
+    else:
+        logger.info("Using MultiTaskAutoencoder model for inference")
+        model: MultiTaskAutoencoder = instantiate(cfg.training.model)
+        model = load_checkpoint(cfg.checkpoint_path, model, device)
+        model.to(device)
+        model.eval()
     
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -48,166 +63,57 @@ def main(cfg: DictConfig) -> None:
     dataset_type = "ccdm" if 'CCDMDataset' in target else "et" if 'ETDataset' in target else "simulation"
     
     test_dataloader = data_module.test_dataloader()
-    log_interval = 10
+    
+    if use_ccdm:
+        metric_items = (
+            ["reconstruction", "prompt_generation", "hybrid_generation"] 
+            if dataset_type == 'simulation' or dataset_type == 'ccdm'
+            else ["reconstruction"]
+        )
+    else:
+        metric_items = (
+            ["reconstruction", "prompt_generation", "hybrid_generation"] 
+            if dataset_type == 'simulation' 
+            else ["reconstruction"]
+        )
+    
+    metric_features = {metric_type: {"GT": None, "GEN": None} for metric_type in metric_items}
     
     with torch.no_grad():
-        for batch_idx, batch in enumerate(test_dataloader):
-            process_test_batch(model, batch, metric_callback, dataset_type, device)
-            
-            if (batch_idx + 1) % log_interval == 0:
-                logger.info(f"Processed {batch_idx + 1}/{len(test_dataloader)} batches")
-
-    tSNE_visualize_embeddings({"GT": metric_callback.clatr_prdc["reconstruction"].real_features, 
-                               "GEN": metric_callback.clatr_prdc["reconstruction"].fake_features })
+        for batch in tqdm(test_dataloader):
+            if use_ccdm:
+                process_ccdm_batch(ccdm_adapter, batch, metric_callback, device)
+            else:
+                process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
+        
+        for metric_type in metric_items:
+            if metric_type in metric_callback.active_metrics:
+                if metric_type in metric_callback.metrics and "clatr_prdc" in metric_callback.metrics[metric_type]:
+                    prdc = metric_callback.metrics[metric_type]["clatr_prdc"]
+                    if hasattr(prdc, 'real_features') and prdc.real_features is not None:
+                        metric_features[metric_type]["GT"] = prdc.real_features
+                    if hasattr(prdc, 'fake_features') and prdc.fake_features is not None:
+                        metric_features[metric_type]["GEN"] = prdc.fake_features
     
-    metric_items = (
-        ["reconstruction", "prompt_generation", "hybrid_generation"] 
-        if dataset_type == 'simulation' 
-        else ["reconstruction"]
-    )
+    output_dir = cfg.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    
+    for metric_type, features in metric_features.items():
+        if features["GT"] is not None and features["GEN"] is not None:
+            logger.info(f"Creating t-SNE visualization for {metric_type}")
+            save_path = os.path.join(output_dir, f"embeddings_tSNE_{metric_type}.png")
+            tSNE_visualize_embeddings(
+                features,
+                title=f'Embedding Visualization using t-SNE ({metric_type})',
+                save_path=save_path
+            )
     
     metrics = {
         item: metric_callback.compute_clatr_metrics(item) 
-        for item in metric_items
+        for item in metric_items if item in metric_callback.active_metrics
     }
     
     logger.info(f"Final Metrics: {metrics}")
-
-
-def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:    
-    prepared_data = {}
-    
-    for key in ["camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask", "cinematography_prompt"]:
-        if key in batch and batch[key] is not None:
-            prepared_data[key] = batch[key].to(device)
-        else:
-            prepared_data[key] = None
-    
-    return prepared_data
-
-
-def compute_subject_embedding(
-    model: MultiTaskAutoencoder, 
-    subject_trajectory: torch.Tensor, 
-    subject_volume: torch.Tensor
-) -> torch.Tensor:
-    subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_trajectory)
-    subject_embedding_vol = model.subject_projection_vol(subject_volume)
-    return torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
-
-
-def compute_embedding(
-    model: MultiTaskAutoencoder, 
-    camera_trajectory: torch.Tensor, 
-    subject_embedding: torch.Tensor
-) -> torch.Tensor:
-    embedding = model.encoder(camera_trajectory, subject_embedding)
-    return embedding[:model.memory_tokens_count, ...]
-
-
-def generate_camera_trajectory(
-    model: MultiTaskAutoencoder,
-    data: Dict[str, torch.Tensor],
-    memory_teacher_forcing_ratio: Optional[float] = None,
-    caption_embedding: Optional[torch.Tensor] = None
-) -> Dict[str, Any]:
-    generation_params = {
-        "subject_trajectory": data["subject_trajectory"],
-        "subject_volume": data["subject_volume"],
-        "camera_trajectory": data["camera_trajectory"],
-        "padding_mask": data["padding_mask"]
-    }
-    
-    if memory_teacher_forcing_ratio is not None:
-        generation_params["memory_teacher_forcing_ratio"] = memory_teacher_forcing_ratio
-    
-    if caption_embedding is not None:
-        generation_params["caption_embedding"] = caption_embedding
-    
-    return model.generate_camera_trajectory(**generation_params)
-
-
-def update_metrics(
-    model: MultiTaskAutoencoder,
-    data: Dict[str, torch.Tensor],
-    metric_callback: MetricCallback,
-    metric_name: str,
-    memory_teacher_forcing_ratio: Optional[float] = None,
-    caption_embedding: Optional[torch.Tensor] = None
-) -> None:
-    generation = generate_camera_trajectory(
-        model,
-        data,
-        memory_teacher_forcing_ratio,
-        caption_embedding
-    )
-    
-    reference_embedding = generation['embeddings'][:model.memory_tokens_count, ...]
-
-    subject_embedding = compute_subject_embedding(
-        model, 
-        data["subject_trajectory"], 
-        data["subject_volume"]
-    )
-    
-    generation_embedding = compute_embedding(
-        model, 
-        generation["reconstructed"], 
-        subject_embedding
-    ).detach().clone()        
-    
-    batch_size = generation_embedding.shape[1]
-    
-    generation_embedding_reshaped = generation_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone()
-    reference_embedding_reshaped = reference_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone()
-    text_prompt_reshaped = caption_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone() if caption_embedding != None else None
-    
-    metric_callback.update_clatr_metrics(
-        metric_name,
-        generation_embedding_reshaped,
-        reference_embedding_reshaped,
-        text_prompt_reshaped
-    )
-
-
-def process_test_batch(
-    model: MultiTaskAutoencoder,
-    batch: Dict[str, torch.Tensor],
-    metric_callback: MetricCallback,
-    dataset_type: DatasetType,
-    device: torch.device
-) -> None:
-    prepared_data = prepare_batch_data(batch, device)
-    
-    cinematography_prompt = prepared_data.get("cinematography_prompt")
-    
-    update_metrics(
-        model, 
-        prepared_data,
-        metric_callback,
-        "reconstruction",
-        memory_teacher_forcing_ratio=0,
-        caption_embedding=cinematography_prompt
-    )
-    
-    if dataset_type == 'simulation':
-        update_metrics(
-            model,
-            prepared_data,
-            metric_callback,
-            "prompt_generation",
-            memory_teacher_forcing_ratio=1.0,
-            caption_embedding=cinematography_prompt
-        )
-        
-        update_metrics(
-            model,
-            prepared_data,
-            metric_callback,
-            "hybrid_generation",
-            memory_teacher_forcing_ratio=0.4,
-            caption_embedding=cinematography_prompt
-        )
 
 
 if __name__ == "__main__":

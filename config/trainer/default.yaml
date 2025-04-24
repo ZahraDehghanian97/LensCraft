@@ -3,3 +3,17 @@ max_epochs: 100
 accelerator: "auto"
 devices: [0]
 precision: 32
+# profiler:
+#   _target_: lightning.pytorch.profilers.PyTorchProfiler
+#   dirpath: ${hydra.run.dir}/profile_results
+#   schedule:
+#     wait: 1
+#     warmup: 1
+#     active: 3
+#     repeat: 1
+#   on_trace_ready:
+#     _target_: torch.profiler.tensorboard_trace_handler
+#     dir_name: ${hydra.run.dir}/profile_results
+#   record_shapes: true
+#   profile_memory: true
+#   with_stack: true

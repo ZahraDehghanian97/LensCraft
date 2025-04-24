@@ -32,10 +32,14 @@ def calc_embedding_std(embeddings_data: dict, means: dict, embedding_dimension: 
     return stds
 
 
-def normalize_embeddings(embeddings_data: dict, embedding_dimension: int) -> dict:
+def generate_mean_stds(embeddings_data: dict, embedding_dimension: int):
     means = calc_embedding_mean(embeddings_data, embedding_dimension)
     stds = calc_embedding_std(embeddings_data, means, embedding_dimension)
     save_means_and_stds(means, stds)
+    return means, stds
+
+def normalize_embeddings(embeddings_data: dict, embedding_dimension: int) -> dict:
+    means, stds = generate_mean_stds(embeddings_data, embedding_dimension)
     embeddings_data_normalized = copy.deepcopy(embeddings_data)
     for key, value in embeddings_data.items():
         for key_nested, vector in value.items():
@@ -139,6 +143,8 @@ def initialize_all_clip_embeddings(
         print(f"Saved CLIP embeddings to cache: {cache_file}")
 
     finally:
+        if not os.path.exists("embedding_means.pkl"):
+            generate_mean_stds(embeddings, embedding_dimension)
         if embedding_mode == "default":
             return embeddings
         elif embedding_mode == "normal":

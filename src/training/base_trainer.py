@@ -147,10 +147,78 @@ class BaseTrainer(L.LightningModule):
             loss, 
             on_step=True, 
             on_epoch=True,
-            prog_bar=True, 
+            # prog_bar=True, 
             logger=True, 
             batch_size=batch_size
         )
+        
+        if stage == "train":
+            self.log(
+                "ts", 
+                loss, 
+                on_step=True, 
+                on_epoch=False,
+                prog_bar=True, 
+                logger=True, 
+                batch_size=batch_size
+            )
+            self.log(
+                "te", 
+                loss, 
+                on_step=False, 
+                on_epoch=True,
+                prog_bar=True, 
+                logger=True, 
+                batch_size=batch_size
+            )
+        elif stage == "val":
+            self.log(
+                "ve", 
+                loss, 
+                on_step=False, 
+                on_epoch=True,
+                prog_bar=True, 
+                logger=True, 
+                batch_size=batch_size
+            )
+        
+        if "trajectory" in loss_dict:
+            trajectory_val = loss_dict["trajectory"] if isinstance(loss_dict["trajectory"], float) else loss_dict["trajectory"].item()
+            self.log(
+                "tr",
+                trajectory_val,
+                on_step=True, 
+                on_epoch=False,
+                prog_bar=True, 
+                logger=True, 
+                batch_size=batch_size
+            )
+        
+        if "average_clip" in loss_dict:
+            clip_val = loss_dict["average_clip"] if isinstance(loss_dict["average_clip"], float) else loss_dict["average_clip"].item()
+            self.log(
+                "cl", 
+                clip_val,
+                on_step=True, 
+                on_epoch=False,
+                prog_bar=True, 
+                logger=True, 
+                batch_size=batch_size
+            )
+        elif "clip" in loss_dict and isinstance(loss_dict["clip"], dict):
+            clip_values = list(loss_dict["clip"].values())
+            if clip_values:
+                clip_avg = sum(clip_values) / len(clip_values)
+                clip_avg = clip_avg if isinstance(clip_avg, float) else clip_avg.item()
+                self.log(
+                    "cl", 
+                    clip_avg,
+                    on_step=True, 
+                    on_epoch=False,
+                    prog_bar=True, 
+                    logger=True, 
+                    batch_size=batch_size
+                )
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):
@@ -203,3 +271,12 @@ class BaseTrainer(L.LightningModule):
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
             self.log('learning_rate', lr, on_step=False, on_epoch=True)
+        
+        train_loss = self.trainer.callback_metrics.get('train_loss_epoch')
+        if train_loss is not None:
+            self.log('te', train_loss, on_step=False, on_epoch=True, prog_bar=True)
+
+    def on_validation_epoch_end(self) -> None:
+        val_loss = self.trainer.callback_metrics.get('val_loss_epoch')
+        if val_loss is not None:
+            self.log('ve', val_loss, on_step=False, on_epoch=True, prog_bar=True)

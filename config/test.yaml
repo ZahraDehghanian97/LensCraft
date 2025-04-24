@@ -5,7 +5,7 @@ defaults:
   - training: default
   - hydra: default
 
-checkpoint_path: ${oc.env:INFERENCE_CHECKPOINT_PATH}
-output_dir: ${oc.env:INFERENCE_OUTPUT_DIR,./inference_results}
+checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH}
+output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 
 device: cuda

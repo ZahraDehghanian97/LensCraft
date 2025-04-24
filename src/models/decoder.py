@@ -54,14 +54,13 @@ class Decoder(nn.Module):
         decoder_input = torch.zeros(batch_size, self.seq_length, self.output_dim, device=device)
         
         subj_len = subject_embedding.shape[1]
-        total_len = 2 * self.seq_length
         
-        causal_mask = torch.triu(torch.ones(total_len, total_len, device=device) * float('-inf'), diagonal=1)
+        causal_mask = torch.triu(torch.ones(2 * self.seq_length + 1, 2 * self.seq_length + 1, device=device) * float('-inf'), diagonal=1)
         
         for t in range(self.seq_length):
             embedded, padded_mask = self.prepare_decoder_inputs_with_positioning(
                 decoder_input, subject_embedding, tgt_key_padding_mask)
-            
+                        
             decoder_output = self.transformer_decoder(
                 tgt=embedded, 
                 memory=memory, 

@@ -99,21 +99,16 @@ class CameraTrajectoryLoss:
 
             loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
             loss_dict["average_clip"] = total_clip_loss * 200
-            print("CLIP LOSS (NET): {:.3f}   |   CLIP LOSS (SCALED): {:.3f}".format(total_clip_loss, total_clip_loss * self.clip_loss_scaling_factor / clip_pred.shape[1]))
 
         if "trajectory" in self.losses_list:
             trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
             total_loss += trajectory_loss * self.trajectory_loss_scaling_factor
             loss_dict["trajectory"] = trajectory_loss.item()
-            print("TRAJ LOSS (NET): {:.3f}   |   TRAJ LOSS (SCALED): {:.3f}".format(trajectory_loss, trajectory_loss * self.trajectory_loss_scaling_factor))
         
         if "contrastive" in self.losses_list:
             contrastive_loss = self.compute_contrastive_loss(clip_pred, clip_target, batch)
             total_loss += contrastive_loss * self.contrastive_loss_scaling_factor
             loss_dict["contrastive"] = contrastive_loss.item()
-            print("CONT Loss (NET): {:.3f}   |   CONT Loss (SCALED): {:.3f}".format(contrastive_loss, contrastive_loss * self.contrastive_loss_scaling_factor))
-
-        print("TOTL LOSS: {:.3f}".format(total_loss))
 
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict

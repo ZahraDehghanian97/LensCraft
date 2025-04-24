@@ -180,3 +180,17 @@ class MultiDatasetTrainer(BaseTrainer):
         except Exception as e:
             print(f"Warning: Could not determine total steps: {e}")
             return 1000 * self.trainer.max_epochs
+    
+    def on_train_epoch_end(self) -> None:
+        super().on_train_epoch_end()
+        
+        train_metrics = {}
+        for key, value in self.trainer.callback_metrics.items():
+            if key.startswith('train_') and key.endswith('_epoch'):
+                train_metrics[key] = value
+        
+        sim_loss = train_metrics.get('train_sim_loss_epoch', torch.tensor(0.0, device=self.device))
+        ccdm_loss = train_metrics.get('train_ccdm_loss_epoch', torch.tensor(0.0, device=self.device))
+        
+        combined_loss = (self.sim_weight * sim_loss) + (self.ccdm_weight * ccdm_loss)
+        self.log("te", combined_loss, prog_bar=True)
