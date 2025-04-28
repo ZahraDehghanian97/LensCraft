@@ -16,6 +16,7 @@ from .utils import (
     extract_cinematography_parameters,
     convert_parameters_to_embedding_tensor,
     load_clip_means,
+    extract_text_prompt,
 )
 
 
@@ -92,6 +93,8 @@ class SimulationDataset(Dataset):
             cinematography_prompt,
             cinematography_struct_size
         )
+        
+        text_prompt = extract_text_prompt(prompt)
 
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
@@ -100,7 +103,8 @@ class SimulationDataset(Dataset):
             "simulation_instruction": simulation_instruction_tensor,
             "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction,
-            "cinematography_prompt_parameters": cinematography_prompt
+            "cinematography_prompt_parameters": cinematography_prompt,
+            "text_prompt": text_prompt
         }
 
 
@@ -157,4 +161,5 @@ def collate_fn(batch):
         "cinematography_prompt_parameters": [
             item["cinematography_prompt_parameters"] for item in batch
         ],
+        "text_prompts": [item["text_prompt"] for item in batch]
     }
