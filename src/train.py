@@ -4,8 +4,11 @@ from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig, OmegaConf
 import lightning as L
+import torch
 from data.datamodule import CameraTrajectoryDataModule
 from data.multi_dataset_module import MultiDatasetModule
+from testing.metrics.callback import MetricCallback
+from testing.lens_craft import process_lens_craft_batch
 from dotenv import load_dotenv
 import logging
 
@@ -85,7 +88,47 @@ def main(cfg: DictConfig):
     
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
     trainer.fit(lightning_model, datamodule=data_module)
-
+    
+    if use_multi_dataset:
+        dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
+    else:
+        target = cfg.data.dataset.config["_target_"]
+        dataset_type = (
+            "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
+        )
+    
+    prdc_sum = 0
+    if dataset_type == "simulation":
+        model = lightning_model.model
+        model.eval()
+        
+        device = next(model.parameters()).device
+        metric_callback = MetricCallback(num_cams=1, device=device)
+        
+        eval_dataloader = data_module.val_dataloader()
+        
+        with torch.no_grad():
+            for batch in eval_dataloader:
+                process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
+        
+        metric_types = ["reconstruction", "prompt_generation", "hybrid_generation"]
+        for metric_type in metric_types:
+            metrics = metric_callback.compute_clatr_metrics(metric_type)
+            # Sum PRDC metrics
+            type_prdc_sum = (
+                metrics[f"{metric_type}/precision"] + 
+                metrics[f"{metric_type}/recall"] + 
+                metrics[f"{metric_type}/density"] + 
+                metrics[f"{metric_type}/coverage"]
+            )
+            prdc_sum += type_prdc_sum
+            logger.info(f"{metric_type} PRDC sum: {type_prdc_sum}")
+        
+        logger.info(f"Total PRDC sum: {prdc_sum}")
+    
+    if prdc_sum != 0:
+        return -prdc_sum
+    
     val_loss = float('inf')
     for callback in callbacks:
         if hasattr(callback, 'best_model_score') and callback.best_model_score is not None:

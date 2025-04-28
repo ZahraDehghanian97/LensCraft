@@ -19,10 +19,10 @@ sweeper:
   n_jobs: 4
 
   params:
-    trainer.max_epochs: 15
+    trainer.max_epochs: 10
     training.model.num_encoder_layers: choice(2, 4, 6)
     training.model.num_decoder_layers: choice(2, 4, 6)
-    training.model.nhead: choice(4, 8, 12)
+    training.model.nhead: choice(4, 8)
     training.model.dim_feedforward: choice(1024, 2048, 4096)
     training.model.dropout_rate: interval(0.1, 0.5)
     
