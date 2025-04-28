@@ -150,3 +150,4 @@ datasets/files
 *.pkl
 
 test_results
+*.db

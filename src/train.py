@@ -7,6 +7,9 @@ import lightning as L
 from data.datamodule import CameraTrajectoryDataModule
 from data.multi_dataset_module import MultiDatasetModule
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 
@@ -16,6 +19,8 @@ def main(cfg: DictConfig):
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
 
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
+    
     L.seed_everything(cfg.seed)
 
     use_multi_dataset = cfg.data.use_multi_dataset if hasattr(cfg.data, 'use_multi_dataset') else False
@@ -50,7 +55,7 @@ def main(cfg: DictConfig):
         checkpoint_path = cfg.resume_checkpoint
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
-        print(f"Loading model from checkpoint: {checkpoint_path}")
+        logger.info(f"Loading model from checkpoint: {checkpoint_path}")
         
         lightning_model = LightningModuleClass.load_from_checkpoint(
             checkpoint_path,
@@ -64,7 +69,7 @@ def main(cfg: DictConfig):
             compile_enabled=cfg.compile.enabled,
             dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
         )
-        print("Checkpoint loaded successfully")
+        logger.info("Checkpoint loaded successfully")
     else:
         lightning_model = instantiate(
             cfg.training,
@@ -77,35 +82,22 @@ def main(cfg: DictConfig):
         )
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
-
-    is_sweep_run = os.environ.get('IS_SWEEP_RUN', 'false').lower() == 'true'
     
-    if is_sweep_run:
-        sweep_max_epochs = int(os.environ.get('SWEEP_MAX_EPOCHS', '20'))
-        
-        trainer_config = OmegaConf.to_container(cfg.trainer, resolve=True)
-        if isinstance(trainer_config, dict):
-            trainer_config.pop('_target_', None)
-            trainer_config.pop('_partial_', None)
-            trainer_config['max_epochs'] = sweep_max_epochs
-            trainer = L.Trainer(**trainer_config, callbacks=callbacks)
-        else:
-            trainer = instantiate(cfg.trainer, callbacks=callbacks, max_epochs=sweep_max_epochs)
-    else:
-        trainer = instantiate(cfg.trainer, callbacks=callbacks)
-
+    trainer = instantiate(cfg.trainer, callbacks=callbacks)
     trainer.fit(lightning_model, datamodule=data_module)
 
-    val_loss = None
+    val_loss = float('inf')
     for callback in callbacks:
-        if hasattr(callback, 'best_model_score'):
+        if hasattr(callback, 'best_model_score') and callback.best_model_score is not None:
             val_loss = callback.best_model_score.item()
+            logger.info(f"Best validation loss: {val_loss}")
             break
     
-    if val_loss is None:
+    if val_loss == float('inf'):
         test_results = trainer.test(lightning_model, datamodule=data_module)
         if len(test_results) > 0:
             val_loss = test_results[0].get('test_loss', float('inf'))
+            logger.info(f"Test loss (used as surrogate for validation loss): {val_loss}")
     
     return val_loss
 
