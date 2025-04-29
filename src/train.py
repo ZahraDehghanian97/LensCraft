@@ -1,4 +1,5 @@
 import os
+import sys
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate, get_class
@@ -86,6 +87,8 @@ def main(cfg: DictConfig):
     
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
     trainer.fit(lightning_model, datamodule=data_module)
+    if trainer.global_rank != 0:
+        sys.exit(0)
     
     if use_multi_dataset:
         dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
@@ -105,13 +108,13 @@ def main(cfg: DictConfig):
 
         metric_callback = MetricCallback(num_cams=1, device=device)
         
-        test_dataloader = data_module.test_dataloader()
+        validation_dataloader = data_module.validation_dataloader()
         
         with torch.no_grad():
-            for batch in test_dataloader:
+            for batch in validation_dataloader:
                 process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
         
-        metric_types = ["reconstruction", "prompt_generation", "hybrid_generation"]
+        metric_types = ["prompt_generation", "hybrid_generation"]
         for metric_type in metric_types:
             metrics = metric_callback.compute_clatr_metrics(metric_type)
             logger.info(f"{metric_type} Metrics: {metrics}")
@@ -126,9 +129,9 @@ def main(cfg: DictConfig):
             logger.info(f"{metric_type} PRDC sum: {type_prdc_sum}")
         
         logger.info(f"Total PRDC sum: {prdc_sum}")
-    
-        return -prdc_sum
-    
+
+        return -float(prdc_sum)
+
     val_loss = float('inf')
     for callback in callbacks:
         if hasattr(callback, 'best_model_score') and callback.best_model_score is not None:
