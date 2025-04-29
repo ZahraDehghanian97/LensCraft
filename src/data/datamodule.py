@@ -1,6 +1,4 @@
 import os
-import platform
-import psutil
 import hydra
 import lightning as L
 from torch.utils.data import random_split, DataLoader
@@ -17,6 +15,8 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         self.val_size = val_size
         self.test_size = test_size
         
+        self.num_workers = num_workers if num_workers is not None else max(1, os.cpu_count() - 1)
+        
         if 'ETDataset' in self.dataset_config['_target_']:
             self.dataset_mode = 'et'
             self.collate_fn = et_collate_fn
@@ -26,33 +26,6 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         else:
             self.dataset_mode = 'simulation'
             self.collate_fn = collate_fn
-        
-        self.is_mac = platform.system() == 'Darwin'
-        self.configure_platform_optimizations(num_workers)
-
-    def configure_platform_optimizations(self, num_workers):
-        cpu_count = os.cpu_count()
-        memory_gb = psutil.virtual_memory().available / (1024 ** 3)
-        
-        if num_workers is None:
-            if self.is_mac:
-                self.num_workers = min(cpu_count - 1, 4)
-            else:
-                self.num_workers = min(cpu_count - 1, 8)
-        else:
-            self.num_workers = num_workers
-
-        if memory_gb < 4:
-            self.num_workers = max(1, self.num_workers // 2)
-
-        if self.is_mac:
-            self.mp_context = 'fork'  # macOS performs better with fork
-            self.persistent_workers = False  # Avoid memory issues on macOS
-            self.prefetch_factor = 2  # Lower prefetch for better memory management
-        else:
-            self.mp_context = 'spawn'  # Linux performs better with spawn
-            self.persistent_workers = True  # Good for Linux
-            self.prefetch_factor = 4  # Higher prefetch for better throughput
 
     def setup(self, stage=None):
         full_dataset = hydra.utils.instantiate(self.dataset_config)
@@ -68,50 +41,31 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             full_dataset, [train_size, val_size, test_size]
         )
 
-    def _get_common_dataloader_kwargs(self, shuffle=False):
-        return {
-            'batch_size': self.batch_size,
-            'num_workers': self.num_workers,
-            'collate_fn': self.collate_fn,
-            'multiprocessing_context': self.mp_context,
-            'pin_memory': True,  # Beneficial for both platforms when using GPU
-            'shuffle': shuffle,
-        }
-
     def train_dataloader(self):
-        kwargs = self._get_common_dataloader_kwargs(shuffle=True)
-        
-        if not self.is_mac:
-            kwargs.update({
-                'persistent_workers': self.persistent_workers,
-                'prefetch_factor': self.prefetch_factor
-            })
-
-        return DataLoader(self.train_dataset, **kwargs)
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+            pin_memory=True,
+            persistent_workers=True if self.num_workers > 0 else False,
+            shuffle=True
+        )
 
     def val_dataloader(self):
-        kwargs = self._get_common_dataloader_kwargs()
-        
-        if not self.is_mac:
-            kwargs['persistent_workers'] = self.persistent_workers
-
-        return DataLoader(self.val_dataset, **kwargs)
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+            pin_memory=True,
+            persistent_workers=True if self.num_workers > 0 else False,
+        )
 
     def test_dataloader(self):
-        kwargs = self._get_common_dataloader_kwargs()
-        
-        if not self.is_mac:
-            kwargs['persistent_workers'] = self.persistent_workers
-
-        return DataLoader(self.test_dataset, **kwargs)
-
-    def get_platform_info(self):
-        return {
-            'platform': 'macOS' if self.is_mac else 'Linux',
-            'num_workers': self.num_workers,
-            'multiprocessing_context': self.mp_context,
-            'persistent_workers': self.persistent_workers if not self.is_mac else False,
-            'prefetch_factor': self.prefetch_factor if not self.is_mac else 2,
-            'cpu_count': os.cpu_count(),
-            'memory_available_gb': psutil.virtual_memory().available / (1024 ** 3)
-        }
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn
+        )
