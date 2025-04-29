@@ -21,8 +21,6 @@ def main(cfg: DictConfig):
     GlobalHydra.instance().clear()
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
-
-    logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
     
     L.seed_everything(cfg.seed)
 
@@ -102,18 +100,21 @@ def main(cfg: DictConfig):
         model = lightning_model.model
         model.eval()
         
-        device = next(model.parameters()).device
+        device = model.device
+        model.to(device)
+
         metric_callback = MetricCallback(num_cams=1, device=device)
         
-        eval_dataloader = data_module.val_dataloader()
+        test_dataloader = data_module.test_dataloader()
         
         with torch.no_grad():
-            for batch in eval_dataloader:
+            for batch in test_dataloader:
                 process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
         
         metric_types = ["reconstruction", "prompt_generation", "hybrid_generation"]
         for metric_type in metric_types:
             metrics = metric_callback.compute_clatr_metrics(metric_type)
+            logger.info(f"{metric_type} Metrics: {metrics}")
             # Sum PRDC metrics
             type_prdc_sum = (
                 metrics[f"{metric_type}/precision"] + 
@@ -126,7 +127,6 @@ def main(cfg: DictConfig):
         
         logger.info(f"Total PRDC sum: {prdc_sum}")
     
-    if prdc_sum != 0:
         return -prdc_sum
     
     val_loss = float('inf')
