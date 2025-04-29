@@ -12,21 +12,22 @@ sweeper:
     seed: ${seed}
     multivariate: true
 
-  n_trials: 50
+  n_trials: 200
   direction: minimize
   storage: sqlite:///optuna_camera_traj.db
   study_name: camera-traj-optimized
   n_jobs: 4
 
   params:
-    trainer.max_epochs: 10
-    training.model.num_encoder_layers: choice(2, 4, 6)
-    training.model.num_decoder_layers: choice(2, 4, 6)
-    training.model.nhead: choice(4, 8)
+    trainer.max_epochs: 20
+    data.num_workers: 0 # 1 
+    training.model.num_encoder_layers: choice(4, 6, 8)
+    training.model.num_decoder_layers: choice(8, 4, 6)
+    training.model.nhead: choice(4, 8) #16
     training.model.dim_feedforward: choice(1024, 2048, 4096)
     training.model.dropout_rate: interval(0.1, 0.5)
     
-    training.optimizer.lr: tag(log, interval(5e-7, 5e-5))
+    training.optimizer.lr: tag(log, interval(5e-8, 5e-5))
     # training.optimizer.weight_decay: tag(log, interval(0.001, 0.2))
     # training.optimizer.betas.0: interval(0.8, 0.95)
     # training.optimizer.betas.1: interval(0.9, 0.999)
@@ -34,19 +35,20 @@ sweeper:
     # training.loss_module.clip_loss_scaling_factor: interval(10000, 120000)
     training.loss_module.trajectory_loss_scaling_factor: interval(0.5, 15.0)
     # training.loss_module.contrastive_loss_scaling_factor: interval(0.01, 0.2)
-    training.loss_module.angle_loss_scaling_factor: interval(100, 250)
+    # training.loss_module.angle_loss_scaling_factor: interval(100, 250)
     
-    training.lr_scheduler.warmup_steps: choice(5, 10, 15, 20)
+    training.lr_scheduler.warmup_steps: choice(5, 10, 15)
     training.lr_scheduler.rate: interval(0.4, 0.8)
     training.lr_scheduler.n_th_root: choice(1, 2, 3)
     
     training.noise.initial_std: interval(0.3, 2.5)
+    training.noise.final_std: interval(0, 0.3)
     training.mask.initial_ratio: interval(0.05, 0.2)
     training.mask.final_ratio: interval(0.6, 0.9)
     
     training.teacher_forcing_schedule.memory_initial_ratio: interval(0.1, 0.3)
-    training.teacher_forcing_schedule.memory_final_ratio: interval(0.7, 0.9)
+    training.teacher_forcing_schedule.memory_final_ratio: interval(0.5, 0.7)
     # training.teacher_forcing_schedule.trajectory_initial_ratio: interval(0.8, 1.0)
     # training.teacher_forcing_schedule.trajectory_final_ratio: interval(0.05, 0.2)
     
-    data.batch_size: choice(32, 64, 96, 128, 256)
+    data.batch_size: choice(32, 64, 128)
