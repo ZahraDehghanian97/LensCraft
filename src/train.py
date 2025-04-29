@@ -108,10 +108,10 @@ def main(cfg: DictConfig):
 
         metric_callback = MetricCallback(num_cams=1, device=device)
         
-        validation_dataloader = data_module.validation_dataloader()
+        val_dataloader = data_module.val_dataloader()
         
         with torch.no_grad():
-            for batch in validation_dataloader:
+            for batch in val_dataloader:
                 process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
         
         metric_types = ["prompt_generation", "hybrid_generation"]
