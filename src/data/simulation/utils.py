@@ -225,3 +225,18 @@ def extract_text_prompt(cin_params):
             prompt_parts.append(f"The camera switches from {init_view} view to {final_view} view.")
     
     return " ".join(prompt_parts)
+
+
+def create_prompt_none_mask_matrix(cinematography_prompt_parameters: list, simulation_instruction_parameters: list, n_clip_embs: int):
+    batch_size = len(cinematography_prompt_parameters)
+    none_entries = torch.ones(batch_size, n_clip_embs, dtype=torch.bool)
+    
+    for sample_idx in range(batch_size):
+        clip_embedding_parameters = cinematography_prompt_parameters[sample_idx] + simulation_instruction_parameters[sample_idx]
+        
+        for emb_idx in range(n_clip_embs):
+            _, _, value_idx, _ = clip_embedding_parameters[emb_idx]
+            if value_idx == -1:
+                none_entries[sample_idx, emb_idx] = False
+    
+    return none_entries

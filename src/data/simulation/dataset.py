@@ -17,6 +17,7 @@ from .utils import (
     convert_parameters_to_embedding_tensor,
     load_clip_means,
     extract_text_prompt,
+    create_prompt_none_mask_matrix,
 )
 
 
@@ -96,6 +97,14 @@ class SimulationDataset(Dataset):
         
         text_prompt = extract_text_prompt(prompt)
 
+        n_clip_embs = len(cinematography_prompt) + len(simulation_instruction)
+        
+        prompt_none_mask = create_prompt_none_mask_matrix(
+            cinematography_prompt_parameters=[cinematography_prompt],
+            simulation_instruction_parameters=[simulation_instruction],
+            n_clip_embs=n_clip_embs
+        )
+
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
             "subject_trajectory": torch.tensor(subject_loc_rot, dtype=torch.float32),
@@ -104,7 +113,8 @@ class SimulationDataset(Dataset):
             "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction,
             "cinematography_prompt_parameters": cinematography_prompt,
-            "text_prompt": text_prompt
+            "text_prompt": text_prompt,
+            "prompt_none_mask": prompt_none_mask
         }
 
 
@@ -161,5 +171,6 @@ def collate_fn(batch):
         "cinematography_prompt_parameters": [
             item["cinematography_prompt_parameters"] for item in batch
         ],
-        "text_prompts": [item["text_prompt"] for item in batch]
+        "text_prompts": [item["text_prompt"] for item in batch],
+        "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch])
     }
