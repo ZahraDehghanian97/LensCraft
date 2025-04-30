@@ -17,7 +17,7 @@ from .utils import (
     convert_parameters_to_embedding_tensor,
     load_clip_means,
     extract_text_prompt,
-    create_prompt_none_mask_matrix,
+    create_prompt_none_mask,
 )
 
 
@@ -99,9 +99,9 @@ class SimulationDataset(Dataset):
 
         n_clip_embs = len(cinematography_prompt) + len(simulation_instruction)
         
-        prompt_none_mask = create_prompt_none_mask_matrix(
-            cinematography_prompt_parameters=[cinematography_prompt],
-            simulation_instruction_parameters=[simulation_instruction],
+        prompt_none_mask = create_prompt_none_mask(
+            cinematography_prompt_parameters=cinematography_prompt,
+            simulation_instruction_parameters=simulation_instruction,
             n_clip_embs=n_clip_embs
         )
 

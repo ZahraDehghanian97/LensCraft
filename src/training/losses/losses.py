@@ -4,6 +4,7 @@ from .angle_loss import AngleLoss
 from .contrastive_loss import ContrastiveLoss
 from .clip_loss import ClipLoss
 
+from data.simulation.utils import load_clip_means
 
 class CameraTrajectoryLoss:
     def __init__(self,
@@ -39,9 +40,12 @@ class CameraTrajectoryLoss:
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
+        self.embedding_means = load_clip_means()
+        
         self.contrastive_loss = ContrastiveLoss(
             clip_embeddings=clip_embeddings,
             device=self.device,
+            embedding_means=self.embedding_means,
             get_embedding_name_func=self.get_embedding_name
         )
         
@@ -50,6 +54,8 @@ class CameraTrajectoryLoss:
             self.compute_contrastive_loss = self.contrastive_loss.compute_v1
         elif self.contrastive_loss_version == 2:
             self.compute_contrastive_loss = self.contrastive_loss.compute_v2
+        elif self.contrastive_loss_version == 3:
+            self.compute_contrastive_loss = self.contrastive_loss.compute_v3
         else:
             raise ValueError(f"Contrastive loss version should be 1 or 2, you passed {self.contrastive_loss_version}")
         
