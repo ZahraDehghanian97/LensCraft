@@ -32,8 +32,8 @@ sweeper:
     # training.optimizer.betas.0: interval(0.8, 0.95)
     # training.optimizer.betas.1: interval(0.9, 0.999)
     
-    training.loss_module.clip_loss_scaling_factor: interval(500, 5000)
-    training.loss_module.cycle_loss_scaling_factor: interval(200, 6000)
+    training.loss_module.clip_loss_scaling_factor: interval(800, 5000)
+    training.loss_module.cycle_loss_scaling_factor: interval(100, 1000)
     training.loss_module.trajectory_loss_scaling_factor: interval(0.5, 15.0)
     training.loss_module.contrastive_loss_scaling_factor: interval(0.01, 0.2)
     # training.loss_module.angle_loss_scaling_factor: interval(100, 250)

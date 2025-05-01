@@ -1,7 +1,7 @@
 defaults:
   - dataset: default
 
-num_workers: 2
+num_workers: 0
 val_size: 0.2
 test_size: 0.2
 batch_size: 128
