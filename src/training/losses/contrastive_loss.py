@@ -6,9 +6,10 @@ from data.simulation.constants import CLIP_PARAMETERS_DICT
 
 
 class ContrastiveLoss:
-    def __init__(self, clip_embeddings, device, get_embedding_name_func=None):
+    def __init__(self, clip_embeddings, device, embedding_means=None, get_embedding_name_func=None):
         self.clip_embeddings = clip_embeddings
         self.device = device
+        self.embedding_means = embedding_means
         self.get_embedding_name = get_embedding_name_func
         
         if self.get_embedding_name is None:
@@ -21,7 +22,7 @@ class ContrastiveLoss:
         embedding_name = embedding_name[0] + "".join([item.capitalize() for item in embedding_name[1:]])
         return embedding_name
     
-    def modify_sample(self,
+    def _modify_sample(self,
                       clip_embedding_parameters: list[torch.tensor],
                       clip_sample_target: torch.tensor,
                       n_modification: int) -> torch.tensor:
@@ -64,7 +65,7 @@ class ContrastiveLoss:
 
             for _ in range(N_SIMILAR_SAMPLES):
                 n_modification = random.randint(1, 4)
-                clip_sample_similar = self.modify_sample(clip_embedding_parameters,
+                clip_sample_similar = self._modify_sample(clip_embedding_parameters,
                                                          clip_sample_target,
                                                          n_modification).to(self.device)
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_similar).mean()
@@ -73,7 +74,7 @@ class ContrastiveLoss:
 
             for _ in range(N_DISSIMILAR_SAMPLES):
                 n_modification = random.randint(25, 28)
-                clip_sample_dissimilar = self.modify_sample(clip_embedding_parameters,
+                clip_sample_dissimilar = self._modify_sample(clip_embedding_parameters,
                                                             clip_sample_target,
                                                             n_modification).to(self.device)
                 similarity = cosine_similarity(clip_sample_pred, clip_sample_dissimilar).mean()
@@ -110,4 +111,34 @@ class ContrastiveLoss:
                                         self.clip_embeddings[value_type][embedding_key].unsqueeze(0).to(self.device)).mean()
                         contrastive_loss += similarity + 1
                         
+        return torch.tensor(contrastive_loss).clone().detach()
+
+    def compute_v3(self, clip_pred, clip_target, batch):
+        contrastive_loss = 0
+        batch_size = clip_pred.shape[1]
+        
+        for sample_idx in range(batch_size):
+            clip_sample_pred = clip_pred[:, sample_idx, :]
+            clip_embedding_parameters = batch["cinematography_prompt_parameters"][sample_idx] + \
+                                    batch["simulation_instruction_parameters"][sample_idx]
+            
+            for emb_idx, (prefix, data_value, value_idx, _) in enumerate(clip_embedding_parameters):
+                if value_idx == -1:
+                    continue
+                    
+                if prefix.count("_") > 1:
+                    prefix = "_".join(prefix.split("_")[-2:])
+                    
+                if CLIP_PARAMETERS_DICT[prefix].__name__ == "bool":
+                    value_type = "boolean"
+                else:
+                    value_type = CLIP_PARAMETERS_DICT[prefix].__name__
+                    
+                mean_embedding = self.embedding_means[value_type].to(self.device)
+                contrastive_loss += cosine_similarity(
+                    clip_sample_pred[emb_idx].unsqueeze(0), 
+                    mean_embedding.unsqueeze(0)
+                ).mean()
+                
+        
         return torch.tensor(contrastive_loss).clone().detach()

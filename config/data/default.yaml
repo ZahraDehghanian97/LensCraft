@@ -2,9 +2,7 @@ defaults:
   - dataset: default
   # - dataset: ccdm
 
-num_workers: 2
+num_workers: 0
 val_size: 0.2
 test_size: 0.2
-# val_size: 0.0  # Temporary use for CCD
-# test_size: 1.0 # Temporary use for CCD
-batch_size: 64
+batch_size: 128

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
+from data.ccdm.utils import ccdm_to_simulation, generate_subject
 
 class CCDMDataset(Dataset):
     def __init__(
@@ -69,49 +70,22 @@ class CCDMDataset(Dataset):
     def __len__(self) -> int:
         return len(self.camera_trajectories)
     
-    def _transform_5dof_to_7dof(self, camera_trajectory: torch.Tensor) -> torch.Tensor:
-        x, y, z = camera_trajectory[:,0], camera_trajectory[:,1], camera_trajectory[:,2]
-        px, py = camera_trajectory[:,3], camera_trajectory[:,4]
-
-        yaw_center_rad = torch.atan2(x, z)
-        pitch_center_rad = torch.atan2(y, torch.hypot(x, z))
-
-        delta_pitch_rad = -torch.atan(py * self.tan_half_fov_y)
-        delta_yaw_rad = -torch.atan(px * self.tan_half_fov_x)
-
-        yaw = torch.rad2deg(yaw_center_rad + delta_yaw_rad)
-        pitch = torch.rad2deg(pitch_center_rad + delta_pitch_rad)
-        roll = torch.zeros_like(yaw)
-        focal = torch.full_like(yaw, self.focal_length_mm)
-        
-        return torch.stack([x, y, z, yaw, pitch, roll], dim=1)
-    
     def __getitem__(self, index: int) -> Dict[str, Any]:
         camera_trajectory = self.camera_trajectories[index]
         text_description = self.text_descriptions[index]
         
-        traj_length = len(camera_trajectory)
-        padding_mask = None
-        
-        if traj_length < self.seq_len:
-            padding = camera_trajectory[-1:].repeat(self.seq_len - traj_length, 1)
-            camera_trajectory = torch.cat([camera_trajectory, padding], dim=0)
-            padding_mask = torch.cat([
-                torch.ones(traj_length, dtype=torch.bool),
-                torch.zeros(self.seq_len - traj_length, dtype=torch.bool)
-            ])
-        else:
-            indices = torch.linspace(0, traj_length - 1, self.seq_len).long()
-            camera_trajectory = camera_trajectory[indices]
-        
-        camera_trajectory_sim = self._transform_5dof_to_7dof(camera_trajectory)
+        camera_trajectory_sim, padding_mask = ccdm_to_simulation(
+            camera_trajectory,
+            self.seq_len,
+            self.tan_half_fov_x,
+            self.tan_half_fov_y,
+        )
         
         text = " ".join(text_description)
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
         
-        subject_loc_rot = torch.zeros((self.seq_len, 6), dtype=torch.float32)
-        subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
+        subject_loc_rot, subject_volume = generate_subject(self.seq_len)
         
         return {
             "camera_trajectory": camera_trajectory_sim,

@@ -1,12 +1,19 @@
 import os
+import sys
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate, get_class
 from omegaconf import DictConfig, OmegaConf
 import lightning as L
+import torch
 from data.datamodule import CameraTrajectoryDataModule
 from data.multi_dataset_module import MultiDatasetModule
+from testing.metrics.callback import MetricCallback
+from testing.lens_craft import process_lens_craft_batch
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 
@@ -15,7 +22,7 @@ def main(cfg: DictConfig):
     GlobalHydra.instance().clear()
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
-
+    
     L.seed_everything(cfg.seed)
 
     use_multi_dataset = cfg.data.use_multi_dataset if hasattr(cfg.data, 'use_multi_dataset') else False
@@ -50,7 +57,7 @@ def main(cfg: DictConfig):
         checkpoint_path = cfg.resume_checkpoint
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
-        print(f"Loading model from checkpoint: {checkpoint_path}")
+        logger.info(f"Loading model from checkpoint: {checkpoint_path}")
         
         lightning_model = LightningModuleClass.load_from_checkpoint(
             checkpoint_path,
@@ -64,7 +71,7 @@ def main(cfg: DictConfig):
             compile_enabled=cfg.compile.enabled,
             dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
         )
-        print("Checkpoint loaded successfully")
+        logger.info("Checkpoint loaded successfully")
     else:
         lightning_model = instantiate(
             cfg.training,
@@ -77,37 +84,58 @@ def main(cfg: DictConfig):
         )
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
-
-    is_sweep_run = os.environ.get('IS_SWEEP_RUN', 'false').lower() == 'true'
     
-    if is_sweep_run:
-        sweep_max_epochs = int(os.environ.get('SWEEP_MAX_EPOCHS', '20'))
-        
-        trainer_config = OmegaConf.to_container(cfg.trainer, resolve=True)
-        if isinstance(trainer_config, dict):
-            trainer_config.pop('_target_', None)
-            trainer_config.pop('_partial_', None)
-            trainer_config['max_epochs'] = sweep_max_epochs
-            trainer = L.Trainer(**trainer_config, callbacks=callbacks)
-        else:
-            trainer = instantiate(cfg.trainer, callbacks=callbacks, max_epochs=sweep_max_epochs)
-    else:
-        trainer = instantiate(cfg.trainer, callbacks=callbacks)
-
+    trainer = instantiate(cfg.trainer, callbacks=callbacks)
     trainer.fit(lightning_model, datamodule=data_module)
+    if trainer.global_rank != 0:
+        sys.exit(0)
+    
+    if use_multi_dataset:
+        dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
+    else:
+        target = cfg.data.dataset.config["_target_"]
+        dataset_type = (
+            "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
+        )
+    
+    prdc_sum = 0
+    if dataset_type == "simulation":
+        model = lightning_model.model
+        model.eval()
+        
+        device = model.device
+        model.to(device)
 
-    val_loss = None
-    for callback in callbacks:
-        if hasattr(callback, 'best_model_score'):
-            val_loss = callback.best_model_score.item()
-            break
-    
-    if val_loss is None:
-        test_results = trainer.test(lightning_model, datamodule=data_module)
-        if len(test_results) > 0:
-            val_loss = test_results[0].get('test_loss', float('inf'))
-    
-    return val_loss
+        metric_callback = MetricCallback(num_cams=1, device=device)
+        
+        val_dataloader = data_module.val_dataloader()
+        
+        with torch.no_grad():
+            for batch in val_dataloader:
+                process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
+        
+        metric_types = ["prompt_generation", "hybrid_generation"]
+        for metric_type in metric_types:
+            metrics = metric_callback.compute_clatr_metrics(metric_type)
+            logger.info(f"{metric_type} Metrics: {metrics}")
+            # Sum PRDC metrics
+            type_prdc_sum = (
+                max(0, min(1, metrics[f"{metric_type}/precision"])) + 
+                max(0, min(1, metrics[f"{metric_type}/recall"])) + 
+                max(0, min(1, metrics[f"{metric_type}/density"])) + 
+                max(0, min(1, metrics[f"{metric_type}/coverage"]))
+            )
+            prdc_sum += type_prdc_sum
+            logger.info(f"{metric_type} PRDC sum: {type_prdc_sum}")
+        
+        logger.info(f"Total PRDC sum: {prdc_sum}")
+
+    trajectory_loss = 0.0
+    if 'val_trajectory_epoch' in trainer.callback_metrics:
+        trajectory_loss = trainer.callback_metrics['val_trajectory_epoch'].item()
+        logger.info(f"trajectory loss: {trajectory_loss}")
+
+    return -float(prdc_sum) + (trajectory_loss * 0.1)
 
 
 if __name__ == "__main__":

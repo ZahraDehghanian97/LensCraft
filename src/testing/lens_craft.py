@@ -18,47 +18,6 @@ def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> 
     
     return prepared_data
 
-
-def compute_subject_embedding(
-    model: MultiTaskAutoencoder,
-    subject_trajectory: torch.Tensor,
-    subject_volume: torch.Tensor
-) -> torch.Tensor:
-    subject_embedding_loc_rot = model.subject_projection_loc_rot(subject_trajectory)
-    subject_embedding_vol = model.subject_projection_vol(subject_volume)
-    return torch.cat([subject_embedding_loc_rot, subject_embedding_vol], 1)
-
-
-def compute_encoder_embedding(
-    model: MultiTaskAutoencoder,
-    camera_trajectory: torch.Tensor,
-    subject_embedding: torch.Tensor
-) -> torch.Tensor:
-    return model.encoder(camera_trajectory, subject_embedding)[:model.memory_tokens_count, ...]
-
-
-def generate_camera_trajectory(
-    model: MultiTaskAutoencoder,
-    data: Dict[str, torch.Tensor],
-    memory_teacher_forcing_ratio: Optional[float] = None,
-    caption_embedding: Optional[torch.Tensor] = None
-) -> Dict[str, Any]:
-    generation_params = {
-        "subject_trajectory": data["subject_trajectory"],
-        "subject_volume": data["subject_volume"],
-        "camera_trajectory": data["camera_trajectory"],
-        "padding_mask": data["padding_mask"]
-    }
-    
-    if memory_teacher_forcing_ratio is not None:
-        generation_params["memory_teacher_forcing_ratio"] = memory_teacher_forcing_ratio
-    
-    if caption_embedding is not None:
-        generation_params["caption_embedding"] = caption_embedding
-    
-    return model.generate_camera_trajectory(**generation_params)
-
-
 def update_metrics(
     model: MultiTaskAutoencoder,
     data: Dict[str, torch.Tensor],
@@ -67,26 +26,26 @@ def update_metrics(
     memory_teacher_forcing_ratio: Optional[float] = None,
     caption_embedding: Optional[torch.Tensor] = None
 ) -> None:
-    generation_output = generate_camera_trajectory(
-        model,
-        data,
-        memory_teacher_forcing_ratio,
-        caption_embedding
+    generation_output = model.generate_camera_trajectory(
+        subject_trajectory=data["subject_trajectory"],
+        subject_volume=data["subject_volume"],
+        camera_trajectory=data["camera_trajectory"],
+        padding_mask=data["padding_mask"],
+        memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
+        caption_embedding=caption_embedding
     )
     
     encoder_embedding = generation_output['embeddings'][:model.memory_tokens_count, ...]
 
-    subject_embedding = compute_subject_embedding(
-        model,
-        data["subject_trajectory"],
-        data["subject_volume"]
-    )
+    subject_embedding = torch.cat([
+        model.subject_projection_loc_rot(data["subject_trajectory"]),
+        model.subject_projection_vol(data["subject_volume"])
+    ], 1)
     
-    reconstructed_embedding = compute_encoder_embedding(
-        model,
-        generation_output["reconstructed"],
+    reconstructed_embedding = model.encoder(
+        generation_output["reconstructed"], 
         subject_embedding
-    ).detach().clone()        
+    )[:model.memory_tokens_count, ...].detach().clone()    
     
     batch_size = reconstructed_embedding.shape[1]
     
