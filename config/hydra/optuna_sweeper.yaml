@@ -34,8 +34,8 @@ sweeper:
     
     training.loss_module.clip_loss_scaling_factor: interval(800, 5000)
     training.loss_module.cycle_loss_scaling_factor: interval(100, 1000)
-    training.loss_module.trajectory_loss_scaling_factor: interval(0.5, 15.0)
-    training.loss_module.contrastive_loss_scaling_factor: interval(0.01, 0.2)
+    # training.loss_module.trajectory_loss_scaling_factor: interval(0.5, 15.0)
+    training.loss_module.contrastive_loss_scaling_factor: interval(1, 200)
     # training.loss_module.angle_loss_scaling_factor: interval(100, 250)
     
     training.lr_scheduler.warmup_steps: choice(5, 10, 15)
