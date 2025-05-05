@@ -1,6 +1,6 @@
 [submodule "third_parties/DIRECTOR"]
 	path = third_parties/DIRECTOR
-	url = https://github.com/robincourant/DIRECTOR
+	url = https://github.com/azizinaghsh/DIRECTOR
 [submodule "third_parties/Camera-control"]
 	path = third_parties/Camera-control
 	url = https://github.com/jianghd1996/Camera-control
