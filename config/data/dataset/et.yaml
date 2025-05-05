@@ -1,12 +1,12 @@
 info:
   max_seq_length: 300
   seq_length: 30
-  feature_dim: 9
+  feature_dim: 6
 
-module:
+config:
   _target_: data.et.dataset.ETDataset
   project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
   dataset_dir: ${oc.env:ET_DATA_DIR}
   set_name: mixed
   split: train
-  seq_length: 30
+  # seq_length: 30

@@ -36,10 +36,10 @@ class CCDMDataset(Dataset):
         aspect = self.sensor_width / self.sensor_height
         self.fov_y_rad = self.fov_rad
         self.fov_x_rad = 2.0 * math.atan(math.tan(self.fov_y_rad * 0.5) * aspect)
-        
+
         self.tan_half_fov_y = math.tan(self.fov_y_rad * 0.5)
         self.tan_half_fov_x = math.tan(self.fov_x_rad * 0.5)
-        
+
         if default_focal_length is not None:
             self.focal_length_mm = float(default_focal_length)
         else:
@@ -68,13 +68,20 @@ class CCDMDataset(Dataset):
         else:
             self.mean = torch.zeros(5)
             self.std = torch.ones(5)
-    
+
     def __len__(self) -> int:
         return len(self.camera_trajectories)
-    
+
     def __getitem__(self, index: int) -> Dict[str, Any]:
         camera_trajectory = self.camera_trajectories[index]
         text_description = self.text_descriptions[index]
+
+        if len(camera_trajectory) < self.original_seq_len:
+            pad = camera_trajectory[-1:].repeat(self.original_seq_len - len(camera_trajectory), 1)
+            raw_padded = torch.cat([camera_trajectory, pad], dim=0)
+        else:
+            idxs = torch.linspace(0, len(camera_trajectory)-1, self.original_seq_len).long()
+            raw_padded = camera_trajectory[idxs]
         
         if len(camera_trajectory) < self.original_seq_len:
             pad = camera_trajectory[-1:].repeat(self.original_seq_len - len(camera_trajectory), 1)
@@ -89,13 +96,13 @@ class CCDMDataset(Dataset):
             self.tan_half_fov_x,
             self.tan_half_fov_y,
         )
-        
+
         text = " ".join(text_description)
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
-        
+
         subject_loc_rot, subject_volume = generate_subject(self.seq_len)
-        
+
         return {
             "camera_trajectory": camera_trajectory_sim,
             "subject_trajectory": subject_loc_rot,

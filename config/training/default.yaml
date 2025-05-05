@@ -10,18 +10,14 @@ loss_module:
   contrastive_loss_margin: 5
   n_clip_embs: 28
   losses_list:
-    - clip
-    - trajectory
-    - cycle
-    - contrastive
+    clip:             80000   # Around 100 when converge
+    first_frame:      4       # Around 100 when converge
+    relative:         40
+    cycle:            80000   # Around 100 when converge
+    contrastive:      0.025   # For version 1: 0.5 | For version 2: 0.025
   weighted_clip_loss: false
   weight_power: 1
-  clip_loss_scaling_factor: 80000         # Around 100 when converge
-  cycle_loss_scaling_factor: 80000        # Around 100 when converge
-  trajectory_loss_scaling_factor: 4       # Around 100 when converge
-  contrastive_loss_scaling_factor: 0.025  # For version 1: 0.5 | For version 2: 0.025
-  angle_loss_scaling_factor: 180
-  contrastive_loss_version: 3             # Select between versions [1, 2, 3]
+  contrastive_loss_version: 3         # Select between versions [1, 2, 3]
   clip_weights:    # EMBEDDING
     clip_0: 6      # initial_cameraAngle
     clip_1: 7      # initial_shotSize

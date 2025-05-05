@@ -1,8 +1,10 @@
 import math
 import torch
+from torch.nn.functional import cosine_similarity
+
 
 class AngleLoss(torch.nn.Module):
-    def __init__(self, scaling_factor=180):
+    def __init__(self, scaling_factor=1.1):
         super().__init__()
         self.scaling_factor = scaling_factor
     
@@ -24,9 +26,9 @@ class AngleLoss(torch.nn.Module):
     def forward(self, pred, target):
         pred_normal = self.euler_to_normal(pred)
         target_normal = self.euler_to_normal(target)
-        
-        loss = torch.mean((pred_normal - target_normal) ** 2) * self.scaling_factor
-        
+        product = cosine_similarity(pred_normal, target_normal)
+        loss = torch.mean(torch.tan(torch.pi / 4 * (1 - product)))
+        # loss = torch.mean(1 / (self.scaling_factor + product) - 1 / (self.scaling_factor + 1))
         return loss
 
 

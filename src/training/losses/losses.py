@@ -15,28 +15,17 @@ class CameraTrajectoryLoss:
                  weight_power: int=1,
                  clip_weights: dict=None,
                  contrastive_loss_version: int=1,
-                 clip_loss_scaling_factor: float=37500,
-                 trajectory_loss_scaling_factor: float=10,
-                 contrastive_loss_scaling_factor: float=0.1,
-                 angle_loss_scaling_factor: float=180,
-                 cycle_loss_scaling_factor: float=37500,
                  clip_embeddings: dict=None,
                  encoder_loss_function: str="clip"
                  ):
-        self.angle_loss = AngleLoss(angle_loss_scaling_factor)
+        self.angle_loss = AngleLoss()
         self.clip_loss = ClipLoss(clip_weights=clip_weights, weight_power=weight_power)
-        
         self.contrastive_loss_margin = contrastive_loss_margin
         self.n_clip_embs = n_clip_embs
         self.losses_list = losses_list
         self.weighted_clip_loss = weighted_clip_loss
         self.clip_weights = clip_weights
         self.clip_embeddings = clip_embeddings
-        
-        self.clip_loss_scaling_factor = clip_loss_scaling_factor
-        self.trajectory_loss_scaling_factor = trajectory_loss_scaling_factor
-        self.contrastive_loss_scaling_factor = contrastive_loss_scaling_factor
-        self.cycle_loss_scaling_factor = cycle_loss_scaling_factor
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -79,10 +68,10 @@ class CameraTrajectoryLoss:
         if len(self.losses_list) == 0:
             raise ValueError("The losses list cannot be empty; it must contain at least one of the following: 'trajectory', 'clip', 'contrastive', or 'cycle'.")
         
-        total_loss = 0
         loss_dict = dict()
-        
-        if "clip" in self.losses_list:
+
+
+        if self.losses_list.get("clip", 0):
             total_clip_loss_weighted, clip_losses, total_clip_loss = self.clip_loss.compute(
                 clip_target=clip_target,
                 clip_pred=clip_pred,
@@ -93,27 +82,16 @@ class CameraTrajectoryLoss:
             )
             
             if self.weighted_clip_loss:
-                total_loss += total_clip_loss_weighted / clip_pred.shape[1] * self.clip_loss_scaling_factor
+                loss_dict["clip"] = total_clip_loss_weighted / clip_pred.shape[1]
             else:
-                if self.encoder_loss_function == "clip":
-                    total_loss += total_clip_loss / clip_pred.shape[1] * self.clip_loss_scaling_factor
-                elif self.encoder_loss_function == "mse":
-                    total_loss += total_clip_loss / clip_pred.shape[1] * 12800
+                loss_dict["clip"] = total_clip_loss / clip_pred.shape[1]
+                
+            loss_dict["clip_elements"] = {i: clip_losses[i] for i in range(self.n_clip_embs)} # FIXME
+            loss_dict["average_clip"] = total_clip_loss * 200 # FIXME
 
-            loss_dict["clip"] = {i: clip_losses[i] for i in range(self.n_clip_embs)}
-            loss_dict["average_clip"] = total_clip_loss * 200
 
-        if "trajectory" in self.losses_list:
-            trajectory_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
-            total_loss += trajectory_loss * self.trajectory_loss_scaling_factor
-            loss_dict["trajectory"] = trajectory_loss.item()
-        
-        if "contrastive" in self.losses_list:
-            contrastive_loss = self.compute_contrastive_loss(clip_pred, clip_target, batch)
-            total_loss += contrastive_loss * self.contrastive_loss_scaling_factor
-            loss_dict["contrastive"] = contrastive_loss.item()
-            
-        if "cycle" in self.losses_list and cycle_embeddings is not None:
+
+        if self.losses_list.get("cycle", 0) and cycle_embeddings is not None:
             total_cycle_loss_weighted, cycle_losses, total_cycle_loss = self.clip_loss.compute(
                 clip_target=clip_pred,
                 clip_pred=cycle_embeddings,
@@ -123,30 +101,40 @@ class CameraTrajectoryLoss:
             )
             
             if self.weighted_clip_loss:
-                cycle_loss_value = total_cycle_loss_weighted / cycle_embeddings.shape[1] * self.cycle_loss_scaling_factor
+                loss_dict["cycle"] = total_cycle_loss_weighted / cycle_embeddings.shape[1]
             else:
-                if self.encoder_loss_function == "clip":
-                    cycle_loss_value = total_cycle_loss / cycle_embeddings.shape[1] * self.cycle_loss_scaling_factor
-                elif self.encoder_loss_function == "mse":
-                    cycle_loss_value = total_cycle_loss / cycle_embeddings.shape[1] * 12800
+                loss_dict["cycle"] = total_cycle_loss / cycle_embeddings.shape[1]
             
-            total_loss += cycle_loss_value
-            loss_dict["cycle"] = {i: cycle_losses[i] for i in range(self.n_clip_embs)}
-            loss_dict["average_cycle"] = total_cycle_loss * 200
+            loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(self.n_clip_embs)} # FIXME
+            loss_dict["average_cycle"] = total_cycle_loss * 200 # FIXME
 
+        elif self.losses_list.get("cycle", 0) and cycle_embeddings is None:
+            loss_dict["cycle"] = 0
+
+
+
+        if self.losses_list.get("first_frame", 0):
+            first_frame_loss, relative_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
+            loss_dict["first_frame"] = first_frame_loss.item()
+            loss_dict["relative"] = relative_loss.item()
+        
+
+
+        if self.losses_list.get("contrastive", 0):
+            contrastive_loss = self.compute_contrastive_loss(clip_pred, clip_target, batch)
+            loss_dict["contrastive"] = contrastive_loss.item()
+
+
+
+        total_loss = 0
+        for loss_key in self.losses_list:
+            self.losses_list[loss_key]
+            loss_dict[loss_key]
+            total_loss += self.losses_list[loss_key] * loss_dict[loss_key]
+            
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
     
-    def compute_trajectory_only_loss(self, model_output, camera_trajectory, tgt_key_padding_mask=None):
-        reconstructed = model_output['reconstructed']
-        trajectory_loss = self.compute_trajectory_loss(reconstructed, camera_trajectory)
-        
-        loss_dict = {
-            "trajectory": trajectory_loss.item(),
-            "total": trajectory_loss.item()
-        }
-        
-        return trajectory_loss, loss_dict
 
     def compute_component_losses(self, pred, target):
         position_loss = mse_loss(
@@ -162,8 +150,7 @@ class CameraTrajectoryLoss:
     def compute_trajectory_loss(self, pred, target):
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
-        
-        return relative_loss * self.trajectory_loss_scaling_factor + first_frame_loss
+        return first_frame_loss, relative_loss
     
     @staticmethod
     def get_embedding_name(name: str) -> str:
