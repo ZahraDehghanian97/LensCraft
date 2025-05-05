@@ -18,7 +18,7 @@ loss_module:
   weight_power: 1
   clip_loss_scaling_factor: 80000         # Around 100 when converge
   cycle_loss_scaling_factor: 80000        # Around 100 when converge
-  trajectory_loss_scaling_factor: 2       # Around 100 when converge
+  trajectory_loss_scaling_factor: 4       # Around 100 when converge
   contrastive_loss_scaling_factor: 0.025  # For version 1: 0.5 | For version 2: 0.025
   angle_loss_scaling_factor: 180
   contrastive_loss_version: 3             # Select between versions [1, 2, 3]

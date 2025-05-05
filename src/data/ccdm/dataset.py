@@ -15,6 +15,7 @@ class CCDMDataset(Dataset):
         embedding_dim: int = 512,
         standardize: bool = False,
         seq_len: int = 30,
+        original_seq_len: int = 300,
         default_focal_length: Optional[float] = None,
         fov_degrees: float = 45.0,
         sensor_width: float = 36.0,
@@ -26,6 +27,7 @@ class CCDMDataset(Dataset):
         self.clip_model_name = clip_model_name
         self.standardize = standardize
         self.seq_len = seq_len
+        self.original_seq_len = original_seq_len
 
         self.fov_degrees = fov_degrees
         self.fov_rad = math.radians(fov_degrees)
@@ -54,7 +56,7 @@ class CCDMDataset(Dataset):
             raise FileNotFoundError(f"Data file not found at {self.data_path}")
 
         raw = np.load(self.data_path, allow_pickle=True)[()]
-        self.camera_trajectories = [torch.tensor(camera_trajectory, dtype=torch.float32) for camera_trajectory in raw["camera_trajectory"]]
+        self.camera_trajectories = [torch.tensor(camera_trajectory, dtype=torch.float32) for camera_trajectory in raw["cam"]]
         self.text_descriptions = raw["info"]
 
         if self.standardize:
@@ -73,6 +75,13 @@ class CCDMDataset(Dataset):
     def __getitem__(self, index: int) -> Dict[str, Any]:
         camera_trajectory = self.camera_trajectories[index]
         text_description = self.text_descriptions[index]
+        
+        if len(camera_trajectory) < self.original_seq_len:
+            pad = camera_trajectory[-1:].repeat(self.original_seq_len - len(camera_trajectory), 1)
+            raw_padded = torch.cat([camera_trajectory, pad], dim=0)
+        else:
+            idxs = torch.linspace(0, len(camera_trajectory)-1, self.original_seq_len).long()
+            raw_padded = camera_trajectory[idxs]
         
         camera_trajectory_sim, padding_mask = ccdm_to_simulation(
             camera_trajectory,
@@ -94,7 +103,7 @@ class CCDMDataset(Dataset):
             "padding_mask": None if padding_mask is None else ~padding_mask,
             "caption_feat": text_embedding,
             "raw_text": text,
-            "original_camera_trajectory": camera_trajectory,
+            "original_camera_trajectory": raw_padded,
         }
 
 def collate_fn(batch):

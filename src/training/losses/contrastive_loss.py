@@ -115,6 +115,7 @@ class ContrastiveLoss:
 
     def compute_v3(self, clip_pred, clip_target, batch):
         contrastive_loss = 0
+        parameters_size = clip_pred.shape[0]
         batch_size = clip_pred.shape[1]
         
         for sample_idx in range(batch_size):
@@ -135,10 +136,10 @@ class ContrastiveLoss:
                     value_type = CLIP_PARAMETERS_DICT[prefix].__name__
                     
                 mean_embedding = self.embedding_means[value_type].to(self.device)
-                contrastive_loss += cosine_similarity(
+                similarity = cosine_similarity(
                     clip_sample_pred[emb_idx].unsqueeze(0), 
                     mean_embedding.unsqueeze(0)
                 ).mean()
+                contrastive_loss += similarity + 1
                 
-        
-        return torch.tensor(contrastive_loss).clone().detach()
+        return torch.tensor(contrastive_loss / (batch_size * parameters_size)).clone().detach()

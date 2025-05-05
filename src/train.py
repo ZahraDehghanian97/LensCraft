@@ -120,32 +120,22 @@ def main(cfg: DictConfig):
             logger.info(f"{metric_type} Metrics: {metrics}")
             # Sum PRDC metrics
             type_prdc_sum = (
-                metrics[f"{metric_type}/precision"] + 
-                metrics[f"{metric_type}/recall"] + 
-                metrics[f"{metric_type}/density"] + 
-                metrics[f"{metric_type}/coverage"]
+                max(0, min(1, metrics[f"{metric_type}/precision"])) + 
+                max(0, min(1, metrics[f"{metric_type}/recall"])) + 
+                max(0, min(1, metrics[f"{metric_type}/density"])) + 
+                max(0, min(1, metrics[f"{metric_type}/coverage"]))
             )
             prdc_sum += type_prdc_sum
             logger.info(f"{metric_type} PRDC sum: {type_prdc_sum}")
         
         logger.info(f"Total PRDC sum: {prdc_sum}")
 
-        return -float(prdc_sum)
+    trajectory_loss = 0.0
+    if 'val_trajectory_epoch' in trainer.callback_metrics:
+        trajectory_loss = trainer.callback_metrics['val_trajectory_epoch'].item()
+        logger.info(f"trajectory loss: {trajectory_loss}")
 
-    val_loss = float('inf')
-    for callback in callbacks:
-        if hasattr(callback, 'best_model_score') and callback.best_model_score is not None:
-            val_loss = callback.best_model_score.item()
-            logger.info(f"Best validation loss: {val_loss}")
-            break
-    
-    if val_loss == float('inf'):
-        test_results = trainer.test(lightning_model, datamodule=data_module)
-        if len(test_results) > 0:
-            val_loss = test_results[0].get('test_loss', float('inf'))
-            logger.info(f"Test loss (used as surrogate for validation loss): {val_loss}")
-    
-    return val_loss
+    return -float(prdc_sum) + (trajectory_loss * 0.1)
 
 
 if __name__ == "__main__":

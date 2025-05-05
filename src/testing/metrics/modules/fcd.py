@@ -10,13 +10,10 @@ def _compute_fd(mu1: Tensor, sigma1: Tensor, mu2: Tensor, sigma2: Tensor) -> Ten
 
     d² = ‖μ₁ – μ₂‖² + Tr(Σ₁ + Σ₂ − 2·√(Σ₁ Σ₂))
     """
-    mu1, mu2 = mu1.float(), mu2.float()
-    sigma1, sigma2 = sigma1.float(), sigma2.float()
-
-    a = (mu1 - mu2).pow(2).sum()
-    b = torch.trace(sigma1) + torch.trace(sigma2)
-    c = torch.linalg.eigvals(sigma1 @ sigma2).sqrt().real.sum()
-    return a + b - 2.0 * c
+    a = (mu1 - mu2).square().sum(dim=-1)
+    b = sigma1.trace() + sigma2.trace()
+    c = torch.linalg.eigvals(sigma1 @ sigma2).sqrt().real.sum(dim=-1)
+    return a + b - 2 * c
 
 
 class FrechetCLaTrDistance(Metric):
