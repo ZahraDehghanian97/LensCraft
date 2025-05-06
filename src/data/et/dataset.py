@@ -3,14 +3,16 @@ from typing import Any, Dict
 from torch.utils.data import Dataset
 
 from .load import load_et_dataset
-from .utils import et_to_sim_subject_traj, et_to_sim_cam_traj
+from .utils import et_to_sim_subject_traj #  et_to_sim_cam_traj
+from data.convertor import camera_et_to_sim
 
 
 class ETDataset(Dataset):
-    def __init__(self, project_config_dir: str, dataset_dir: str, set_name: str, split: str):
+    def __init__(self, project_config_dir: str, dataset_dir: str, set_name: str, split: str, target = None):
         self.original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
+        self.target = target # TODO
 
     def __len__(self) -> int:
         return len(self.original_dataset)
@@ -30,18 +32,19 @@ class ETDataset(Dataset):
         valid_sum = (caption_feat * clip_seq_mask).sum(dim=1)
         num_valid_tokens = clip_seq_mask.sum().clamp(min=1)
         averaged_caption_feat = valid_sum / num_valid_tokens
-
-        print("1", et_to_sim_cam_traj(item['traj_feat']).shape)
-        print("2", item['traj_feat'].transpose(0, 1).shape)
+        if self.target["type"] == "simulation":
+            matrix_traj_feat = self.original_dataset.get_matrix(item["traj_feat"])
+            camera_trajectory = camera_et_to_sim(matrix_traj_feat, seq_len=self.target["seq_length"])
 
         processed_item = {
-            'camera_trajectory': item['traj_feat'].transpose(0, 1),
+            'camera_trajectory': camera_trajectory,
             'subject_trajectory': subject_trajectory,
             'subject_volume': subject_volume,
             'padding_mask': ~item['padding_mask'].to(torch.bool),
             'caption_feat': averaged_caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32),
             "original_camera_trajectory": item['traj_feat'],
+            "text_prompts": item["caption_raw"]["caption"]
         }
         return processed_item
 
@@ -54,6 +57,7 @@ def collate_fn(batch):
         'padding_mask': torch.stack([item['padding_mask'] for item in batch]),
         'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
         'intrinsics': torch.stack([item['intrinsics'] for item in batch]),
+        'text_prompts': [item['text_prompts'] for item in batch],
         'original_camera_trajectory': torch.stack([item["original_camera_trajectory"] for item in batch]),
 
     }

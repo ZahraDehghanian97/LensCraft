@@ -42,8 +42,18 @@ def et_to_6dof(trajectories):
     return result
 
 def et_to_sim_cam_traj(trajectories, target_frames=30):
+    is_batch = True
+
+    if len(trajectories.shape) == 3:
+        trajectories = trajectories.unsqueeze(0)
+        is_batch = False
+
     resized = fix_traj_length(trajectories, target_frames)
-    return et_to_6dof(resized)
+    resized_trajectories = et_to_6dof(resized)
+
+    if not is_batch:
+        resized_trajectories = resized_trajectories.squeeze()
+    return resized_trajectories
 
 
 def sim_to_et_subject_traj(subject_trajectory, device, seq_len=300):
@@ -64,9 +74,9 @@ def et_to_sim_subject_traj(char_feat: torch.Tensor) -> torch.Tensor:
             ]
             subject_trajectory.append(subject_frame)
 
-        subject_trajectory = torch.tensor(subject_trajectory, dtype=torch.float32)
+        subject_trajectory = torch.tensor(subject_trajectory)
 
-        subject_volume = torch.tensor([0.5, 1.7, 0.3], dtype=torch.float32)  # Default size values
+        subject_volume = torch.tensor([[0.5, 1.7, 0.3]])  # Default size values
 
         return subject_trajectory, subject_volume
 

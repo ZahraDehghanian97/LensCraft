@@ -1,6 +1,6 @@
 defaults:
-  - dataset: default
-  # - dataset: et
+  # - dataset: default
+  - dataset: et
   # - dataset: ccdm
 
 num_workers: 0
