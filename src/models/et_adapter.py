@@ -1,13 +1,14 @@
-import os, sys
+import os
 import numpy as np
 import torch
 import logging
 import gdown
 import zipfile
+import torch.nn.functional as F
 
 from hydra.utils import instantiate
 
-from models.clip_embeddings import CLIPEmbedder
+from data.et.caption_encoder import CaptionEncoder
 from data.et.utils import et_to_sim_cam_traj, sim_to_et_subject_traj
 from data.et.load import load_et_config
 from utils.seed import set_random_seed
@@ -23,7 +24,7 @@ class ETAdapter:
         self.num_frames = config.get("num_frames", 30)
         self._load_models(config["project_config_dir"], config["dataset_dir"])
         set_random_seed(42)
-        self.clip_embedder = CLIPEmbedder(model_name="openai/clip-vit-base-patch32", device=device)
+        self.caption_encoder = CaptionEncoder(device=device)
     
     
     def _prepare_checkpoints(self, checkpoints_dir):
@@ -86,10 +87,25 @@ class ETAdapter:
         
         return batch
     
+    def _generate_caption_feat(self, text_prompts):
+        caption_seq_list, caption_tokens = self.caption_encoder.encode_text(text_prompts)
+        
+        if self.diffuser.net.model.clip_sequential:
+            padded_seqs = []
+            for seq in caption_seq_list:
+                padded_seq = F.pad(seq, (0, 0, 0, 77 - seq.shape[0]))
+                padded_seqs.append(padded_seq)
+            caption_feat = torch.stack(padded_seqs, dim=0)
+            caption_feat = caption_feat.permute(0, 2, 1)
+        else:
+            caption_feat = caption_tokens
+        
+        return caption_feat
+    
     def generate_using_text(self, text_prompts, subject_trajectory=None, padding_mask=None):
         self.diffuser.gen_seeds = np.arange(len(text_prompts))
 
-        caption_feat = self.clip_embedder.get_caption_feat(text_prompts, seq_feat=False)
+        caption_feat = self._generate_caption_feat(text_prompts)
         char_feat = sim_to_et_subject_traj(subject_trajectory, self.device)
         
         batch = self._prepare_model_input(caption_feat, char_feat, self.num_frames)
