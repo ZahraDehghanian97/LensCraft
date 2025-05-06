@@ -20,7 +20,10 @@ class ModuleImporter:
 
     @staticmethod
     def _import_file(module_name, full_path):
-        spec = spec_from_file_location(module_name, full_path + '.py')
+        if not full_path.endswith('.py'):
+            full_path = full_path + '.py'
+        
+        spec = spec_from_file_location(module_name, full_path)
         if spec is None:
             raise ImportError(f"Failed to create module spec for {full_path}")
 
