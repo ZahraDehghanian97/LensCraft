@@ -15,6 +15,7 @@ from testing.metrics.callback import MetricCallback
 from utils.checkpoint import load_checkpoint
 from visualization import tSNE_visualize_embeddings
 from models.ccdm_adapter import CCDMAdapter
+from models.et_adapter import ETAdapter
 from testing.ccdm import process_ccdm_batch
 from testing.lens_craft import process_lens_craft_batch
 
@@ -36,20 +37,23 @@ def main(cfg: DictConfig) -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
 
-    use_ccdm = cfg.get("use_ccdm", False)
-    ccdm_adapter = None
+    model_type = cfg.model_config.get("type", "simulation")
+    model = None
 
-    if use_ccdm:
+    if model_type == "ccdm":
         if CCDMAdapter is None:
             raise ImportError("CCDM adapter not found. Please ensure models/ccdm_adapter.py exists.")
         logger.info("Using CCDM model for inference")
-        ccdm_adapter = CCDMAdapter(cfg, device)
-    else:
-        logger.info("Using MultiTaskAutoencoder model for inference")
+        model = CCDMAdapter(cfg.model_config, device)
+    elif model_type == "et":
+        model = ETAdapter(cfg.model_config, device)
+    elif model_type in "simulation":
         model: MultiTaskAutoencoder = instantiate(cfg.training.model)
-        model = load_checkpoint(cfg.checkpoint_path, model, device)
+        model = load_checkpoint(cfg.model_config.checkpoint_path, model, device)
         model.to(device)
         model.eval()
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -69,12 +73,8 @@ def main(cfg: DictConfig) -> None:
 
     test_dataloader = data_module.test_dataloader()
 
-    if use_ccdm:
-        metric_items = (
-            ["reconstruction", "prompt_generation", "hybrid_generation"]
-            if dataset_type in {"simulation", "ccdm"}
-            else ["reconstruction"]
-        )
+    if model_type in ["ccdm", "et"]:
+        metric_items = ["prompt_generation"]
     else:
         metric_items = (
             ["reconstruction", "prompt_generation", "hybrid_generation"]
@@ -86,8 +86,13 @@ def main(cfg: DictConfig) -> None:
 
     with torch.no_grad():
         for batch in tqdm(test_dataloader):
-            if use_ccdm:
-                process_ccdm_batch(ccdm_adapter, batch, metric_callback, device)
+            text_prompts = batch["text_prompts"]
+            subject_trajectory = batch["subject_trajectory"]
+            padding_mask = batch.get("padding_mask", None)
+            if model_type == "ccdm":
+                process_ccdm_batch(model, batch, metric_callback, device)
+            elif model_type == "et":
+                model.generate_using_text(text_prompts, subject_trajectory, padding_mask)
             else:
                 process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
 
