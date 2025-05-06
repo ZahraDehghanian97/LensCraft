@@ -43,6 +43,7 @@ class ModuleImporter:
             ModuleImporter.import_module(module_name, os.path.join(
                 path, module_name.replace('.', os.path.sep)))
 
+        sys.path.pop(0)
         sys.path.insert(0, path)
         try:
             yield

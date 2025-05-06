@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Union, Optional
+from typing import List, Union, Optional
 import torch
 import torch.nn.functional as F
 from transformers import CLIPTokenizer, CLIPTextModel
@@ -111,3 +111,35 @@ class CLIPEmbedder:
             attention_mask=torch.cat(all_attention_masks, dim=0),
             valid_lengths=torch.cat(all_valid_lengths, dim=0)
         )
+        
+    def get_caption_feat(
+        self,
+        prompts: List[str],
+        seq_feat: bool = False,
+        context_length: int = 77
+    ) -> torch.Tensor:
+        if seq_feat:
+            clip_features = self.extract_clip_embeddings(
+                prompts, 
+                return_seq=True, 
+                pad_seq=False
+            )
+            
+            padded_seqs = []
+            for i in range(len(prompts)):
+                seq = clip_features.sequence_features[i]
+                valid_length = clip_features.valid_lengths[i].item()
+                valid_seq = seq[:valid_length]
+                
+                if valid_seq.shape[0] > context_length:
+                    valid_seq = valid_seq[:context_length]
+                
+                padded_seq = F.pad(valid_seq, (0, 0, 0, context_length - valid_seq.shape[0]))
+                padded_seqs.append(padded_seq)
+            
+            caption_feat = torch.stack(padded_seqs, dim=0)
+            caption_feat = caption_feat.permute(0, 2, 1)  # [B, D, L]
+        else:
+            caption_feat = self.extract_clip_embeddings(prompts, return_seq=False)
+        
+        return caption_feat

@@ -7,14 +7,18 @@ from torch.utils.data import Dataset
 from utils.importing import ModuleImporter
 
 
-def load_et_config(project_config_dir: str, dataset_dir: str, set_name: str):
+def load_et_config(project_config_dir: str, dataset_dir: str = None, set_name: str = None):
     config_rel_path = os.path.dirname(
         os.path.relpath(project_config_dir, os.path.dirname(__file__)))
+    
+    overrides = []
+    if set_name is not None:
+        overrides.append(f"dataset.trajectory.set_name={set_name}")
+    if dataset_dir is not None:
+        overrides.append(f"data_dir={dataset_dir}")
+    
     with initialize(version_base=None, config_path=config_rel_path):
-        return compose(config_name="config.yaml", overrides=[
-            f"dataset.trajectory.set_name={set_name}",
-            f"data_dir={dataset_dir}"
-        ])
+        return compose(config_name="config.yaml", overrides=overrides)
 
 
 def load_et_dataset(project_config_dir: str, dataset_dir: str, set_name: str, split: str) -> Dataset:

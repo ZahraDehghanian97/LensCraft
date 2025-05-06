@@ -1,13 +1,8 @@
-from typing import Any, Dict, List
-
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from scipy.spatial.transform import Rotation as R, Slerp
 from scipy.interpolate import interp1d
-
-from third_parties.DIRECTOR.visualization.common_viz import encode_text
 
 
 def fix_traj_length(trajectories, target_frames=30):
@@ -59,24 +54,3 @@ def sim_to_et_subject_traj(subject_trajectory, device, seq_len=300):
 
 def et_to_sim_subject_traj(subject_trajectory, device):
     pass
-
-
-def get_caption_feat(
-    prompts: List[str],
-    clip_model,
-    seq_feat: bool,
-    device: torch.device,
-) -> Dict[str, Any]:
-    caption_seq_list, caption_tokens = encode_text(prompts, clip_model, None, device)
-
-    if seq_feat:
-        padded_seqs = []
-        for seq in caption_seq_list:
-            padded_seq = F.pad(seq, (0, 0, 0, 77 - seq.shape[0]))
-            padded_seqs.append(padded_seq)
-        caption_feat = torch.stack(padded_seqs, dim=0)
-        caption_feat = caption_feat.permute(0, 2, 1)
-    else:
-        caption_feat = caption_tokens
-
-    return caption_feat

@@ -6,10 +6,8 @@ defaults:
   - hydra: default
 
 model_config:
-  type: ccdm
-  checkpoint_path: "third_parties/Camera-control/[2024][EG]Text+keyframe/weight/latest.pth"
-  data_dir: ${oc.env:CCDM_DATA_DIR}
-  guidance_scale: 2.0
+  type: et
+  project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
 
 output_dir: ${oc.env:CCDM_OUTPUT_DIR,./ccdm_results}
 device: cuda
