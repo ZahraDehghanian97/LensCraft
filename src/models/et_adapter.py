@@ -21,15 +21,12 @@ class ETAdapter:
         self.device = device
         self.guidance_scale = config.get("guidance_scale", 1.4)
         self.num_frames = config.get("num_frames", 30)
-        self._load_models(config["project_config_dir"])
+        self._load_models(config["project_config_dir"], config["dataset_dir"])
         set_random_seed(42)
         self.clip_embedder = CLIPEmbedder(model_name="openai/clip-vit-base-patch32", device=device)
     
     
-    def _load_models(self, project_config_dir):
-        director_config = load_et_config(project_config_dir)
-        
-        checkpoints_dir = os.path.join(os.path.dirname(os.path.dirname(project_config_dir)), "checkpoints")
+    def _prepare_checkpoints(self, checkpoints_dir):
         os.makedirs(checkpoints_dir, exist_ok=True)
         
         clatr_output = os.path.join(checkpoints_dir, "clatr-e100.ckpt")
@@ -37,42 +34,32 @@ class ETAdapter:
             clatr_output = os.path.join(checkpoints_dir, "clatr-e100.ckpt")
             gdown.download(id="1FqN-pa955Wvu3utGViUKiVfza6cL_W0D", output=clatr_output, quiet=False)
         
-        director_zip = os.path.join(os.path.dirname(checkpoints_dir), "director.zip")
+        director_zip = os.path.join(checkpoints_dir, "director.zip")
         if not os.path.exists(director_zip):
-            logger.info(f"Downloading DIRECTOR checkpoints...")
             gdown.download(id="1uYeK1WcS3XI4uewHqi79RmLPggdpWgnG", output=director_zip, quiet=False)
-            
+        
+        director_dir = os.path.join(checkpoints_dir, "director")
+        if not os.path.exists(director_dir):
             with zipfile.ZipFile(director_zip, 'r') as zip_ref:
-                zip_ref.extractall(os.path.dirname(checkpoints_dir))
+                zip_ref.extractall(checkpoints_dir)
             
-            director_dir = os.path.join(os.path.dirname(checkpoints_dir), "director")
-            if os.path.exists(director_dir):
-                import shutil
-                shutil.move(director_dir, os.path.join(checkpoints_dir, "director"))
-            
-            if os.path.exists(director_zip):
-                os.remove(director_zip)
-            
-            logger.info(f"Extracted DIRECTOR checkpoints to {checkpoints_dir}")
-
+            logger.info(f"Extracted DIRECTOR checkpoints to {director_dir}")
+    
+    def _load_models(self, project_config_dir, dataset_dir):
+        checkpoints_dir = os.path.join(os.path.dirname(os.path.dirname(project_config_dir)), "checkpoints")
+        self._prepare_checkpoints(checkpoints_dir)
+        
         project_dir = os.path.dirname(os.path.dirname(project_config_dir))
-        with ModuleImporter.temporary_module(project_dir, ['utils.file_utils', 'utils.rotation_utils', 'utils.random_utils', 'utils.visualization']):
-            dataset = instantiate(director_config.dataset)
-            diffuser = instantiate(director_config.diffuser)
+        director_config = load_et_config(project_config_dir, "config_viz.yaml", dataset_dir=dataset_dir)
+        with ModuleImporter.temporary_module(project_dir, ['utils.file_utils', 'utils.rotation_utils', 'utils.random_utils', 'utils.visualization'], project_dir):
+            dataset = instantiate(director_config.dataset).set_split("test")
+            self.diffuser = instantiate(director_config.diffuser)
+            state_dict = torch.load(director_config.checkpoint_path, map_location=self.device)["state_dict"]
         
-        if not os.path.exists(director_config.checkpoint_path):
-            logger.error(f"Checkpoint file not found at {director_config.checkpoint_path} even after downloading. Please check the path.")
-            raise FileNotFoundError(f"Checkpoint file not found at {director_config.checkpoint_path}")
-        
-        state_dict = torch.load(director_config.checkpoint_path, map_location=self.device)["state_dict"]
-        state_dict["ema.initted"] = diffuser.ema.initted
-        state_dict["ema.step"] = diffuser.ema.step
-        diffuser.load_state_dict(state_dict, strict=False)
-        diffuser.to(self.device).eval()
-        
-        self.diffuser = diffuser
-        
-        dataset.set_split("test")
+        state_dict["ema.initted"] = self.diffuser.ema.initted
+        state_dict["ema.step"] = self.diffuser.ema.step
+        self.diffuser.load_state_dict(state_dict, strict=False)
+        self.diffuser.to(self.device).eval()        
         self.diffuser.modalities = list(dataset.modality_datasets.keys())
         self.diffuser.get_matrix = dataset.get_matrix
         self.diffuser.v_get_matrix = dataset.get_matrix  

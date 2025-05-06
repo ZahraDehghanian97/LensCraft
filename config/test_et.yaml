@@ -8,6 +8,7 @@ defaults:
 model_config:
   type: et
   project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
+  dataset_dir: ${oc.env:ET_DATA_DIR}
 
 output_dir: ${oc.env:CCDM_OUTPUT_DIR,./ccdm_results}
 device: cuda
