@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
-from data.ccdm.utils import ccdm_to_simulation, generate_subject
+from data.convertor import camera_ccdm_to_sim, subject_ccdm_to_sim
 
 class CCDMDataset(Dataset):
     def __init__(
@@ -21,6 +21,7 @@ class CCDMDataset(Dataset):
         sensor_width: float = 36.0,
         sensor_height: float = 24.0,
         device: str | torch.device | None = None,
+        target = None
     ) -> None:
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
@@ -39,6 +40,8 @@ class CCDMDataset(Dataset):
 
         self.tan_half_fov_y = math.tan(self.fov_y_rad * 0.5)
         self.tan_half_fov_x = math.tan(self.fov_x_rad * 0.5)
+
+        self.target = target
 
         if default_focal_length is not None:
             self.focal_length_mm = float(default_focal_length)
@@ -82,26 +85,21 @@ class CCDMDataset(Dataset):
         else:
             idxs = torch.linspace(0, len(camera_trajectory)-1, self.original_seq_len).long()
             raw_padded = camera_trajectory[idxs]
+
+        if self.target is not None and self.target["type"] == "simulation":
+            camera_trajectory_sim, padding_mask = camera_ccdm_to_sim(
+                camera_trajectory,
+                self.seq_len,
+                self.tan_half_fov_x,
+                self.tan_half_fov_y,
+            )
         
-        if len(camera_trajectory) < self.original_seq_len:
-            pad = camera_trajectory[-1:].repeat(self.original_seq_len - len(camera_trajectory), 1)
-            raw_padded = torch.cat([camera_trajectory, pad], dim=0)
-        else:
-            idxs = torch.linspace(0, len(camera_trajectory)-1, self.original_seq_len).long()
-            raw_padded = camera_trajectory[idxs]
-        
-        camera_trajectory_sim, padding_mask = ccdm_to_simulation(
-            camera_trajectory,
-            self.seq_len,
-            self.tan_half_fov_x,
-            self.tan_half_fov_y,
-        )
 
         text = " ".join(text_description)
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
 
-        subject_loc_rot, subject_volume = generate_subject(self.seq_len)
+        subject_loc_rot, subject_volume = subject_ccdm_to_sim(None, self.seq_len)
 
         return {
             "camera_trajectory": camera_trajectory_sim,
@@ -109,7 +107,7 @@ class CCDMDataset(Dataset):
             "subject_volume": subject_volume,
             "padding_mask": None if padding_mask is None else ~padding_mask,
             "caption_feat": text_embedding,
-            "raw_text": text,
+            "text_prompts": text,
             "original_camera_trajectory": raw_padded,
         }
 
@@ -120,5 +118,6 @@ def collate_fn(batch):
         "subject_volume": torch.stack([item["subject_volume"] for item in batch]),
         "padding_mask": torch.stack([item["padding_mask"] for item in batch]) if batch[0]["padding_mask"] is not None else None,
         "caption_feat": torch.stack([item["caption_feat"] for item in batch]),
+        "text_prompts": [item["text_prompts"] for item in batch],
         "original_camera_trajectory": torch.stack([item["original_camera_trajectory"] for item in batch]),
     }

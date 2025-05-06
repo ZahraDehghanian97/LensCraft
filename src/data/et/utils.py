@@ -26,6 +26,7 @@ def fix_traj_length(trajectories, target_frames=30):
     
     return resized_trajectories
 
+
 def et_to_6dof(trajectories):
     """
     Convert camera trajectories to 6DoF: position (3), Euler angles (3)
@@ -52,5 +53,20 @@ def sim_to_et_subject_traj(subject_trajectory, device, seq_len=300):
     return char_feat
 
 
-def et_to_sim_subject_traj(subject_trajectory, device):
-    pass
+def et_to_sim_subject_traj(char_feat: torch.Tensor) -> torch.Tensor:
+        subject_trajectory = []
+        char_positions = char_feat[:3].transpose(0, 1)
+
+        for pos in char_positions:
+            subject_frame = [
+                pos[0].item(), pos[1].item(), pos[2].item(),
+                0, 0, 0  # Default rotation values
+            ]
+            subject_trajectory.append(subject_frame)
+
+        subject_trajectory = torch.tensor(subject_trajectory, dtype=torch.float32)
+
+        subject_volume = torch.tensor([0.5, 1.7, 0.3], dtype=torch.float32)  # Default size values
+
+        return subject_trajectory, subject_volume
+

@@ -46,7 +46,7 @@ def main(cfg: DictConfig):
             test_size=cfg.data.test_size
         )
 
-    model = instantiate(cfg.training.model)
+    model = instantiate(cfg.training.model.module)
 
     optimizer = instantiate(cfg.training.optimizer)
     lr_scheduler = instantiate(cfg.training.lr_scheduler)

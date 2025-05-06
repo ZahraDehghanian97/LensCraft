@@ -1,7 +1,5 @@
 info:
   max_seq_length: 30
-  seq_length: 30
-  feature_dim: 6
 
 config:
   _target_: data.simulation.dataset.SimulationDataset
@@ -15,3 +13,4 @@ config:
     embedding_dimension: 512
     embedding_mode: "default" # choose between ["default", "normal", "pca"]
     n_components_pca: 100
+    target: ${training.model.data_format}

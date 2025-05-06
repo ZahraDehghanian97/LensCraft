@@ -48,7 +48,7 @@ def main(cfg: DictConfig) -> None:
     elif model_type == "et":
         model = ETAdapter(cfg.model_config, device)
     elif model_type in "simulation":
-        model: MultiTaskAutoencoder = instantiate(cfg.training.model)
+        model: MultiTaskAutoencoder = instantiate(cfg.training.model.module)
         model = load_checkpoint(cfg.model_config.checkpoint_path, model, device)
         model.to(device)
         model.eval()

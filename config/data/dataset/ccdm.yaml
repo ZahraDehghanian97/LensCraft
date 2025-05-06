@@ -1,7 +1,5 @@
 info:
   max_seq_length: 300
-  seq_length: 30
-  feature_dim: 6
 
 config:
   _target_: data.ccdm.CCDMDataset
@@ -9,4 +7,4 @@ config:
   clip_model_name: ${clip.model_name}
   embedding_dim: 512
   standardize: true
-  seq_len: 30
+  target: ${training.model.data_format}

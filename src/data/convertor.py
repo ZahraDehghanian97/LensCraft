@@ -1,6 +1,41 @@
 import torch
+def subject_et_to_sim():
+    pass
 
-def ccdm_to_simulation(camera_trajectory: torch.Tensor, seq_len, tan_half_fov_x, tan_half_fov_y) -> torch.Tensor:
+
+def subject_ccdm_to_sim(subject_trajectory: None,
+                      seq_len: int):
+    subject_loc_rot = torch.zeros((seq_len, 6), dtype=torch.float32)
+    subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
+    
+    return subject_loc_rot, subject_volume
+
+
+
+def subject_sim_to_et():
+    pass
+
+
+
+def subject_sim_to_ccdm():
+    pass
+
+
+
+
+
+
+
+
+def camera_et_to_sim():
+    pass
+
+
+
+def camera_ccdm_to_sim(camera_trajectory: torch.tensor, 
+                       seq_len: int, 
+                       tan_half_fov_x, 
+                       tan_half_fov_y) -> torch.tensor:
     traj_length = len(camera_trajectory)
     padding_mask = None
     
@@ -32,8 +67,13 @@ def ccdm_to_simulation(camera_trajectory: torch.Tensor, seq_len, tan_half_fov_x,
     return torch.stack([x, y, z, yaw, pitch, roll], dim=1), padding_mask
 
 
-def generate_subject(seq_len):
-    subject_loc_rot = torch.zeros((seq_len, 6), dtype=torch.float32)
-    subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
-    
-    return subject_loc_rot, subject_volume
+
+def camera_sim_to_et():
+    pass
+
+
+
+def camera_sim_to_ccdm():
+    pass
+
+

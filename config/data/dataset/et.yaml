@@ -1,7 +1,5 @@
 info:
   max_seq_length: 300
-  seq_length: 30
-  feature_dim: 6
 
 config:
   _target_: data.et.dataset.ETDataset
@@ -9,4 +7,4 @@ config:
   dataset_dir: ${oc.env:ET_DATA_DIR}
   set_name: mixed
   split: train
-  # seq_length: 30
+  target: ${training.model.data_format}
