@@ -19,7 +19,7 @@ class Encoder(nn.Module):
         self.query_tokens = nn.Parameter(torch.randn(num_query_tokens, 1, latent_dim))
 
     def forward(self, src, subject_embedded, src_key_padding_mask=None):
-        src_embedded = self.input_projection(src)
+        src_embedded = self.input_projection(src.to(torch.float32)) # FIXME
         src_embedded = torch.cat([subject_embedded, src_embedded], dim=1)
         src_embedded = self.pos_encoder(src_embedded)
         src_embedded = src_embedded.permute(1, 0, 2)

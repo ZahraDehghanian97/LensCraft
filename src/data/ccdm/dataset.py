@@ -99,7 +99,7 @@ class CCDMDataset(Dataset):
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
 
-        subject_loc_rot, subject_volume = subject_ccdm_to_sim(None, self.seq_len)
+        subject_loc_rot, subject_volume = subject_ccdm_to_sim(seq_len=self.seq_len)
 
         return {
             "camera_trajectory": camera_trajectory_sim,

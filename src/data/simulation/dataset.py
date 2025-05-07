@@ -22,7 +22,12 @@ from .utils import (
 
 
 class SimulationDataset(Dataset):
-    def __init__(self, data_path: str, embedding_dim: int, fill_none_with_mean: bool, clip_embeddings: Dict):
+    def __init__(self, 
+                 data_path: str, 
+                 embedding_dim: int, 
+                 fill_none_with_mean: bool, 
+                 clip_embeddings: Dict, 
+                 target = None):
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
         self.fill_none_with_mean = fill_none_with_mean

@@ -3,8 +3,7 @@ from typing import Any, Dict
 from torch.utils.data import Dataset
 
 from .load import load_et_dataset
-from .utils import et_to_sim_subject_traj #  et_to_sim_cam_traj
-from data.convertor import camera_et_to_sim
+from data.convertor import camera_et_to_sim, subject_et_to_sim
 
 
 class ETDataset(Dataset):
@@ -22,7 +21,7 @@ class ETDataset(Dataset):
         return self.process_item(original_item)
 
     def process_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        subject_trajectory, subject_volume = et_to_sim_subject_traj(item['char_feat'])
+        subject_trajectory, subject_volume = subject_et_to_sim(item['char_feat'], seq_len=30) # FIXME
 
         caption_feat = item['caption_feat']
         clip_seq_mask = item['caption_raw']['clip_seq_mask']
@@ -35,12 +34,17 @@ class ETDataset(Dataset):
         if self.target["type"] == "simulation":
             matrix_traj_feat = self.original_dataset.get_matrix(item["traj_feat"])
             camera_trajectory = camera_et_to_sim(matrix_traj_feat, seq_len=self.target["seq_length"])
+        
+        padding_mask = ~item['padding_mask'].to(torch.bool)
+        print("0", padding_mask.shape)
+        print("1", matrix_traj_feat.shape)
 
         processed_item = {
             'camera_trajectory': camera_trajectory,
             'subject_trajectory': subject_trajectory,
             'subject_volume': subject_volume,
-            'padding_mask': ~item['padding_mask'].to(torch.bool),
+            # 'padding_mask': ~item['padding_mask'].to(torch.bool),
+            'padding_mask': None,
             'caption_feat': averaged_caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32),
             "original_camera_trajectory": item['traj_feat'],
@@ -54,7 +58,7 @@ def collate_fn(batch):
         'camera_trajectory': torch.stack([item['camera_trajectory'] for item in batch]),
         'subject_trajectory': torch.stack([item['subject_trajectory'] for item in batch]),
         'subject_volume': torch.stack([item["subject_volume"] for item in batch]),
-        'padding_mask': torch.stack([item['padding_mask'] for item in batch]),
+        # 'padding_mask': torch.stack([item['padding_mask'] for item in batch]),
         'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
         'intrinsics': torch.stack([item['intrinsics'] for item in batch]),
         'text_prompts': [item['text_prompts'] for item in batch],
