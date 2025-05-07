@@ -5,9 +5,6 @@ from scipy.interpolate import interp1d
 import torch.nn.functional as F
 
 
-
-
-
 def fix_camera_traj_length(trajectories, target_frames=30):
     """
     Upsample or downsample trajectories to specified number of frames.
@@ -47,12 +44,6 @@ def et_to_6dof(trajectories):
             result[i, t, 3:6] = R.from_matrix(rotation_matrix).as_euler("xyz", degrees=True)
     
     return result
-
-
-
-
-
-
 
 
 
@@ -143,3 +134,60 @@ def fix_subject_traj_length(trajectories, target_frames=30):
     interp_rot = quaternion_to_axis_angle(interp_quat)  # (target_frames, 3)
 
     return torch.cat([interp_pos, interp_rot], dim=-1)
+
+
+
+
+def resample_batch_trajectories(batch_trajectory, current_valid_len, target_len):
+    batch_size = batch_trajectory.shape[0]
+    max_seq_len = batch_trajectory.shape[1]
+    feature_dims = batch_trajectory.shape[2:]
+    device = batch_trajectory.device
+    dtype = batch_trajectory.dtype
+    
+    # Initialize output tensors
+    resampled_batch = torch.zeros((batch_size, target_len) + feature_dims, device=device, dtype=dtype)
+    padding_mask = torch.ones((batch_size, target_len), dtype=torch.bool, device=device)
+    
+    for i in range(batch_size):
+        valid_len = current_valid_len[i].item()
+        
+        # Handle case where valid_len is 0 or negative
+        if valid_len <= 0:
+            padding_mask[i, :] = False
+            continue
+            
+        # Clamp valid_len to max_seq_len
+        valid_len = min(valid_len, max_seq_len)
+        valid_trajectory = batch_trajectory[i, :valid_len]
+        
+        # Handle case where valid_len is 1 (cannot interpolate with just one point)
+        if valid_len == 1:
+            resampled_batch[i] = valid_trajectory.repeat(target_len, *([1] * len(feature_dims)))
+            continue
+        
+        # Flatten feature dimensions for easier processing
+        flat_size = int(torch.prod(torch.tensor(feature_dims))) if feature_dims else 1
+        flattened = valid_trajectory.reshape(valid_len, flat_size)
+        
+        # Transpose for interpolation: [valid_len, flat_size] -> [flat_size, valid_len]
+        transposed = flattened.T
+        
+        # Interpolate each feature dimension
+        resampled_flat = F.interpolate(
+            transposed.unsqueeze(0),  # Add batch dimension [1, flat_size, valid_len]
+            size=target_len,
+            mode='linear',
+            align_corners=True
+        ).squeeze(0)  # Remove batch dimension [flat_size, target_len]
+        
+        # Transpose back: [flat_size, target_len] -> [target_len, flat_size]
+        resampled_transposed = resampled_flat.T
+        
+        # Reshape back to original feature dimensions
+        if feature_dims:
+            resampled_batch[i] = resampled_transposed.reshape((target_len,) + feature_dims)
+        else:
+            resampled_batch[i] = resampled_transposed
+    
+    return resampled_batch, padding_mask
