@@ -44,10 +44,11 @@ class ClipLoss:
                 total_clip_loss_weighted += current_loss * self.clip_weights[f"clip_{i}"]
             
             total_clip_loss += current_loss
+
         
         if weighted_clip_loss and self.sum_clip_weights > 0:
             total_clip_loss_weighted = total_clip_loss_weighted / self.sum_clip_weights
-        
+            return clip_losses, total_clip_loss_weighted
+
         total_clip_loss = total_clip_loss / n_clip_embs
-        
-        return total_clip_loss_weighted, clip_losses, total_clip_loss
+        return clip_losses, total_clip_loss

@@ -185,11 +185,25 @@ class BaseTrainer(L.LightningModule):
                 batch_size=batch_size
             )
         
-        if "trajectory" in loss_dict:
-            trajectory_val = loss_dict["trajectory"] if isinstance(loss_dict["trajectory"], float) else loss_dict["trajectory"].item()
+        if "first_frame" in loss_dict:
+            first_frame_val = loss_dict["first_frame"] if isinstance(loss_dict["first_frame"], float) else loss_dict["first_frame"].item()
             self.log(
-                "tr",
-                trajectory_val,
+                "ff",
+                first_frame_val,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=True,
+                logger=True,
+                batch_size=batch_size
+            )
+
+
+        
+        if "relative" in loss_dict:
+            relative_val = loss_dict["relative"] if isinstance(loss_dict["relative"], float) else loss_dict["relative"].item()
+            self.log(
+                "rr",
+                relative_val,
                 on_step=True,
                 on_epoch=False,
                 prog_bar=True,
@@ -197,8 +211,8 @@ class BaseTrainer(L.LightningModule):
                 batch_size=batch_size
             )
         
-        if "average_clip" in loss_dict:
-            clip_val = loss_dict["average_clip"] if isinstance(loss_dict["average_clip"], float) else loss_dict["average_clip"].item()
+        if "clip" in loss_dict:
+            clip_val = loss_dict["clip"] if isinstance(loss_dict["clip"], float) else loss_dict["clip"].item()
             self.log(
                 "cl",
                 clip_val,
@@ -208,9 +222,9 @@ class BaseTrainer(L.LightningModule):
                 logger=True,
                 batch_size=batch_size
             )
-        
-        if "average_cycle" in loss_dict:
-            cycle_val = loss_dict["average_cycle"] if isinstance(loss_dict["average_cycle"], float) else loss_dict["average_cycle"].item()
+
+        if "cycle" in loss_dict:
+            cycle_val = loss_dict["cycle"] if isinstance(loss_dict["cycle"], float) else loss_dict["cycle"].item()
             self.log(
                 "cc",
                 cycle_val,
@@ -220,6 +234,23 @@ class BaseTrainer(L.LightningModule):
                 logger=True,
                 batch_size=batch_size
             )
+        
+
+        if "contrastive" in loss_dict:
+            clip_val = loss_dict["contrastive"] if isinstance(loss_dict["contrastive"], float) else loss_dict["contrastive"].item()
+            self.log(
+                "cv",
+                clip_val,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=True,
+                logger=True,
+                batch_size=batch_size
+            )
+
+
+
+        
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):

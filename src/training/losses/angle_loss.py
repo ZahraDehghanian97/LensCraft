@@ -27,7 +27,7 @@ class AngleLoss(torch.nn.Module):
         pred_normal = self.euler_to_normal(pred)
         target_normal = self.euler_to_normal(target)
         product = cosine_similarity(pred_normal, target_normal)
-        loss = torch.mean(torch.tan(torch.pi / 4 * (1 - product)))
+        loss = torch.mean(torch.tan(torch.pi / 4.1 * (1 - product)))
         # loss = torch.mean(1 / (self.scaling_factor + product) - 1 / (self.scaling_factor + 1))
         return loss
 

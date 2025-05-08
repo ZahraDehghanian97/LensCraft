@@ -30,7 +30,7 @@ def generate_metric_tags(cfg: DictConfig) -> List[str]:
                 prefixes.append("train")
             for prefix in prefixes:
                 for i in range(cfg.metrics.clips.num_clips):
-                    clip_tags.append(f"{prefix}_clip_{i}_epoch")
+                    clip_tags.append(f"{prefix}_clip_elements_{i}_epoch")
             tags["clip_tags"] = clip_tags
             if cfg.metrics.clips.categorize_embeddings:
                 cinematography_structure = {"cinematography_" + k: v for k, v in cfg.clip_structure.cinematography.items()}
@@ -149,12 +149,12 @@ def get_average_embedding_loss(
         clip_losses: dict[str, dict[str, list]],
         plot_list: list[str],
         n_clip_embeddings: int) -> dict[str, list]:
-    steps = clip_losses["val_clip_0_epoch"]["steps"]
+    steps = clip_losses["val_clip_elements_0_epoch"]["steps"]
     train_values = np.zeros(len(steps))
     valid_values = np.zeros(len(steps))
     for item, value in zip(["train", "val"], [train_values, valid_values]):
         for i in range(n_clip_embeddings):
-            value += np.array(clip_losses[f"{item}_clip_{i}_epoch"]["values"])
+            value += np.array(clip_losses[f"{item}_clip_elements_{i}_epoch"]["values"])
     average_embedding_loss_train = {"steps": steps, "values": list(train_values / n_clip_embeddings)}
     average_embedding_loss_valid = {"steps": steps, "values": list(valid_values / n_clip_embeddings)}
     average_embedding_loss = {
@@ -170,6 +170,7 @@ def plot_scalars(
     cfg: DictConfig,
     save_path: str = None
 ):
+    print(scalar_data.keys())
     initialize(cfg)
     model_version = cfg.logdir.split("/")[-1]
     save_path = save_path + model_version + "." + cfg.output.plot_format
@@ -214,7 +215,8 @@ def plot_scalars(
         ax[row, col].grid(**cfg.plot.style.major_grid_style)
         ax[row, col].grid(**cfg.plot.style.minor_grid_style)
         ax[row, col].minorticks_on()
-        steps = list(list(scalar_data.values())[0].values())[0]["steps"]
+        print(scalar_data.values())
+        steps = list(list(scalar_data.values())[9].values())[0]["steps"]
         ax[row, col].set_xlim(min(steps), max(steps))
         ax[row, col].set_ylim(0, None)
         if subplot.startswith("clip") and cfg.plot.style.apply_fixed_ylim_clip:

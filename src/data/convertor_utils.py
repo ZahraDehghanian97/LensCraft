@@ -138,6 +138,11 @@ def fix_subject_traj_length(trajectories, target_frames=30):
 
 
 
+
+
+
+
+
 def resample_batch_trajectories(batch_trajectory, current_valid_len, target_len):
     batch_size = batch_trajectory.shape[0]
     max_seq_len = batch_trajectory.shape[1]

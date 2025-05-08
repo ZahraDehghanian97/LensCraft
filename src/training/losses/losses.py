@@ -72,7 +72,7 @@ class CameraTrajectoryLoss:
 
 
         if self.losses_list.get("clip", 0):
-            total_clip_loss_weighted, clip_losses, total_clip_loss = self.clip_loss.compute(
+            clip_losses, total_clip_loss = self.clip_loss.compute(
                 clip_target=clip_target,
                 clip_pred=clip_pred,
                 n_clip_embs=self.n_clip_embs,
@@ -80,19 +80,15 @@ class CameraTrajectoryLoss:
                 prompt_none_mask=batch.get("prompt_none_mask", None),
                 encoder_loss_function=self.encoder_loss_function
             )
-            
-            if self.weighted_clip_loss:
-                loss_dict["clip"] = total_clip_loss_weighted / clip_pred.shape[1]
-            else:
-                loss_dict["clip"] = total_clip_loss / clip_pred.shape[1]
+
+            loss_dict["clip"] = total_clip_loss
                 
             loss_dict["clip_elements"] = {i: clip_losses[i] for i in range(self.n_clip_embs)} # FIXME
-            loss_dict["average_clip"] = total_clip_loss * 200 # FIXME
 
 
 
         if self.losses_list.get("cycle", 0) and cycle_embeddings is not None:
-            total_cycle_loss_weighted, cycle_losses, total_cycle_loss = self.clip_loss.compute(
+            cycle_losses, total_cycle_loss = self.clip_loss.compute(
                 clip_target=clip_pred,
                 clip_pred=cycle_embeddings,
                 n_clip_embs=self.n_clip_embs,
@@ -100,16 +96,12 @@ class CameraTrajectoryLoss:
                 encoder_loss_function=self.encoder_loss_function
             )
             
-            if self.weighted_clip_loss:
-                loss_dict["cycle"] = total_cycle_loss_weighted / cycle_embeddings.shape[1]
-            else:
-                loss_dict["cycle"] = total_cycle_loss / cycle_embeddings.shape[1]
+            loss_dict["cycle"] = total_cycle_loss 
             
             loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(self.n_clip_embs)} # FIXME
-            loss_dict["average_cycle"] = total_cycle_loss * 200 # FIXME
 
         elif self.losses_list.get("cycle", 0) and cycle_embeddings is None:
-            loss_dict["cycle"] = 0
+            loss_dict["cycle"] = torch.tensor(0)
 
 
 

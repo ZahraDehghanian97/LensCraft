@@ -18,7 +18,6 @@ def subject_et_to_sim(subject_trajectory: torch.tensor,
 
     subject_trajectory = torch.tensor(subject_trajectory)
     subject_trajectory_resized = fix_subject_traj_length(subject_trajectory, target_frames=30)
-    # print("+", subject_trajectory_resized.shape)
 
     subject_volume = torch.tensor([[0.5, 1.7, 0.3]])  # Default size values
 
@@ -29,17 +28,14 @@ def subject_et_to_sim(subject_trajectory: torch.tensor,
 def camera_et_to_sim(camera_trajectory: torch.tensor, 
                      seq_len: int):
     is_batch = True
-    # print("1", camera_trajectory.shape)
 
     if len(camera_trajectory.shape) == 3:
         camera_trajectory = camera_trajectory.unsqueeze(0)
         is_batch = False
 
     camera_trajectory_resized = fix_camera_traj_length(camera_trajectory, seq_len)
-    # print("2", camera_trajectory_resized.shape)
     camera_trajectory_resized = et_to_6dof(camera_trajectory_resized)
 
-    # print("3", camera_trajectory_resized.shape)
     
     if not is_batch:
         camera_trajectory_resized = camera_trajectory_resized.squeeze()
@@ -55,8 +51,8 @@ def camera_et_to_sim(camera_trajectory: torch.tensor,
 
 
 
-def subject_ccdm_to_sim(subject_trajectory: None,
-                      seq_len: int):
+def subject_ccdm_to_sim(subject_trajectory = None,
+                        seq_len: int = 30):
     subject_loc_rot = torch.zeros((seq_len, 6), dtype=torch.float32)
     subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
     
