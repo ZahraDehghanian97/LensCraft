@@ -150,107 +150,28 @@ class BaseTrainer(L.LightningModule):
             loss,
             on_step=True,
             on_epoch=True,
-            # prog_bar=True,
             logger=True,
             batch_size=batch_size
         )
         
         if stage == "train":
-            self.log(
-                "ts",
-                loss,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
-            self.log(
-                "te",
-                loss,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
+            self.log("ts", loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, batch_size=batch_size)
+            self.log("te", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         elif stage == "val":
-            self.log(
-                "ve",
-                loss,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
+            self.log("ve", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         
-        if "first_frame" in loss_dict:
-            first_frame_val = loss_dict["first_frame"] if isinstance(loss_dict["first_frame"], float) else loss_dict["first_frame"].item()
-            self.log(
-                "ff",
-                first_frame_val,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
-
-
-        
-        if "relative" in loss_dict:
-            relative_val = loss_dict["relative"] if isinstance(loss_dict["relative"], float) else loss_dict["relative"].item()
-            self.log(
-                "rr",
-                relative_val,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
-        
-        if "clip" in loss_dict:
-            clip_val = loss_dict["clip"] if isinstance(loss_dict["clip"], float) else loss_dict["clip"].item()
-            self.log(
-                "cl",
-                clip_val,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
-
-        if "cycle" in loss_dict:
-            cycle_val = loss_dict["cycle"] if isinstance(loss_dict["cycle"], float) else loss_dict["cycle"].item()
-            self.log(
-                "cc",
-                cycle_val,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
-        
-
-        if "contrastive" in loss_dict:
-            clip_val = loss_dict["contrastive"] if isinstance(loss_dict["contrastive"], float) else loss_dict["contrastive"].item()
-            self.log(
-                "cv",
-                clip_val,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=True,
-                logger=True,
-                batch_size=batch_size
-            )
-
-
-
-        
+        prog_bar_metrics = {"first_frame": "ff", "speed": "sp", "relative": "re", "clip": "cl", "cycle": "cy", "contrastive": "co"}
+        for key in prog_bar_metrics:
+            if key in loss_dict:
+                self.log(
+                    prog_bar_metrics[key],
+                    loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item(),
+                    on_step=True,
+                    on_epoch=False,
+                    prog_bar=True,
+                    logger=True,
+                    batch_size=batch_size
+                )
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):

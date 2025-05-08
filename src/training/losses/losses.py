@@ -65,11 +65,7 @@ class CameraTrajectoryLoss:
         )
 
     def compute_total_loss(self, trajectory_pred, trajectory_target, clip_pred, clip_target, batch, cycle_embeddings=None):
-        if len(self.losses_list) == 0:
-            raise ValueError("The losses list cannot be empty; it must contain at least one of the following: 'trajectory', 'clip', 'contrastive', or 'cycle'.")
-        
         loss_dict = dict()
-
 
         if self.losses_list.get("clip", 0):
             clip_losses, total_clip_loss = self.clip_loss.compute(
@@ -82,7 +78,6 @@ class CameraTrajectoryLoss:
             )
 
             loss_dict["clip"] = total_clip_loss
-                
             loss_dict["clip_elements"] = {i: clip_losses[i] for i in range(self.n_clip_embs)} # FIXME
 
 
@@ -97,7 +92,6 @@ class CameraTrajectoryLoss:
             )
             
             loss_dict["cycle"] = total_cycle_loss 
-            
             loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(self.n_clip_embs)} # FIXME
 
         elif self.losses_list.get("cycle", 0) and cycle_embeddings is None:
@@ -105,11 +99,17 @@ class CameraTrajectoryLoss:
 
 
 
-        if self.losses_list.get("first_frame", 0):
-            first_frame_loss, relative_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
-            loss_dict["first_frame"] = first_frame_loss.item()
-            loss_dict["relative"] = relative_loss.item()
-        
+        if self.losses_list.get("first_frame", 0) or self.losses_list.get("relative", 0) or self.losses_list.get("speed", 0):
+            first_frame_loss, relative_loss, speed_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
+            
+            if self.losses_list.get("first_frame", 0):
+                loss_dict["first_frame"] = first_frame_loss.item()
+            
+            if self.losses_list.get("relative", 0):
+                loss_dict["relative"] = relative_loss.item()
+            
+            if self.losses_list.get("speed", 0):
+                loss_dict["speed"] = speed_loss.item()
 
 
         if self.losses_list.get("contrastive", 0):
@@ -120,9 +120,7 @@ class CameraTrajectoryLoss:
 
         total_loss = 0
         for loss_key in self.losses_list:
-            self.losses_list[loss_key]
-            loss_dict[loss_key]
-            total_loss += self.losses_list[loss_key] * loss_dict[loss_key]
+            total_loss += self.losses_list[loss_key] * loss_dict.get(loss_key, 0)
             
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict
@@ -142,7 +140,8 @@ class CameraTrajectoryLoss:
     def compute_trajectory_loss(self, pred, target):
         first_frame_loss = self.compute_component_losses(pred[:, 0:1], target[:, 0:1])
         relative_loss = self.compute_component_losses(pred[:, 1:] - pred[:, 0:1], target[:, 1:] - target[:, 0:1])
-        return first_frame_loss, relative_loss
+        speed_loss = self.compute_component_losses(pred[:, 1:] - pred[:, :-1], target[:, 1:] - target[:, :-1])
+        return first_frame_loss, relative_loss, speed_loss
     
     @staticmethod
     def get_embedding_name(name: str) -> str:

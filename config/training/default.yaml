@@ -11,9 +11,10 @@ loss_module:
   n_clip_embs: 28
   losses_list:
     clip:             500   # Around 35 when converge
-    first_frame:      1    
-    relative:         10
-    cycle:            200   
+    first_frame:      2    
+    relative:         8
+    speed:            80     
+    cycle:            100   
     contrastive:      10    # TODO: Schedule    
   weighted_clip_loss: false
   weight_power: 1
