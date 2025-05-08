@@ -110,8 +110,7 @@ class BaseTrainer(L.LightningModule):
                 caption_embedding=caption_embedding,
                 memory_teacher_forcing_ratio=0.5,
                 trajectory_teacher_forcing_ratio=0.0,
-                decode_mode=decode_mode,
-                compute_cycle_embeddings=compute_cycle_embeddings
+                decode_mode=decode_mode
             )
 
         ratios = self._calculate_schedule_parameters()
@@ -129,7 +128,7 @@ class BaseTrainer(L.LightningModule):
             self.device
         )
 
-        return self.model(
+        output = self.model(
             noisy_masked_trajectory,
             subject_trajectory,
             subject_volume,
@@ -140,9 +139,25 @@ class BaseTrainer(L.LightningModule):
             ratios['memory_teacher_forcing_ratio'],
             ratios['trajectory_teacher_forcing_ratio'],
             ratios['memory_mask_ratio'],
-            decode_mode,
-            compute_cycle_embeddings
+            decode_mode
         )
+            
+        if compute_cycle_embeddings:
+            noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
+                output["reconstructed"],
+                valid_len,
+                ratios['mask_ratio'],
+                ratios['noise_std'],
+                self.device
+            )
+            cycle_embeddings = self.model.encoder(
+                noisy_masked_trajectory,
+                output["subject_embedding_loc_rot_vol"],
+                src_key_mask
+            )
+            output['cycle_embeddings'] = cycle_embeddings
+        
+        return output
     
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:
         self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, logger=True, batch_size=batch_size)
