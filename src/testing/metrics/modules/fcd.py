@@ -1,14 +1,33 @@
+"""
+Code highly adapted from:
+https://lightning.ai/docs/torchmetrics/stable/image/frechet_inception_distance.html
+"""
+
 from typing import Union
+
 import torch
 from torch import Tensor
 from torch.nn import Module
 from torchmetrics import Metric
 
+# ------------------------------------------------------------------------------------- #
+
 
 def _compute_fd(mu1: Tensor, sigma1: Tensor, mu2: Tensor, sigma2: Tensor) -> Tensor:
-    r"""Fréchet distance between N(μ₁, Σ₁) and N(μ₂, Σ₂).
+    r"""Compute adjusted version of `Fid Score`_.
 
-    d² = ‖μ₁ – μ₂‖² + Tr(Σ₁ + Σ₂ − 2·√(Σ₁ Σ₂))
+    The Frechet Inception Distance between two multivariate Gaussians X_x ~ N(mu_1, sigm_1)
+    and X_y ~ N(mu_2, sigm_2) is d^2 = ||mu_1 - mu_2||^2 + Tr(sigm_1 + sigm_2 - 2*sqrt(sigm_1*sigm_2)). # noqa
+
+    Args:
+        mu1: mean of activations calculated on predicted (x) samples
+        sigma1: covariance matrix over activations calculated on predicted (x) samples
+        mu2: mean of activations calculated on target (y) samples
+        sigma2: covariance matrix over activations calculated on target (y) samples
+
+    Returns:
+        Scalar value of the distance between sets.
+
     """
     a = (mu1 - mu2).square().sum(dim=-1)
     b = sigma1.trace() + sigma2.trace()
@@ -17,51 +36,88 @@ def _compute_fd(mu1: Tensor, sigma1: Tensor, mu2: Tensor, sigma2: Tensor) -> Ten
 
 
 class FrechetCLaTrDistance(Metric):
-    """Fréchet distance on camera‑trajectory embeddings."""
+    """
+    The Frechet Distance between two multivariate Gaussians X_x ~ N(mu_1, sigm_1)
+    and X_y ~ N(mu_2, sigm_2) is:
+        d^2 = ||mu_1 - mu_2||^2 + Tr(sigm_1 + sigm_2 - 2 * sqrt(sigm_1 *s igm_2)).
 
-    def __init__(self, num_features: Union[int, Module] = 5120, device: torch.device = torch.device("cpu"), **kwargs):
+    Args:
+        mu1: mean of activations calculated on predicted (x) samples
+        sigma1: covariance matrix over activations calculated on predicted (x) samples
+        mu2: mean of activations calculated on target (y) samples
+        sigma2: covariance matrix over activations calculated on target (y) samples
+        eps: offset constant - used if sigma_1 @ sigma_2 matrix is singular
+    Returns:
+        Scalar value of the distance between sets.
+    """
+
+    def __init__(self, num_features: Union[int, Module] = 5120, **kwargs):
         super().__init__(**kwargs)
-        self._device = device
-        self._init_states(int(num_features))
 
-    def _init_states(self, d: int):
-        shape = (d, d)
+        mx_num_feats = (num_features, num_features)
+        self.add_state(
+            "real_features_sum",
+            torch.zeros(num_features).double(),
+            dist_reduce_fx="sum",
+        )
+        self.add_state(
+            "real_features_cov_sum",
+            torch.zeros(mx_num_feats).double(),
+            dist_reduce_fx="sum",
+        )
+        self.add_state(
+            "real_features_num_samples", torch.tensor(0).long(), dist_reduce_fx="sum"
+        )
 
-        # real distribution
-        self.add_state("real_sum", torch.zeros(d, dtype=torch.float32, device=self._device), dist_reduce_fx="sum")
-        self.add_state("real_cov", torch.zeros(shape, dtype=torch.float32, device=self._device), dist_reduce_fx="sum")
-        self.add_state("real_n", torch.zeros((), dtype=torch.long, device=self._device), dist_reduce_fx="sum")
+        self.add_state(
+            "fake_features_sum",
+            torch.zeros(num_features).double(),
+            dist_reduce_fx="sum",
+        )
+        self.add_state(
+            "fake_features_cov_sum",
+            torch.zeros(mx_num_feats).double(),
+            dist_reduce_fx="sum",
+        )
+        self.add_state(
+            "fake_features_num_samples", torch.tensor(0).long(), dist_reduce_fx="sum"
+        )
 
-        # fake distribution
-        self.add_state("fake_sum", torch.zeros_like(self.real_sum), dist_reduce_fx="sum")
-        self.add_state("fake_cov", torch.zeros_like(self.real_cov), dist_reduce_fx="sum")
-        self.add_state("fake_n", torch.zeros_like(self.real_n), dist_reduce_fx="sum")
+    def update(self, real_features, fake_features):
+        """Update the state with extracted features."""
+        self.orig_dtype = real_features.dtype
+        
+        self.real_features_sum += real_features.sum(dim=0)
+        self.real_features_cov_sum += real_features.t().mm(real_features)
+        self.real_features_num_samples += real_features.shape[0]
 
-    @torch.no_grad()
-    def update(self, real_features: Tensor, fake_features: Tensor):
-        """Accumulate batch statistics."""
-        real = real_features.detach().to(self._device, dtype=torch.float32)
-        fake = fake_features.detach().to(self._device, dtype=torch.float32)
+        self.fake_features_sum += fake_features.sum(dim=0)
+        self.fake_features_cov_sum += fake_features.t().mm(fake_features)
+        self.fake_features_num_samples += fake_features.shape[0]
 
-        self.real_sum += real.sum(0)
-        self.real_cov += real.t() @ real
-        self.real_n += real.shape[0]
-
-        self.fake_sum += fake.sum(0)
-        self.fake_cov += fake.t() @ fake
-        self.fake_n += fake.shape[0]
-
-    @torch.no_grad()
     def compute(self) -> Tensor:
-        if self.real_n < 2 or self.fake_n < 2:
-            return torch.tensor(0.0, dtype=torch.float32, device=self._device)
+        """
+        Calculate FD_CLaTr score based on accumulated extracted features from the two
+        distributions.
+        """
+        mean_real = self.real_features_sum / self.real_features_num_samples
+        mean_real = mean_real.unsqueeze(0)
 
-        # means
-        mu_r = self.real_sum / self.real_n.float()
-        mu_f = self.fake_sum / self.fake_n.float()
+        mean_fake = self.fake_features_sum / self.fake_features_num_samples
+        mean_fake = mean_fake.unsqueeze(0)
 
-        # unbiased covariances
-        cov_r = (self.real_cov - self.real_n * torch.outer(mu_r, mu_r)) / (self.real_n - 1)
-        cov_f = (self.fake_cov - self.fake_n * torch.outer(mu_f, mu_f)) / (self.fake_n - 1)
+        cov_real_num = (
+            self.real_features_cov_sum
+            - self.real_features_num_samples * mean_real.t().mm(mean_real)
+        )
+        cov_real = cov_real_num / (self.real_features_num_samples - 1)
 
-        return _compute_fd(mu_r, cov_r, mu_f, cov_f)
+        cov_fake_num = (
+            self.fake_features_cov_sum
+            - self.fake_features_num_samples * mean_fake.t().mm(mean_fake)
+        )
+        cov_fake = cov_fake_num / (self.fake_features_num_samples - 1)
+
+        fd = _compute_fd(mean_real.squeeze(0), cov_real, mean_fake.squeeze(0), cov_fake)
+
+        return fd.to(self.orig_dtype)

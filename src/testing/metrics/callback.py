@@ -16,9 +16,9 @@ class MetricCallback:
     def _get_or_create_metric(self, run_type: str):
         if run_type not in self.metrics:
             self.metrics[run_type] = {
-                "clatr_fd": FrechetCLaTrDistance(device=self._device),
-                "clatr_prdc": ManifoldMetrics(distance="euclidean", device=self._device),
-                "clatr_score": CLaTrScore(device=self._device),
+                "clatr_fd": FrechetCLaTrDistance().to(self._device),
+                "clatr_prdc": ManifoldMetrics(distance="euclidean").to(self._device),
+                "clatr_score": CLaTrScore().to(self._device),
             }
         self.active_metrics.add(run_type)
         return self.metrics[run_type]

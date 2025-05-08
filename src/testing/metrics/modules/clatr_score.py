@@ -1,37 +1,31 @@
 import torch
 from torchmetrics import Metric
 from torchmetrics.utilities import dim_zero_cat
+from torchtyping import TensorType
+
+num_samples, num_feats = None, None
 
 
 class CLaTrScore(Metric):
-    """Compute cosine similarity between trajectory and text features."""
-
-    def __init__(self, device: torch.device = torch.device("cpu"), **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._device = device
         self.add_state("traj_feat", default=[], dist_reduce_fx="cat")
         self.add_state("text_feats", default=[], dist_reduce_fx="cat")
 
-    @staticmethod
-    def _normalize_features(features: torch.Tensor) -> torch.Tensor:
-        """Normalize features using L2 norm."""
-        features = features.to(dtype=torch.float16)
-        return features / (features.norm(p=2, dim=-1, keepdim=True) + 1e-4)
+    def update(
+        self,
+        traj_feat: TensorType["num_samples", "num_feats"],
+        text_feats: TensorType["num_samples", "num_feats"],
+    ) -> float:
+        """Update state with new trajectory and text features."""
+        self.traj_feat.append(traj_feat / traj_feat.norm(p=2, dim=-1, keepdim=True))
+        self.text_feats.append(text_feats / text_feats.norm(p=2, dim=-1, keepdim=True))
 
-    def update(self, traj_feat: torch.Tensor, text_feats: torch.Tensor):
-        self.traj_feat.append(self._normalize_features(traj_feat.to(self._device)).detach())
-        self.text_feats.append(self._normalize_features(text_feats.to(self._device)).detach())
+    def compute(self) -> float:
+        """Compute cosine similarity between trajectory and text features."""
+        traj_feat = dim_zero_cat(self.traj_feat)
+        text_feats = dim_zero_cat(self.text_feats)
 
-    def compute(self) -> torch.Tensor:
-        if len(self.traj_feat) == 0 or len(self.text_feats) == 0:
-            return torch.tensor(0.0, dtype=torch.float16, device=self._device)
+        score = (100 * (traj_feat * text_feats).sum(axis=-1)).mean()
 
-        traj_feat = dim_zero_cat(self.traj_feat).to(self._device, dtype=torch.float16)
-        text_feats = dim_zero_cat(self.text_feats).to(self._device, dtype=torch.float16)
-        score = (100 * (traj_feat * text_feats).sum(dim=-1)).mean()
-        result = torch.max(score, torch.zeros_like(score))
-
-        # Explicitly free memory
-        del traj_feat, text_feats, score
-        torch.cuda.empty_cache()
-        return result
+        return torch.max(score, torch.zeros_like(score))

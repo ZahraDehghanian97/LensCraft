@@ -1,98 +1,199 @@
-from typing import Tuple
+"""Code adapted from: https://github.com/clovaai/generative-evaluation-prdc"""
+
+from typing import Any
+
+import numpy as np
 import torch
 from torch import Tensor
+from torch.autograd import Function
 from torchmetrics import Metric
 from torchmetrics.utilities import dim_zero_cat
+import scipy
+
+from utils.rotation_utils import pairwise_geodesic
+
+
+class MatrixSquareRoot(Function):
+    """Square root of a positive definite matrix.
+
+    All credit to `Square Root of a Positive Definite Matrix`_
+    """
+
+    @staticmethod
+    def forward(ctx: Any, input_data: Tensor) -> Tensor:
+        # TODO: update whenever pytorch gets an matrix square root function
+        # Issue: https://github.com/pytorch/pytorch/issues/9983
+        m = input_data.detach().cpu().numpy().astype(np.float_)
+        scipy_res, _ = scipy.linalg.sqrtm(m, disp=False)
+        sqrtm = torch.from_numpy(scipy_res.real).to(input_data)
+        ctx.save_for_backward(sqrtm)
+        return sqrtm
+
+    @staticmethod
+    def backward(ctx: Any, grad_output: Tensor) -> Tensor:
+        grad_input = None
+        if ctx.needs_input_grad[0]:
+            (sqrtm,) = ctx.saved_tensors
+            sqrtm = sqrtm.data.cpu().numpy().astype(np.float_)
+            gm = grad_output.data.cpu().numpy().astype(np.float_)
+
+            # Given a positive semi-definite matrix X,
+            # since X = X^{1/2}X^{1/2}, we can compute the gradient of the
+            # matrix square root dX^{1/2} by solving the Sylvester equation:
+            # dX = (d(X^{1/2})X^{1/2} + X^{1/2}(dX^{1/2}).
+            grad_sqrtm = scipy.linalg.solve_sylvester(sqrtm, sqrtm, gm)
+
+            grad_input = torch.from_numpy(grad_sqrtm).to(grad_output)
+        return grad_input
+
+
+sqrtm = MatrixSquareRoot.apply
 
 
 class ManifoldMetrics(Metric):
-    """Precision, Recall, Density & Coverage on feature manifolds."""
-
     def __init__(
         self,
         reset_real_features: bool = True,
         manifold_k: int = 3,
-        distance: str = "euclidean",
-        device: torch.device = torch.device("cpu"),
-        **kwargs,
+        distance: str = "geodesic",
+        **kwargs
     ):
         super().__init__(**kwargs)
+
         self.manifold_k = manifold_k
         self.reset_real_features = reset_real_features
         self.distance = distance
-        self._device = device
 
         self.add_state("real_features", default=[], dist_reduce_fx="cat")
         self.add_state("fake_features", default=[], dist_reduce_fx="cat")
 
-    def _compute_pairwise_distance(self, data_x: Tensor, data_y: Tensor = None) -> Tensor:
-        """Compute pairwise distances between two sets of features."""
-        data_x = data_x.to(dtype=torch.float16)
-        data_y = data_x.clone() if data_y is None else data_y.to(dtype=torch.float16)
+    # --------------------------------------------------------------------------------- #
+
+    def _compute_pairwise_distance(self, data_x, data_y=None):
+        """
+        Args:
+            data_x: numpy.ndarray([N, feature_dim], dtype=np.float32)
+            data_y: numpy.ndarray([N, feature_dim], dtype=np.float32)
+        Returns:
+            numpy.ndarray([N, N], dtype=np.float32) of pairwise distances.
+        """
+        if data_y is None:
+            data_y = torch.clone(data_x)
 
         if self.distance == "euclidean":
             num_feats = data_x.shape[-1]
             X = data_x.reshape(-1, num_feats).unsqueeze(0)
             Y = data_y.reshape(-1, num_feats).unsqueeze(0)
-            return torch.cdist(X, Y, p=2).squeeze(0)
+            dists = torch.cdist(X, Y, 2).squeeze(0)
 
-        raise ValueError(f"Unsupported distance metric: {self.distance}")
+        if self.distance == "geodesic":
+            dists = pairwise_geodesic(data_x, data_y)
 
-    def _get_kth_value(self, unsorted: Tensor, k: int, axis: int = -1) -> Tensor:
-        """Get the k-th smallest value along specified axis."""
-        k_smallests = torch.topk(unsorted, k, largest=False, dim=axis).values
-        return k_smallests.max(axis=axis).values
+        return dists
 
-    def update(self, real_features: Tensor, fake_features: Tensor):
-        """Update states with new batches of features."""
-        self.real_features.append(real_features.detach().to(self._device, dtype=torch.float16))
-        self.fake_features.append(fake_features.detach().to(self._device, dtype=torch.float16))
+    def _get_kth_value(self, unsorted, k, axis=-1):
+        """
+        Args:
+            unsorted: numpy.ndarray of any dimensionality.
+            k: int
+        Returns:
+            kth values along the designated axis.
+        """
+        # indices = np.argpartition(unsorted, k, axis=axis)[..., :k]
+        # k_smallests = np.take_along_axis(unsorted, indices, axis=axis)
+        # kth_values = k_smallests.max(axis=axis)
 
-    def compute(self, num_splits: int = 5) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        """Compute final PRDC metrics by averaging over splits."""
-        if not self.real_features or not self.fake_features:
-            zero = torch.tensor(0.0, dtype=torch.float16, device=self._device)
-            return zero, zero, zero, zero
+        k_smallests = torch.topk(unsorted, k, largest=False, dim=-1)
+        kth_values = k_smallests.values.max(axis=axis).values
+        return kth_values
 
-        with torch.no_grad():
-            real_features = dim_zero_cat(self.real_features)
-            fake_features = dim_zero_cat(self.fake_features)
+    def _compute_nn_distances(self, input_features, nearest_k):
+        """
+        Args:
+            input_features: numpy.ndarray([N, feature_dim], dtype=np.float32)
+            nearest_k: int
+        Returns:
+            Distances to kth nearest neighbours.
+        """
+        distances = self._compute_pairwise_distance(input_features)
+        radii = self._get_kth_value(distances, k=nearest_k + 1, axis=-1)
+        return radii
 
-            real_features_split = real_features.chunk(num_splits, dim=0)
-            fake_features_split = fake_features.chunk(num_splits, dim=0)
+    def compute_prdc(self, real_features, fake_features, nearest_k):
+        """
+        Computes precision, recall, density, and coverage given two manifolds.
+        Args:
+            real_features: numpy.ndarray([N, feature_dim], dtype=np.float32)
+            fake_features: numpy.ndarray([N, feature_dim], dtype=np.float32)
+            nearest_k: int.
+        Returns:
+            dict of precision, recall, density, and coverage.
+        """
+        real_nearest_neighbour_distances = self._compute_nn_distances(
+            real_features, nearest_k
+        )
+        fake_nearest_neighbour_distances = self._compute_nn_distances(
+            fake_features, nearest_k
+        )
+        distance_real_fake = self._compute_pairwise_distance(
+            real_features, fake_features
+        )
 
-            metrics = [[], [], [], []]
+        precision = (
+            (distance_real_fake < real_nearest_neighbour_distances.unsqueeze(1))
+            .any(axis=0)
+            .to(float)
+        ).mean()
 
-            for real_chunk, fake_chunk in zip(real_features_split, fake_features_split):
-                if real_chunk.size(0) == 0 or fake_chunk.size(0) == 0:
-                    continue
+        recall = (
+            (distance_real_fake < fake_nearest_neighbour_distances.unsqueeze(1))
+            .any(axis=1)
+            .to(float)
+            .mean()
+        )
 
-                real_distances = self._compute_pairwise_distance(real_chunk)
-                real_distances.fill_diagonal_(float("inf"))
-                real_nn = self._get_kth_value(real_distances, k=self.manifold_k + 1, axis=-1)
+        density = (1.0 / float(nearest_k)) * (
+            distance_real_fake < real_nearest_neighbour_distances.unsqueeze(1)
+        ).sum(axis=0).to(float).mean()
 
-                fake_distances = self._compute_pairwise_distance(fake_chunk)
-                fake_distances.fill_diagonal_(float("inf"))
-                fake_nn = self._get_kth_value(fake_distances, k=self.manifold_k + 1, axis=-1)
+        coverage = (
+            (distance_real_fake.min(axis=1).values < real_nearest_neighbour_distances)
+            .to(float)
+            .mean()
+        )
+        return precision, recall, density, coverage
 
-                dist_real_fake = self._compute_pairwise_distance(real_chunk, fake_chunk)
+    # --------------------------------------------------------------------------------- #
 
-                precision = (dist_real_fake < real_nn.unsqueeze(1)).any(dim=0).float().mean()
-                recall = (dist_real_fake < fake_nn.unsqueeze(0)).any(dim=1).float().mean()
-                density = (dist_real_fake < real_nn.unsqueeze(1)).sum(dim=0).float().mean() / float(
-                    self.manifold_k
-                )
-                coverage = (dist_real_fake.min(dim=1).values < real_nn).float().mean()
+    def update(self, real_features, fake_features):
+        """Updates the state with new real and fake features."""
+        self.real_features.append(real_features)
+        self.fake_features.append(fake_features)
 
-                metrics[0].append(precision.to(dtype=torch.float16))
-                metrics[1].append(recall.to(dtype=torch.float16))
-                metrics[2].append(density.to(dtype=torch.float16))
-                metrics[3].append(coverage.to(dtype=torch.float16))
+    def compute(self, num_splits=5):
+        """
+        Computes precision, recall, density, and coverage given two manifolds.
+        Args:
+            real_features: torch.Tensor([N, feature_dim], dtype=torch.float32)
+            fake_features: torch.Tensor([N, feature_dim], dtype=torch.float32)
+            nearest_k: int.
+            num_splits: int. Number of splits to use for computing metrics.
+        Returns:
+            dict of precision, recall, density, and coverage.
+        """
+        real_features = dim_zero_cat(self.real_features).chunk(num_splits, dim=0)
+        fake_features = dim_zero_cat(self.fake_features).chunk(num_splits, dim=0)
+        precision, recall, density, coverage = [], [], [], []
+        for real, fake in zip(real_features, fake_features):
+            p, r, d, c = self.compute_prdc(real, fake, nearest_k=self.manifold_k)
+            precision.append(p)
+            recall.append(r)
+            density.append(d)
+            coverage.append(c)
 
-                # Free memory between splits
-                del real_distances, fake_distances, dist_real_fake, real_nn, fake_nn
-                torch.cuda.empty_cache()
+        precision = torch.stack(precision).mean()
+        recall = torch.stack(recall).mean()
+        density = torch.stack(density).mean()
+        coverage = torch.stack(coverage).mean()
 
-            results = [torch.stack(m).mean() if m else torch.tensor(0.0, dtype=torch.float16) for m in metrics]
-
-            return tuple(results)
+        return precision, recall, density, coverage
