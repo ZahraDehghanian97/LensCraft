@@ -118,7 +118,6 @@ class ContrastiveLoss:
 
     def compute_v3(self, clip_pred, clip_target, batch):
         contrastive_loss = 0
-        top_1 = 0
         batch_size = clip_pred.shape[1]
         
         for sample_idx in range(batch_size):
@@ -127,7 +126,6 @@ class ContrastiveLoss:
                                     batch["simulation_instruction_parameters"][sample_idx]
             
             counter = 0
-            local_top_1 = 0
             local_contrastive_loss = 0
             
             for emb_idx, (prefix, data_value, value_idx, _) in enumerate(clip_embedding_parameters):
@@ -142,15 +140,6 @@ class ContrastiveLoss:
                 else:
                     value_type = CLIP_PARAMETERS_DICT[prefix].__name__
 
-                similarites = []
-                for embedding_key in self.clip_embeddings[value_type].keys():
-                        similarity = cosine_similarity(clip_sample_pred[emb_idx].unsqueeze(0).to(self.device),
-                                                        self.clip_embeddings[value_type][embedding_key].unsqueeze(0).to(self.device))
-                        similarites.append(similarity.item())
-                similarites  = np.array(similarites)  
-                 
-                if similarites.argmin() == value_idx:
-                    local_top_1 += 1
 
                 mean_embedding = self.embedding_means[value_type].to(self.device)
                 similarity = cosine_similarity(
@@ -162,9 +151,6 @@ class ContrastiveLoss:
                 counter += 1
             
             contrastive_loss += local_contrastive_loss / counter
-            top_1 += local_top_1 / counter
-        
-        print("TOP_1", top_1 / batch_size)
                 
         return contrastive_loss / batch_size
 
