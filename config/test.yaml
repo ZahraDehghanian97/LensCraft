@@ -11,3 +11,6 @@ model_config:
 
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 device: cuda
+
+caption_top1_metric: true
+clip_embeddings_cache: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl

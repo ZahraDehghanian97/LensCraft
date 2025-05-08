@@ -1,10 +1,7 @@
 from testing.metrics.callback import MetricCallback
 from models.camera_trajectory_model import MultiTaskAutoencoder
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, List
 import torch
-
-from models.camera_trajectory_model import MultiTaskAutoencoder
-from testing.metrics.callback import MetricCallback
 
 
 def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
@@ -18,13 +15,15 @@ def prepare_batch_data(batch: Dict[str, torch.Tensor], device: torch.device) -> 
     
     return prepared_data
 
+
 def update_metrics(
     model: MultiTaskAutoencoder,
     data: Dict[str, torch.Tensor],
     metric_callback: MetricCallback,
     metric_name: str,
     memory_teacher_forcing_ratio: Optional[float] = None,
-    caption_embedding: Optional[torch.Tensor] = None
+    caption_embedding: Optional[torch.Tensor] = None,
+    clip_embedding_parameters: Optional[List] = None
 ) -> None:
     generation_output = model.generate_camera_trajectory(
         subject_trajectory=data["subject_trajectory"],
@@ -62,6 +61,14 @@ def update_metrics(
         encoder_embedding_reshaped,
         caption_embedding_reshaped
     )
+    
+    if metric_callback.clip_embeddings is not None and clip_embedding_parameters:
+        metric_callback.update_caption_top1(
+            metric_name, 
+            encoder_embedding_reshaped,
+            clip_embedding_parameters
+        )
+
 
 def process_lens_craft_batch(
     model: MultiTaskAutoencoder,
@@ -74,13 +81,21 @@ def process_lens_craft_batch(
     
     caption_embedding = prepared_data.get("cinematography_prompt")
     
+    clip_embedding_parameters = []
+    if 'cinematography_prompt_parameters' in batch:
+        clip_embedding_parameters.extend(batch["cinematography_prompt_parameters"])
+        
+    if 'simulation_instruction_parameters' in batch:
+        clip_embedding_parameters.extend(batch["simulation_instruction_parameters"])
+    
     update_metrics(
         model,
         prepared_data,
         metric_callback,
         "reconstruction",
         memory_teacher_forcing_ratio=0,
-        caption_embedding=caption_embedding
+        caption_embedding=caption_embedding,
+        clip_embedding_parameters=clip_embedding_parameters
     )
     
     if dataset_type == 'simulation':
@@ -90,7 +105,8 @@ def process_lens_craft_batch(
             metric_callback,
             "prompt_generation",
             memory_teacher_forcing_ratio=1.0,
-            caption_embedding=caption_embedding
+            caption_embedding=caption_embedding,
+            clip_embedding_parameters=clip_embedding_parameters
         )
         
         update_metrics(
@@ -99,5 +115,6 @@ def process_lens_craft_batch(
             metric_callback,
             "hybrid_generation",
             memory_teacher_forcing_ratio=0.4,
-            caption_embedding=caption_embedding
+            caption_embedding=caption_embedding,
+            clip_embedding_parameters=clip_embedding_parameters
         )

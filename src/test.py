@@ -37,6 +37,11 @@ def main(cfg: DictConfig) -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
 
+    clip_embeddings = None
+    if cfg.get("caption_top1_metric", False):
+        from data.simulation.init_embeddings import initialize_all_clip_embeddings
+        clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
+
     model_type = cfg.model_config.get("type", "simulation")
     model = None
 
@@ -64,7 +69,7 @@ def main(cfg: DictConfig) -> None:
     )
     data_module.setup()
 
-    metric_callback = MetricCallback(num_cams=1, device=device)
+    metric_callback = MetricCallback(num_cams=1, device=device, clip_embeddings=clip_embeddings)
 
     target = cfg.data.dataset.config["_target_"]
     dataset_type = (
