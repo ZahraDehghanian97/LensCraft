@@ -7,41 +7,59 @@ from scipy.interpolate import interp1d
 import torch.nn.functional as F
 
 
-def handle_single_or_batch(single_item_dim: int = 1, arg_index: int = 0, device=None, dtype=None):
+def handle_single_or_batch(single_item_dim: int = 1, arg_index=0, device=None, dtype=None):
+    if isinstance(arg_index, int):
+        arg_indices = [arg_index]
+    else:
+        arg_indices = list(arg_index)
+        
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            x = args[arg_index]
-
-            is_numpy = isinstance(x, np.ndarray)
-            is_torch  = torch.is_tensor(x)
-
-            if not (is_numpy or is_torch):
-                raise TypeError(
-                    f"Expected NumPy array or Torch tensor at position {arg_index}, "
-                    f"got {type(x).__name__}"
-                )
-
-            xt = (torch.as_tensor(x, device=device, dtype=dtype) if is_numpy
-                  else (x.to(device=device, dtype=dtype) if (device or dtype) else x))
-
-            is_single = xt.ndim == single_item_dim
-            if is_single:
-                xt = xt.unsqueeze(0)
-
             new_args = list(args)
-            new_args[arg_index] = xt
-
+            is_single = None
+            
+            for idx in arg_indices:
+                if idx >= len(args):
+                    continue
+                
+                x = args[idx]
+                
+                if x is None:
+                    continue
+                
+                is_numpy = isinstance(x, np.ndarray)
+                is_torch = torch.is_tensor(x)
+                
+                if is_numpy:
+                    print('')
+                
+                if not (is_numpy or is_torch):
+                    raise TypeError(
+                        f"Expected NumPy array or Torch tensor at position {idx}, "
+                        f"got {type(x).__name__}"
+                    )
+                
+                xt = (torch.as_tensor(x, device=device, dtype=dtype) if is_numpy
+                      else (x.to(device=device, dtype=dtype) if (device or dtype) else x))
+                
+                current_is_single = xt.ndim == single_item_dim
+                
+                if is_single is None:
+                    is_single = current_is_single
+                
+                if is_single:
+                    xt = xt.unsqueeze(0)
+                
+                new_args[idx] = xt
+            
             out = func(*new_args, **kwargs)
-
+            
             if is_single:
                 out = out.squeeze(0)
             return out
-
         return wrapper
     return decorator
-
-
 
 
 def fix_camera_traj_length(trajectories, target_frames=30):
