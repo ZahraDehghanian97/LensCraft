@@ -38,7 +38,8 @@ class BaseTrainer(L.LightningModule):
         teacher_forcing_schedule: TeacherForcingConfig,
         compile_mode: str = "default",
         compile_enabled: bool = True,
-        use_merged_memory: bool = True
+        use_merged_memory: bool = True,
+        moving_avg_window: int = 10
     ):
         super().__init__()
         
@@ -52,6 +53,9 @@ class BaseTrainer(L.LightningModule):
         self.compiled = not compile_enabled
         self.loss_module = loss_module
         self.use_merged_memory = use_merged_memory
+        
+        self.moving_avg_window = moving_avg_window
+        self.metric_history = {"ff": [], "sp": [], "re": [], "cl": [], "cy": [], "co": []}
 
     def setup(self, stage: Optional[str] = None) -> None:
         if not self.compiled:
@@ -164,9 +168,20 @@ class BaseTrainer(L.LightningModule):
         
         progress_metrics = {}
         progress_metrics["ts" if stage == "train" else "ve"] = loss
-        for (key, p_key) in [("first_frame", "ff"), ("speed", "sp"), ("relative", "re"), ("clip", "cl"), ("cycle", "cy"), ("contrastive", "co")]:
+        
+        metric_keys = {"first_frame": "ff", "speed": "sp", "relative": "re", "clip": "cl", "cycle": "cy", "contrastive": "co"}
+        for key, p_key in metric_keys.items():
             if key in loss_dict:
-                progress_metrics[p_key] = loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item()
+                current_value = loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item()
+
+                self.metric_history[p_key].append(current_value)
+                
+                if len(self.metric_history[p_key]) > self.moving_avg_window:
+                    self.metric_history[p_key] = self.metric_history[p_key][-self.moving_avg_window:]
+                
+                if self.metric_history[p_key]:
+                    moving_avg = sum(self.metric_history[p_key]) / len(self.metric_history[p_key])
+                    progress_metrics[p_key] = moving_avg
         
         self.log_dict(progress_metrics, prog_bar=True, logger=True, batch_size=batch_size)
         
