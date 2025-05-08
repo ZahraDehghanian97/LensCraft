@@ -98,7 +98,6 @@ class CameraTrajectoryLoss:
             loss_dict["cycle"] = torch.tensor(0)
 
 
-
         if self.losses_list.get("first_frame", 0) or self.losses_list.get("relative", 0) or self.losses_list.get("speed", 0):
             first_frame_loss, relative_loss, speed_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
             
@@ -120,6 +119,8 @@ class CameraTrajectoryLoss:
 
         total_loss = 0
         for loss_key in self.losses_list:
+            if loss_key == "cycle" and loss_dict["cycle"] < loss_dict["clip"]:
+                continue
             total_loss += self.losses_list[loss_key] * loss_dict.get(loss_key, 0)
             
         loss_dict["total"] = total_loss.item()
