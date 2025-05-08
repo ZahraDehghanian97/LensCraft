@@ -145,54 +145,22 @@ class BaseTrainer(L.LightningModule):
         )
     
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:
-        self.log(
-            f"{stage}_loss",
-            loss,
-            on_step=True,
-            on_epoch=True,
-            logger=True,
-            batch_size=batch_size
-        )
+        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, logger=True, batch_size=batch_size)
         
-        if stage == "train":
-            self.log("ts", loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, batch_size=batch_size)
-            self.log("te", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
-        elif stage == "val":
-            self.log("ve", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
-        
-        prog_bar_metrics = {"first_frame": "ff", "speed": "sp", "relative": "re", "clip": "cl", "cycle": "cy", "contrastive": "co"}
-        for key in prog_bar_metrics:
+        progress_metrics = {}
+        progress_metrics["ts" if stage == "train" else "ve"] = loss
+        for (key, p_key) in [("first_frame", "ff"), ("speed", "sp"), ("relative", "re"), ("clip", "cl"), ("cycle", "cy"), ("contrastive", "co")]:
             if key in loss_dict:
-                self.log(
-                    prog_bar_metrics[key],
-                    loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item(),
-                    on_step=True,
-                    on_epoch=False,
-                    prog_bar=True,
-                    logger=True,
-                    batch_size=batch_size
-                )
+                progress_metrics[p_key] = loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item()
+        
+        self.log_dict(progress_metrics, prog_bar=True, logger=True, batch_size=batch_size)
         
         for key, value in loss_dict.items():
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
-                    self.log(
-                        f"{stage}_{key}_{subkey}",
-                        subvalue,
-                        on_step=True,
-                        on_epoch=True,
-                        logger=True,
-                        batch_size=batch_size
-                    )
+                    self.log(f"{stage}_{key}_{subkey}", subvalue, on_step=True, on_epoch=True, logger=True, batch_size=batch_size)
             else:
-                self.log(
-                    f"{stage}_{key}",
-                    value,
-                    on_step=True,
-                    on_epoch=True,
-                    logger=True,
-                    batch_size=batch_size
-                )
+                self.log(f"{stage}_{key}", value, on_step=True, on_epoch=True, logger=True, batch_size=batch_size)
 
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Tuple[List, List]]:
         optimizer = self.optimizer(self.parameters())
