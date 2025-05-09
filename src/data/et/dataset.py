@@ -31,20 +31,14 @@ class ETDataset(Dataset):
         valid_sum = (caption_feat * clip_seq_mask).sum(dim=1)
         num_valid_tokens = clip_seq_mask.sum().clamp(min=1)
         averaged_caption_feat = valid_sum / num_valid_tokens
-        if self.target["type"] == "simulation":
-            matrix_traj_feat = self.original_dataset.get_matrix(item["traj_feat"])
-            camera_trajectory = camera_et_to_sim(matrix_traj_feat, seq_len=self.target["seq_length"])
+        if self.target is not None:
+            pass
         
-        padding_mask = ~item['padding_mask'].to(torch.bool)
-        print("0", padding_mask.shape)
-        print("1", matrix_traj_feat.shape)
-
         processed_item = {
             'camera_trajectory': camera_trajectory,
             'subject_trajectory': subject_trajectory,
             'subject_volume': subject_volume,
-            # 'padding_mask': ~item['padding_mask'].to(torch.bool),
-            'padding_mask': None,
+            'padding_mask': padding_mask,
             'caption_feat': averaged_caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32),
             "original_camera_trajectory": item['traj_feat'],

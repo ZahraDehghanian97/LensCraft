@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
-from data.convertor import camera_ccdm_to_sim, subject_ccdm_to_sim
 
 class CCDMDataset(Dataset):
     def __init__(
@@ -86,23 +85,17 @@ class CCDMDataset(Dataset):
             idxs = torch.linspace(0, len(camera_trajectory)-1, self.original_seq_len).long()
             raw_padded = camera_trajectory[idxs]
 
-        if self.target is not None and self.target["type"] == "simulation":
-            camera_trajectory_sim, padding_mask = camera_ccdm_to_sim(
-                camera_trajectory,
-                self.seq_len,
-                self.tan_half_fov_x,
-                self.tan_half_fov_y,
-            )
+        if self.target is not None:
+            pass
         
 
         text = " ".join(text_description)
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
 
-        subject_loc_rot, subject_volume = subject_ccdm_to_sim(seq_len=self.seq_len)
 
         return {
-            "camera_trajectory": camera_trajectory_sim,
+            "camera_trajectory": camera_trajectory,
             "subject_trajectory": subject_loc_rot,
             "subject_volume": subject_volume,
             "padding_mask": None if padding_mask is None else ~padding_mask,

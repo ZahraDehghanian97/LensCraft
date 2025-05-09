@@ -109,6 +109,9 @@ class SimulationDataset(Dataset):
             simulation_instruction_parameters=simulation_instruction,
             n_clip_embs=n_clip_embs
         )
+        
+        if self.target is not None:
+            pass
 
         return {
             "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),

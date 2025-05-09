@@ -16,7 +16,16 @@ tensorboard==2.18.0
 psutil==6.1.1
 optuna==4.3.0
 optuna-dashboard==0.18.0
-hydra-core==1.3.2                                                                                                                              
 hydra-optuna-sweeper==1.2.0
 
 sqlalchemy==1.4.46
+
+einops==0.8.1
+pytorch-lightning==2.5.0.post0
+matplotlib==3.10.0
+pandas==2.2.3
+bitsandbytes==0.45.2
+# --find-links https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu118_pyt210/download.html
+# pytorch3d
+rerun==1.0.30
+git+https://github.com/openai/CLIP.git
