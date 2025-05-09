@@ -18,16 +18,17 @@ class ETConvertor(BaseConvertor):
     @handle_single_or_batch(arg_index=[1])
     def get_feature(self, raw_matrix_trajectory):
         matrix_trajectory = torch.clone(raw_matrix_trajectory)
+        device = matrix_trajectory.device
 
         raw_trans = torch.clone(matrix_trajectory[..., :3, 3])
         if self.velocity:
             velocity = raw_trans[1:] - raw_trans[:-1]
             raw_trans = torch.cat([raw_trans[0][None], velocity])
         if self.standardize:
-            raw_trans[0] -= self.shift_mean
-            raw_trans[0] /= self.shift_std
-            raw_trans[1:] -= self.norm_mean
-            raw_trans[1:] /= self.norm_std
+            raw_trans[0] -= self.shift_mean.to(device)
+            raw_trans[0] /= self.shift_std.to(device)
+            raw_trans[1:] -= self.norm_mean.to(device)
+            raw_trans[1:] /= self.norm_std.to(device)
 
         rot_matrices = matrix_trajectory[..., :3, :3]
         rot6d = matrix_to_rotation_6d(rot_matrices)
@@ -62,12 +63,18 @@ class ETConvertor(BaseConvertor):
         self,
         trajectory: torch.Tensor,
         subject_trajectory: torch.Tensor | None = None,
-        subject_volume: None = None
+        subject_volume: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        subject_positions = subject_trajectory[..., :3]
-        subject_trajectory = torch.zeros(trajectory.shape[:2] + (6), dtype=torch.float32)
-        subject_trajectory[..., :3] = subject_positions
-        subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
+        device = trajectory.device
+        if subject_volume is None:
+            subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32, device=device)
+            
+        if subject_trajectory is not None:
+            subject_positions = subject_trajectory[..., :3]
+            subject_trajectory = torch.zeros(trajectory.shape[:2] + (6,), dtype=torch.float32, device=device)
+            subject_trajectory[..., :3] = subject_positions
+        else:
+            subject_trajectory = torch.zeros(trajectory.shape[:2] + (6,), dtype=torch.float32, device=device)
 
         transform = self.get_matrix(trajectory)
         return transform, subject_trajectory, subject_volume
@@ -78,10 +85,11 @@ class ETConvertor(BaseConvertor):
         transform: torch.Tensor,
         subject_trajectory: torch.Tensor | None = None,
         subject_volume: torch.Tensor | None = None
-    ) -> tuple[torch.Tensor, None]:
-        subject_trajectory = (
-            subject_trajectory[..., :3] if subject_trajectory is not None else None
-        )
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:        
+        processed_subject_trajectory = None
+        if subject_trajectory is not None:
+            processed_subject_trajectory = subject_trajectory[..., :3]
+            
         trajectory = self.get_feature(transform)
         subject_volume = None
-        return trajectory, subject_trajectory, subject_volume
+        return trajectory, processed_subject_trajectory, subject_volume
