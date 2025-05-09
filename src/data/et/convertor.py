@@ -2,9 +2,10 @@ import torch
 from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
 from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
+from data.et.config import STANDARDIZATION_CONFIG
 
 class ETConvertor(BaseConvertor):
-    def __init__(self, standardize: bool, mean_std):
+    def __init__(self, standardize: bool=True, mean_std=STANDARDIZATION_CONFIG):
         self.augmentation = None
         self.standardize = standardize
         if self.standardize:

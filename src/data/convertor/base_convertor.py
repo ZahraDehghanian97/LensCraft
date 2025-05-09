@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-
+from typing import Optional
 import torch
 
 class BaseConvertor(ABC):
@@ -10,11 +10,11 @@ class BaseConvertor(ABC):
     def to_standard(
         self,
         trajectory: torch.Tensor,
-        subject_trajectory: torch.Tensor | None = None,
-        subject_volume: torch.Tensor | None = None,
+        subject_trajectory: Optional[torch.Tensor] = None,
+        subject_volume: Optional[torch.Tensor] = None,
         *args,
         **kwargs
-    ):
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Convert input to standard transform format."""
         pass
 
@@ -22,10 +22,10 @@ class BaseConvertor(ABC):
     def from_standard(
         self,
         transform: torch.Tensor,
-        subject_trajectory: torch.Tensor | None = None,
-        subject_volume: torch.Tensor | None = None,
+        subject_trajectory: Optional[torch.Tensor] = None,
+        subject_volume: Optional[torch.Tensor] = None,
         *args,
         **kwargs
-    ):
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """Convert from standard transform format to target dataset format."""
         pass

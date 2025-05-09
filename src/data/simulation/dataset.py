@@ -3,6 +3,8 @@ from torch.utils.data import Dataset
 import torch
 import msgpack
 from pathlib import Path
+
+from data.convertor.convertor import convert_to_target
 from .loader import parse_simulation_file_to_dict
 
 from .constants import (
@@ -32,6 +34,7 @@ class SimulationDataset(Dataset):
         self.embedding_dim = embedding_dim
         self.fill_none_with_mean = fill_none_with_mean
         self.clip_embeddings = clip_embeddings
+        self.target = target
 
         if self.fill_none_with_mean:
             self.embedding_means = load_clip_means()
@@ -63,16 +66,10 @@ class SimulationDataset(Dataset):
         file_path = self.simulation_files[index]
         data = parse_simulation_file_to_dict(file_path, self.parameter_dictionary)
         
-        if data is None:
-            raise ValueError(f"Failed to load simulation file at index {index}")
-            
-        return self._convert_simulation_to_model_inputs(data)
-
-    def _convert_simulation_to_model_inputs(self, simulation_data: Dict) -> Dict:
-        camera_trajectory = self._extract_camera_trajectory(simulation_data["cameraFrames"])
-        subject_loc_rot, subject_vol = self._extract_subject_components(simulation_data["subjectsInfo"])
-        instruction = simulation_data["simulationInstructions"][0]
-        prompt = simulation_data["cinematographyPrompts"][0]
+        camera_trajectory = self._extract_camera_trajectory(data["cameraFrames"])
+        subject_trajectory, subject_volume = self._extract_subject_components(data["subjectsInfo"])
+        instruction = data["simulationInstructions"][0]
+        prompt = data["cinematographyPrompts"][0]
 
         simulation_instruction = extract_cinematography_parameters(
             data=instruction,
@@ -110,13 +107,24 @@ class SimulationDataset(Dataset):
             n_clip_embs=n_clip_embs
         )
         
-        if self.target is not None:
-            pass
+        padding_mask = None
+        
+        if "type" in self.target and self.target["type"] != "simulation":
+            camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
+                source="simulation",
+                target=self.target["type"],
+                trajectory=camera_trajectory,
+                subject_trajectory=subject_trajectory,
+                subject_volume=subject_volume,
+                padding_mask=padding_mask,
+                target_len=self.target.get("seq_length", 30)
+            )
 
         return {
-            "camera_trajectory": torch.tensor(camera_trajectory, dtype=torch.float32),
-            "subject_trajectory": torch.tensor(subject_loc_rot, dtype=torch.float32),
-            "subject_volume": torch.tensor(subject_vol, dtype=torch.float32),
+            "camera_trajectory": camera_trajectory,
+            "subject_trajectory": subject_trajectory,
+            "subject_volume": subject_volume,
+            "padding_mask": padding_mask,
             "simulation_instruction": simulation_instruction_tensor,
             "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction,
@@ -127,7 +135,7 @@ class SimulationDataset(Dataset):
 
 
     def _extract_camera_trajectory(self, camera_frames: List[Dict]) -> List[List[float]]:
-        return [
+        return torch.tensor([
             [
                 frame["position"]["x"],
                 frame["position"]["y"],
@@ -138,13 +146,13 @@ class SimulationDataset(Dataset):
                 # frame["focalLength"]
             ]
             for frame in camera_frames
-        ]
+        ], dtype=torch.float32)
 
     def _extract_subject_components(self, subjects_info: List[Dict]) -> Tuple[List[List[float]], List[List[float]]]:
         subject_info = subjects_info[0]
         subject = subject_info["subject"]
         
-        loc_rot = [
+        loc_rot = torch.tensor([
             [
                 frame["position"]["x"],
                 frame["position"]["y"],
@@ -154,15 +162,15 @@ class SimulationDataset(Dataset):
                 frame["rotation"]["z"]
             ]
             for frame in subject_info["frames"]
-        ]
+        ], dtype=torch.float32)
         
-        vol = [
+        vol = torch.tensor([
             [
                 subject["dimensions"]["width"],
                 subject["dimensions"]["height"],
                 subject["dimensions"]["depth"]
             ]
-        ]
+        ], dtype=torch.float32)
         
         return loc_rot, vol
 
@@ -171,6 +179,7 @@ def collate_fn(batch):
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
         "subject_volume": torch.stack([item["subject_volume"] for item in batch]),
+        "padding_mask": torch.stack([item["padding_mask"] for item in batch]),
         "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
         "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
         "simulation_instruction_parameters": [

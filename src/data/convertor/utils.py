@@ -28,9 +28,6 @@ def handle_single_or_batch(single_item_dim: int = 1, arg_index=0, device=None, d
                 is_numpy = isinstance(x, np.ndarray)
                 is_torch = torch.is_tensor(x)
                 
-                if is_numpy:
-                    print('')
-                
                 if not (is_numpy or is_torch):
                     raise TypeError(
                         f"Expected NumPy array or Torch tensor at position {idx}, "
@@ -100,6 +97,6 @@ def resample_batch_trajectories(batch_trajectory, current_valid_len, target_len)
         if feature_dims:
             resampled_batch[i] = resampled_transposed.reshape((target_len,) + feature_dims)
         else:
-            resampled_batch[i] = resampled_transposed
+            resampled_batch[i] = resampled_transposed.squeeze(-1)
     
     return resampled_batch, padding_mask
