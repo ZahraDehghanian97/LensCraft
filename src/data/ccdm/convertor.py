@@ -1,38 +1,13 @@
 import torch
 import torch.nn.functional as F
+from pytorch3d.transforms import axis_angle_to_matrix
 from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 
 class CCDMConvertor(BaseConvertor):
-    """
-    Transformer implementation using CCDM (Camera-Centered Directional Model).
-    Provides conversion to and from 4x4 transformation matrices.
-    """
     def __init__(self, hfov_deg: float = 45.0, aspect: float = 16 / 9):
         self.hfov_deg = hfov_deg
         self.aspect = aspect
-
-    @staticmethod
-    def _axis_angle_to_matrix(axis: torch.Tensor, angle: torch.Tensor) -> torch.Tensor:
-        """Convert axis-angle representation to a rotation matrix."""
-        axis = F.normalize(axis, dim=-1, eps=1e-10)
-        
-        a_x, a_y, a_z = axis.unbind(-1)
-        zeros = torch.zeros_like(a_x)
-        K = torch.stack([
-            zeros, -a_z, a_y,
-            a_z, zeros, -a_x,
-            -a_y, a_x, zeros
-        ], dim=-1).reshape(axis.shape[:-1] + (3, 3))
-
-        eye = torch.eye(3, dtype=axis.dtype, device=axis.device)
-        eye = eye.expand(axis.shape[:-1] + (3, 3))
-        angle = angle.unsqueeze(-1).unsqueeze(-1)
-        sin_a = torch.sin(angle)
-        cos_a = torch.cos(angle)
-        axis_outer = torch.einsum('...i,...j->...ij', axis, axis)
-
-        return eye * cos_a + sin_a * K + (1.0 - cos_a) * axis_outer
 
     @handle_single_or_batch(arg_index=[1, 2])
     def convert_ccdm_to_transform(
@@ -61,15 +36,11 @@ class CCDMConvertor(BaseConvertor):
         yaw = -torch.atan(p_x * torch.tan(hfov / 2.0))
         pitch = torch.atan(p_y * torch.tan(vfov / 2.0))
 
-        R_yaw = self._axis_angle_to_matrix(world_up, yaw)
+        R_yaw = axis_angle_to_matrix(world_up * yaw.unsqueeze(-1))
         rotated_right = torch.einsum('...ij,...j->...i', R_yaw, right)
-        R_pitch = self._axis_angle_to_matrix(rotated_right, pitch)
+        R_pitch = axis_angle_to_matrix(rotated_right * pitch.unsqueeze(-1))
 
-        rot_mat = (
-            torch.bmm(torch.bmm(R_pitch, R_yaw), R_cam)
-            if ccdm.dim() > 1
-            else torch.matmul(torch.matmul(R_pitch, R_yaw), R_cam)
-        )
+        rot_mat = torch.matmul(torch.matmul(R_pitch, R_yaw), R_cam)
 
         batch_dims = ccdm.shape[:-1]
         transform = torch.eye(4, dtype=ccdm.dtype, device=ccdm.device)

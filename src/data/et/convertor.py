@@ -1,8 +1,7 @@
 import torch
-import torch.nn.functional as F
+from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
 from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
-from utils.rotation_utils import compute_rotation_matrix_from_ortho6d
 
 class ETConvertor(BaseConvertor):
     def __init__(self, standardize: bool, mean_std):
@@ -19,7 +18,7 @@ class ETConvertor(BaseConvertor):
     def get_feature(self, raw_matrix_trajectory):
         matrix_trajectory = torch.clone(raw_matrix_trajectory)
 
-        raw_trans = torch.clone(matrix_trajectory[:, :3, 3])
+        raw_trans = torch.clone(matrix_trajectory[..., :3, 3])
         if self.velocity:
             velocity = raw_trans[1:] - raw_trans[:-1]
             raw_trans = torch.cat([raw_trans[0][None], velocity])
@@ -29,14 +28,10 @@ class ETConvertor(BaseConvertor):
             raw_trans[1:] -= self.norm_mean
             raw_trans[1:] /= self.norm_std
 
-        # Compute the 6D continuous rotation
-        raw_rot = matrix_trajectory[:, :3, :3]
-        rot6d = raw_rot[:, :, :2].permute(0, 2, 1).reshape(-1, 6)
-
-        # Stack rotation 6D and translation
-        rot6d_trajectory = torch.hstack([rot6d, raw_trans]).permute(1, 0)
-
-        return rot6d_trajectory
+        rot_matrices = matrix_trajectory[..., :3, :3]
+        rot6d = matrix_to_rotation_6d(rot_matrices)
+        
+        return torch.cat([rot6d.reshape(-1, 6), raw_trans], dim=-1).permute(1, 0)
 
     @handle_single_or_batch(arg_index=[1])
     def get_matrix(self, raw_rot6d_trajectory):
@@ -44,7 +39,7 @@ class ETConvertor(BaseConvertor):
         device = rot6d_trajectory.device
 
         num_cams = rot6d_trajectory.shape[1]
-        matrix_trajectory = torch.eye(4, device=device)[None].repeat(num_cams, 1, 1)
+        matrix_trajectory = torch.eye(4, device=device).expand(num_cams, 4, 4).clone()
 
         raw_trans = rot6d_trajectory[6:].permute(1, 0)
         if self.standardize:
@@ -54,11 +49,10 @@ class ETConvertor(BaseConvertor):
             raw_trans[1:] += self.norm_mean.to(device)
         if self.velocity:
             raw_trans = torch.cumsum(raw_trans, dim=0)
-        matrix_trajectory[:, :3, 3] = raw_trans
+        matrix_trajectory[..., :3, 3] = raw_trans
 
-        rot6d = rot6d_trajectory[:6].permute(1, 0)
-        raw_rot = compute_rotation_matrix_from_ortho6d(rot6d)
-        matrix_trajectory[:, :3, :3] = raw_rot
+        rot6d = rot6d_trajectory[:6].permute(1, 0).reshape(-1, 6)
+        matrix_trajectory[..., :3, :3] = rotation_6d_to_matrix(rot6d)
 
         return matrix_trajectory
 
