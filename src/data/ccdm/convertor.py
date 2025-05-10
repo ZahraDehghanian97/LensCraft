@@ -9,7 +9,7 @@ class CCDMConvertor(BaseConvertor):
         self.hfov_deg = hfov_deg
         self.aspect = aspect
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 2), (2, 2)])
     def convert_ccdm_to_transform(
         self,
         ccdm: torch.Tensor,
@@ -49,7 +49,7 @@ class CCDMConvertor(BaseConvertor):
         transform[..., :3, 3] = cam_position
         return transform
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 3), (2, 2)])
     def transform_to_ccdm(
         self,
         transform: torch.Tensor,
@@ -73,7 +73,7 @@ class CCDMConvertor(BaseConvertor):
 
         return torch.cat([rel_position, p_x.unsqueeze(-1), p_y.unsqueeze(-1)], dim=-1)
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 2), (2, 2)])
     def to_standard(
         self,
         trajectory: torch.Tensor,
@@ -97,7 +97,7 @@ class CCDMConvertor(BaseConvertor):
         return transform, subject_transform, subject_volume
 
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 3), (2, 3)])
     def from_standard(
         self,
         transform: torch.Tensor,

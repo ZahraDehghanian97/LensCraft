@@ -109,13 +109,13 @@ class CCDMAdapter:
             smoothed_batch = self._smooth_trajectory_batch(denormalized)
             
             camera_trajectory_sim, subject_loc_rot, subject_volume, padding_mask = convert_to_target(
-                source="ccdm",
-                target="simulation",
-                trajectory=smoothed_batch,
-                subject_trajectory=None,
-                subject_volume=None,
-                padding_mask=None,
-                target_len=self.sim_seq_len
+                "ccdm",
+                "simulation",
+                smoothed_batch,
+                None,
+                None,
+                None,
+                self.sim_seq_len
             )
             
             return {

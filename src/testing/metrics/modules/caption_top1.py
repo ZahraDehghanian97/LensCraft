@@ -70,10 +70,10 @@ class CaptionTop1(Metric):
                         param_metrics[param_type]["correct"] += 1
                         total_correct += 1
         
-        overall_accuracy = total_correct / total_params
+        overall_accuracy = total_correct / total_params if total_params else 0
         
         type_accuracies = {
-            param_type: metrics["correct"] / metrics["total"]
+            param_type: metrics["correct"] / metrics["total"] if metrics["total"] else 0
             for param_type, metrics in param_metrics.items()
         }
         

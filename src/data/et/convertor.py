@@ -15,7 +15,7 @@ class ETConvertor(BaseConvertor):
             self.shift_std = torch.Tensor(mean_std["shift_std"])
             self.velocity = mean_std["velocity"]
     
-    @handle_single_or_batch(arg_index=[1])
+    @handle_single_or_batch(arg_specs=[(1, 3)])
     def get_feature(self, raw_matrix_trajectory):
         matrix_trajectory = torch.clone(raw_matrix_trajectory)
         device = matrix_trajectory.device
@@ -35,7 +35,7 @@ class ETConvertor(BaseConvertor):
         
         return torch.cat([rot6d.reshape(-1, 6), raw_trans], dim=-1).permute(1, 0)
 
-    @handle_single_or_batch(arg_index=[1])
+    @handle_single_or_batch(arg_specs=[(1, 2)])
     def get_matrix(self, raw_rot6d_trajectory):
         rot6d_trajectory = torch.clone(raw_rot6d_trajectory)
         device = rot6d_trajectory.device
@@ -58,7 +58,7 @@ class ETConvertor(BaseConvertor):
 
         return matrix_trajectory
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 2), (1, 2)])
     def to_standard(
         self,
         trajectory: torch.Tensor,
@@ -86,7 +86,7 @@ class ETConvertor(BaseConvertor):
         return transform, subject_transform, subject_volume
 
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 3), (1, 3)])
     def from_standard(
         self,
         transform: torch.Tensor,

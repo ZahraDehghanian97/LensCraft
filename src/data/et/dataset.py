@@ -38,13 +38,13 @@ class ETDataset(Dataset):
         
         if "type" in self.target and self.target["type"] != "et":
             camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-                source="et",
-                target=self.target["type"],
-                trajectory=camera_trajectory,
-                subject_trajectory=subject_trajectory,
-                subject_volume=subject_volume,
-                padding_mask=padding_mask,
-                target_len=self.target.get("seq_length", 30)
+                "et",
+                self.target["type"],
+                camera_trajectory,
+                subject_trajectory,
+                subject_volume,
+                padding_mask,
+                self.target.get("seq_length", 30)
             )
         
         return {

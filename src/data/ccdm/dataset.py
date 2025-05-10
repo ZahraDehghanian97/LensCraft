@@ -63,13 +63,13 @@ class CCDMDataset(Dataset):
         text_description = self.text_descriptions[index]
         
         current_len = camera_trajectory.shape[0]
-        padding_mask = torch.ones(current_len, dtype=torch.bool)
+        padding_mask = torch.zeros(current_len, dtype=torch.bool)
 
         if current_len < self.original_seq_len:
             num_padding = self.original_seq_len - current_len
             pad_values = camera_trajectory[-1:].repeat(num_padding, 1)
             camera_trajectory = torch.cat([camera_trajectory, pad_values], dim=0)
-            padding_mask = torch.cat([padding_mask, torch.zeros(num_padding, dtype=torch.bool)], dim=0)
+            padding_mask = torch.cat([padding_mask, torch.ones(num_padding, dtype=torch.bool)], dim=0)
         elif current_len > self.original_seq_len:
             camera_trajectory = camera_trajectory[:self.original_seq_len]
             padding_mask = padding_mask[:self.original_seq_len]
@@ -79,13 +79,13 @@ class CCDMDataset(Dataset):
 
         if self.target and "type" in self.target:
             camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-                source="ccdm",
-                target=self.target["type"],
-                trajectory=camera_trajectory,
-                subject_trajectory=subject_trajectory,
-                subject_volume=subject_volume,
-                padding_mask=padding_mask,
-                target_len=self.target.get("seq_length", 30)
+                "ccdm",
+                self.target["type"],
+                camera_trajectory,
+                subject_trajectory,
+                subject_volume,
+                padding_mask,
+                self.target.get("seq_length", 30)
             )
         
 

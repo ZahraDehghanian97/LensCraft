@@ -23,6 +23,10 @@ class CLaTrScore(Metric):
 
     def compute(self) -> float:
         """Compute cosine similarity between trajectory and text features."""
+        
+        if len(self.traj_feat) == 0 or len(self.text_feats) == 0:
+            return torch.tensor(0.0)
+        
         traj_feat = dim_zero_cat(self.traj_feat)
         text_feats = dim_zero_cat(self.text_feats)
 

@@ -37,8 +37,8 @@ def update_metrics(
     encoder_embedding = generation_output['embeddings'][:model.memory_tokens_count, ...]
 
     subject_embedding = torch.cat([
-        model.subject_projection_loc_rot(data["subject_trajectory"]),
-        model.subject_projection_vol(data["subject_volume"])
+        model.subject_trajectory_projection(data["subject_trajectory"]),
+        model.subject_volume_projection(data["subject_volume"])
     ], 1)
     
     reconstructed_embedding = model.encoder(

@@ -4,19 +4,17 @@ from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 
 class SIMConvertor(BaseConvertor):
-    @handle_single_or_batch(arg_index=[1])
+    @handle_single_or_batch(arg_specs=[(1, 3)])
     def transform_to_sim6dof(self, transform):
-        position = transform[:, :3, 3]
+        position = transform[..., :3, 3]
         
-        rotation_matrix = transform[:, :3, :3]
+        rotation_matrix = transform[..., :3, :3]
         rotation = matrix_to_euler_angles(rotation_matrix, convention="XYZ")
         
-        sim6dof = torch.cat([position, rotation], dim=1)
-        return sim6dof.transpose(1, 0)
+        return torch.cat([position, rotation], dim=-1)
     
-    @handle_single_or_batch(arg_index=[1])
+    @handle_single_or_batch(arg_specs=[(1, 2)])
     def sim6dof_to_transform(self, trajectory):
-        trajectory = trajectory.transpose(1, 0)
         device = trajectory.device
         batch_size = trajectory.shape[0]
         
@@ -31,7 +29,7 @@ class SIMConvertor(BaseConvertor):
         
         return transform
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 2), (2, 2)])
     def to_standard(
         self,
         trajectory: torch.Tensor,
@@ -46,20 +44,36 @@ class SIMConvertor(BaseConvertor):
             dtype = subject_trajectory.dtype
             
             subject_transform = torch.eye(4, device=device, dtype=dtype).expand(batch_size, seq_len, 4, 4).clone()
+            
             subject_transform[..., :3, 3] = subject_trajectory[..., :3]
-            subject_transform[..., :3, :3] = torch.eye(3, device=device, dtype=dtype)
+            euler_angles = subject_trajectory[..., 3:]
+            
+            for b in range(batch_size):
+                for t in range(seq_len):
+                    rotation_matrix = euler_angles_to_matrix(euler_angles[b, t], convention="XYZ")
+                    subject_transform[b, t, :3, :3] = rotation_matrix
         else:
             subject_transform = torch.eye(4, device=trajectory.device, dtype=trajectory.dtype).expand_as(transform).clone()
 
-        return transform, subject_transform, subject_volume
+        return transform, subject_transform, subject_volume.squeeze(1) if subject_volume is not None else None
 
 
-    @handle_single_or_batch(arg_index=[1, 2])
+    @handle_single_or_batch(arg_specs=[(1, 3), (2, 3)])
     def from_standard(
         self,
         transform: torch.Tensor,
         subject_trajectory: torch.Tensor | None = None,
         subject_volume: torch.Tensor | None = None
-    ) -> tuple[torch.Tensor, None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         trajectory = self.transform_to_sim6dof(transform)
-        return trajectory, subject_trajectory, subject_volume
+        
+        if subject_trajectory is not None:
+            subject_position = subject_trajectory[..., :3, 3]
+            subject_rotation_matrix = subject_trajectory[..., :3, :3]
+            subject_rotation = matrix_to_euler_angles(subject_rotation_matrix, convention="XYZ")
+            
+            subject_traj = torch.cat([subject_position, subject_rotation], dim=-1)
+        else:
+            subject_traj = None
+        
+        return trajectory, subject_traj, subject_volume.unsqueeze(1) if subject_volume is not None else None

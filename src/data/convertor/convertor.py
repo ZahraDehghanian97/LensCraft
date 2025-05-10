@@ -3,8 +3,7 @@ import torch
 from .base_convertor import BaseConvertor
 from data.convertor.utils import handle_single_or_batch, resample_batch_trajectories
 
-
-@handle_single_or_batch(arg_index=[2, 3, 5])
+@handle_single_or_batch(arg_specs=[(2, 2), (3, 2), (5, 0)])
 def convert(
     source_convertor: BaseConvertor,
     target_convertor: BaseConvertor,
@@ -21,7 +20,7 @@ def convert(
     return trajectory, subject_trajectory, subject_volume, padding_mask
 
 
-@handle_single_or_batch(arg_index=[2, 3, 5])
+@handle_single_or_batch(arg_specs=[(2, 2), (3, 2), (5, 1)])
 def convert_to_target(
     source: str,
     target: str,

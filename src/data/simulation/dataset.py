@@ -111,13 +111,13 @@ class SimulationDataset(Dataset):
         
         if "type" in self.target and self.target["type"] != "simulation":
             camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-                source="simulation",
-                target=self.target["type"],
-                trajectory=camera_trajectory,
-                subject_trajectory=subject_trajectory,
-                subject_volume=subject_volume,
-                padding_mask=padding_mask,
-                target_len=self.target.get("seq_length", 30)
+                "simulation",
+                self.target["type"],
+                camera_trajectory,
+                subject_trajectory,
+                subject_volume,
+                padding_mask,
+                self.target.get("seq_length", 30)
             )
         else:
             padding_mask = torch.zeros(30, dtype=torch.bool)
