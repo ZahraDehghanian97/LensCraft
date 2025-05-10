@@ -22,39 +22,38 @@ class ETConvertor(BaseConvertor):
 
         raw_trans = torch.clone(matrix_trajectory[..., :3, 3])
         if self.velocity:
-            velocity = raw_trans[1:] - raw_trans[:-1]
-            raw_trans = torch.cat([raw_trans[0][None], velocity])
+            velocity = raw_trans[:, 1:] - raw_trans[:, :-1]
+            raw_trans = torch.cat([raw_trans[:, 0:1], velocity], dim=1)
         if self.standardize:
-            raw_trans[0] -= self.shift_mean.to(device)
-            raw_trans[0] /= self.shift_std.to(device)
-            raw_trans[1:] -= self.norm_mean.to(device)
-            raw_trans[1:] /= self.norm_std.to(device)
+            raw_trans[:, 0] -= self.shift_mean.to(device)
+            raw_trans[:, 0] /= self.shift_std.to(device)
+            raw_trans[:, 1:] -= self.norm_mean.to(device)
+            raw_trans[:, 1:] /= self.norm_std.to(device)
 
         rot_matrices = matrix_trajectory[..., :3, :3]
         rot6d = matrix_to_rotation_6d(rot_matrices)
         
-        return torch.cat([rot6d.reshape(-1, 6), raw_trans], dim=-1).permute(1, 0)
+        return torch.cat([rot6d, raw_trans], dim=-1)
+        
 
     @handle_single_or_batch(arg_specs=[(1, 2)])
-    def get_matrix(self, raw_rot6d_trajectory):
-        rot6d_trajectory = torch.clone(raw_rot6d_trajectory)
+    def get_matrix(self, rot6d_trajectory):
         device = rot6d_trajectory.device
-
+        batch_size = rot6d_trajectory.shape[0]
         num_cams = rot6d_trajectory.shape[1]
-        matrix_trajectory = torch.eye(4, device=device).expand(num_cams, 4, 4).clone()
+        
+        matrix_trajectory = torch.eye(4, device=device).expand(batch_size, num_cams, 4, 4).clone()
 
-        raw_trans = rot6d_trajectory[6:].permute(1, 0)
+        raw_trans = rot6d_trajectory[..., 6:]
         if self.standardize:
-            raw_trans[0] *= self.shift_std.to(device)
-            raw_trans[0] += self.shift_mean.to(device)
-            raw_trans[1:] *= self.norm_std.to(device)
-            raw_trans[1:] += self.norm_mean.to(device)
+            raw_trans[:, 0] *= self.shift_std.to(device)
+            raw_trans[:, 0] += self.shift_mean.to(device)
+            raw_trans[:, 1:] *= self.norm_std.to(device)
+            raw_trans[:, 1:] += self.norm_mean.to(device)
         if self.velocity:
-            raw_trans = torch.cumsum(raw_trans, dim=0)
+            raw_trans = torch.cumsum(raw_trans, dim=1)
         matrix_trajectory[..., :3, 3] = raw_trans
-
-        rot6d = rot6d_trajectory[:6].permute(1, 0).reshape(-1, 6)
-        matrix_trajectory[..., :3, :3] = rotation_6d_to_matrix(rot6d)
+        matrix_trajectory[..., :3, :3] = rotation_6d_to_matrix(rot6d_trajectory[..., :6])
 
         return matrix_trajectory
 
@@ -95,7 +94,7 @@ class ETConvertor(BaseConvertor):
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:        
         processed_subject_trajectory = None
         if subject_trajectory is not None:
-            processed_subject_trajectory = subject_trajectory[..., :3]
+            processed_subject_trajectory = subject_trajectory[..., :3, 3]
             
         trajectory = self.get_feature(transform)
         subject_volume = None

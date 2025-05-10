@@ -15,17 +15,13 @@ class SIMConvertor(BaseConvertor):
     
     @handle_single_or_batch(arg_specs=[(1, 2)])
     def sim6dof_to_transform(self, trajectory):
+        batch_size, seq_len = trajectory.shape[:2]
         device = trajectory.device
-        batch_size = trajectory.shape[0]
+        dtype = trajectory.dtype
         
-        position = trajectory[:, :3]
-        euler = trajectory[:, 3:]
-        
-        transform = torch.eye(4, device=device).unsqueeze(0).repeat(batch_size, 1, 1)
-        transform[:, :3, 3] = position
-        
-        rotation_matrix = euler_angles_to_matrix(euler, convention="XYZ")
-        transform[:, :3, :3] = rotation_matrix
+        transform = torch.eye(4, device=device, dtype=dtype).expand(batch_size, seq_len, 4, 4).clone()
+        transform[..., :3, 3] = trajectory[..., :3]
+        transform[..., :3, :3] = euler_angles_to_matrix(trajectory[..., 3:], convention="XYZ")
         
         return transform
 

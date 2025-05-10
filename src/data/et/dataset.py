@@ -31,10 +31,10 @@ class ETDataset(Dataset):
         num_valid_tokens = clip_seq_mask.sum().clamp(min=1)
         averaged_caption_feat = valid_sum / num_valid_tokens
         
-        camera_trajectory = item["traj_feat"]
-        subject_trajectory = item['char_feat']
+        camera_trajectory = item["traj_feat"].permute(1, 0)
+        subject_trajectory = item['char_feat'].permute(1, 0)
         subject_volume = None
-        padding_mask = item['padding_mask'].to(torch.bool)
+        padding_mask = ~item['padding_mask'].to(torch.bool)
         
         if "type" in self.target and self.target["type"] != "et":
             camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(

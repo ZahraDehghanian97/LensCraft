@@ -47,7 +47,7 @@ def handle_single_or_batch(arg_specs=(0, 1), device=None, dtype=None):
             
             if single_flags and any(single_flags.values()):
                 if isinstance(out, tuple):
-                    out = tuple(o.squeeze(0) for o in out)
+                    out = tuple(o.squeeze(0) if o is not None else None for o in out)
                 else:
                     out = out.squeeze(0)
             return out
