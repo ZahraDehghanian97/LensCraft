@@ -43,7 +43,7 @@ def convert_to_target(
         if padding_mask.dtype != torch.bool:
             padding_mask = padding_mask.bool()
         
-        valid_lengths = padding_mask.sum(dim=1)
+        valid_lengths = (~padding_mask).sum(dim=1)
     else:
         valid_lengths = torch.full((trajectory.shape[0],), trajectory.shape[1], dtype=torch.long, device=trajectory.device)
     

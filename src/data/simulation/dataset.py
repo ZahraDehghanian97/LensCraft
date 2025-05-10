@@ -120,7 +120,7 @@ class SimulationDataset(Dataset):
                 target_len=self.target.get("seq_length", 30)
             )
         else:
-            padding_mask = torch.ones(30, dtype=torch.bool)
+            padding_mask = torch.zeros(30, dtype=torch.bool)
 
         return {
             "camera_trajectory": camera_trajectory,
