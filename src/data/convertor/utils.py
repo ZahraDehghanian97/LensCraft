@@ -3,6 +3,7 @@ import functools
 import torch
 import numpy as np
 import torch.nn.functional as F
+from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
 
 def handle_single_or_batch(single_item_dim: int = 1, arg_index=0, device=None, dtype=None):
     if isinstance(arg_index, int):
@@ -59,15 +60,16 @@ def handle_single_or_batch(single_item_dim: int = 1, arg_index=0, device=None, d
 def resample_batch_trajectories(batch_trajectory, current_valid_len, target_len):
     batch_size = batch_trajectory.shape[0]
     max_seq_len = batch_trajectory.shape[1]
-    feature_dims = batch_trajectory.shape[2:]
     device = batch_trajectory.device
     dtype = batch_trajectory.dtype
     
-    resampled_batch = torch.zeros((batch_size, target_len) + feature_dims, device=device, dtype=dtype)
+    resampled_batch = torch.zeros((batch_size, target_len, 4, 4), device=device, dtype=dtype)
+    resampled_batch[:, :, 3, 3] = 1.0
+    
     padding_mask = torch.ones((batch_size, target_len), dtype=torch.bool, device=device)
     
     for i in range(batch_size):
-        valid_len = current_valid_len[i].item()
+        valid_len = current_valid_len[i].item() if current_valid_len is not None else max_seq_len
         
         if valid_len <= 0:
             padding_mask[i, :] = False
@@ -77,26 +79,63 @@ def resample_batch_trajectories(batch_trajectory, current_valid_len, target_len)
         valid_trajectory = batch_trajectory[i, :valid_len]
         
         if valid_len == 1:
-            resampled_batch[i] = valid_trajectory.repeat(target_len, *([1] * len(feature_dims)))
+            resampled_batch[i] = valid_trajectory.repeat(target_len, 1, 1)
             continue
         
-        flat_size = int(torch.prod(torch.tensor(feature_dims))) if feature_dims else 1
-        flattened = valid_trajectory.reshape(valid_len, flat_size)
+        translations = valid_trajectory[:, :3, 3]
         
-        transposed = flattened.T
+        src_times = torch.linspace(0, 1, valid_len, device=device)
+        tgt_times = torch.linspace(0, 1, target_len, device=device)
         
-        resampled_flat = F.interpolate(
-            transposed.unsqueeze(0),
-            size=target_len,
-            mode='linear',
-            align_corners=True
-        ).squeeze(0)
+        interp_translations = torch.zeros((target_len, 3), device=device, dtype=dtype)
+        for dim in range(3):
+            interp_translations[:, dim] = torch.interp(
+                tgt_times, 
+                src_times, 
+                translations[:, dim]
+            )
         
-        resampled_transposed = resampled_flat.T
+        rotations = valid_trajectory[:, :3, :3]
+        quats = matrix_to_quaternion(rotations)
+        interp_quats = torch.zeros((target_len, 4), device=device, dtype=dtype)
+        for t_idx, t in enumerate(tgt_times):
+            if t <= src_times[0]:
+                interp_quats[t_idx] = quats[0]
+            elif t >= src_times[-1]:
+                interp_quats[t_idx] = quats[-1]
+            else:
+                next_idx = torch.searchsorted(src_times, t)
+                prev_idx = next_idx - 1
+                
+                q1 = quats[prev_idx]
+                q2 = quats[next_idx]
+                
+                t1 = src_times[prev_idx]
+                t2 = src_times[next_idx]
+                alpha = (t - t1) / (t2 - t1)
+                
+                dot_product = torch.sum(q1 * q2)
+                
+                if dot_product < 0:
+                    q2 = -q2
+                    dot_product = -dot_product
+                    
+                if dot_product > 0.9995:
+                    interp_quats[t_idx] = q1 + alpha * (q2 - q1)
+                    interp_quats[t_idx] /= torch.norm(interp_quats[t_idx])
+                else:
+                    theta = torch.acos(torch.clamp(dot_product, -1.0, 1.0))
+                    sin_theta = torch.sin(theta)
+                    
+                    interp_quats[t_idx] = (
+                        torch.sin((1.0 - alpha) * theta) / sin_theta * q1 +
+                        torch.sin(alpha * theta) / sin_theta * q2
+                    )
+
+        interp_rotations = quaternion_to_matrix(interp_quats)
         
-        if feature_dims:
-            resampled_batch[i] = resampled_transposed.reshape((target_len,) + feature_dims)
-        else:
-            resampled_batch[i] = resampled_transposed.squeeze(-1)
-    
+        resampled_batch[i, :, :3, :3] = interp_rotations
+        resampled_batch[i, :, :3, 3] = interp_translations
+        resampled_batch[i, :, 3, :3] = 0.0
+        
     return resampled_batch, padding_mask
