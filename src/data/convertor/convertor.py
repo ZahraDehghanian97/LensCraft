@@ -1,9 +1,6 @@
 import torch
 
-from base_convertor import BaseConvertor
-from data.ccdm.convertor import CCDMConvertor
-from data.simulation.convertor import SIMConvertor
-from data.et.convertor import ETConvertor
+from .base_convertor import BaseConvertor
 from data.convertor.utils import handle_single_or_batch, resample_batch_trajectories
 
 
@@ -24,12 +21,6 @@ def convert(
     return trajectory, subject_trajectory, subject_volume, padding_mask
 
 
-convertors = {
-    "ccdm": CCDMConvertor(),
-    "et": ETConvertor(),
-    "simulation": SIMConvertor(),
-}
-
 @handle_single_or_batch(arg_index=[2, 3, 5])
 def convert_to_target(
     source: str,
@@ -38,11 +29,16 @@ def convert_to_target(
     subject_trajectory: torch.Tensor | None = None,
     subject_volume: torch.Tensor | None = None,
     padding_mask: torch.Tensor | None = None,
-    target_len=30
+    target_len=30,
+    convertors=None
 ):
     if source == target:
         return trajectory, subject_trajectory, subject_volume, padding_mask
     
+    
+    if convertors is None:
+        from .constant import default_convertors
+        convertors = default_convertors
     if padding_mask is not None:
         if padding_mask.dtype != torch.bool:
             padding_mask = padding_mask.bool()

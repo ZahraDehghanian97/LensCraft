@@ -6,7 +6,7 @@ import logging
 import gdown
 
 from models.clip_embeddings import CLIPEmbedder
-from data.convertor import camera_ccdm_to_sim, subject_ccdm_to_sim
+from data.convertor.convertor import convert_to_target
 
 logger = logging.getLogger(__name__)
 
@@ -108,20 +108,21 @@ class CCDMAdapter:
             denormalized = generated * self.std[None, None, :] + self.mean[None, None, :]
             smoothed_batch = self._smooth_trajectory_batch(denormalized)
             
-            camera_trajectory_sim, padding_mask = camera_ccdm_to_sim(
-                smoothed_batch,
-                self.sim_seq_len,
-                self.tan_half_fov_x,
-                self.tan_half_fov_y,
+            camera_trajectory_sim, subject_loc_rot, subject_volume, padding_mask = convert_to_target(
+                source="ccdm",
+                target="simulation",
+                trajectory=smoothed_batch,
+                subject_trajectory=None,
+                subject_volume=None,
+                padding_mask=None,
+                target_len=self.sim_seq_len
             )
-            
-            subject_loc_rot, subject_volume = subject_ccdm_to_sim(seq_len=self.seq_len)
             
             return {
                 "camera_trajectory": camera_trajectory_sim,
                 "subject_trajectory": subject_loc_rot,
                 "subject_volume": subject_volume,
-                "padding_mask": None if padding_mask is None else ~padding_mask,
+                "padding_mask": padding_mask,
                 "caption_feat": text_embeddings,
                 "raw_text": text_prompts,
                 "original_camera_trajectory": smoothed_batch,

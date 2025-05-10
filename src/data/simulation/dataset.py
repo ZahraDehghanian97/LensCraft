@@ -119,6 +119,8 @@ class SimulationDataset(Dataset):
                 padding_mask=padding_mask,
                 target_len=self.target.get("seq_length", 30)
             )
+        else:
+            padding_mask = torch.ones(30, dtype=torch.bool)
 
         return {
             "camera_trajectory": camera_trajectory,
@@ -179,7 +181,7 @@ def collate_fn(batch):
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
         "subject_volume": torch.stack([item["subject_volume"] for item in batch]),
-        "padding_mask": torch.stack([item["padding_mask"] for item in batch]),
+        "padding_mask": torch.stack([item.get("padding_mask", None) for item in batch]),
         "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
         "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
         "simulation_instruction_parameters": [
