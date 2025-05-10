@@ -39,7 +39,20 @@ class SIMConvertor(BaseConvertor):
         subject_volume: None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         transform = self.sim6dof_to_transform(trajectory)
-        return transform, subject_trajectory, subject_volume
+        
+        if subject_trajectory is not None:
+            batch_size, seq_len = subject_trajectory.shape[:2]
+            device = subject_trajectory.device
+            dtype = subject_trajectory.dtype
+            
+            subject_transform = torch.eye(4, device=device, dtype=dtype).expand(batch_size, seq_len, 4, 4).clone()
+            subject_transform[..., :3, 3] = subject_trajectory[..., :3]
+            subject_transform[..., :3, :3] = torch.eye(3, device=device, dtype=dtype)
+        else:
+            subject_transform = torch.eye(4, device=trajectory.device, dtype=trajectory.dtype).expand_as(transform).clone()
+
+        return transform, subject_transform, subject_volume
+
 
     @handle_single_or_batch(arg_index=[1, 2])
     def from_standard(

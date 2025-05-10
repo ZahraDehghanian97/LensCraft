@@ -80,12 +80,22 @@ class CCDMConvertor(BaseConvertor):
         subject_trajectory: None = None,
         subject_volume: None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        subject_trajectory = torch.zeros(trajectory.shape[:2] + (6), dtype=torch.float32)
-        subject_position = subject_trajectory[..., :3]
-        subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=torch.float32)
+        batch_size, seq_len = trajectory.shape[:2]
+        device = trajectory.device
+        dtype = trajectory.dtype
+
+        subject_position = torch.zeros((batch_size, seq_len, 3), device=device, dtype=dtype)
+        subject_rot = torch.eye(3, device=device, dtype=dtype).expand(batch_size, seq_len, 3, 3)
+        
+        subject_transform = torch.eye(4, device=device, dtype=dtype).expand(batch_size, seq_len, 4, 4).clone()
+        subject_transform[..., :3, :3] = subject_rot
+        subject_transform[..., :3, 3] = subject_position
 
         transform = self.convert_ccdm_to_transform(trajectory, subject_position)
-        return transform, subject_trajectory, subject_volume
+        subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=dtype, device=device)
+
+        return transform, subject_transform, subject_volume
+
 
     @handle_single_or_batch(arg_index=[1, 2])
     def from_standard(
