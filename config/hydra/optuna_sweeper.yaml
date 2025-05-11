@@ -21,22 +21,23 @@ sweeper:
   params:
     trainer.max_epochs: 20
     data.num_workers: 0 # 1 
-    training.model.num_encoder_layers: choice(4, 6, 8)
-    training.model.num_decoder_layers: choice(8, 4, 6)
-    training.model.nhead: choice(4, 8) #16
-    training.model.dim_feedforward: choice(1024, 2048, 4096)
-    training.model.dropout_rate: interval(0.1, 0.5)
+    training.model.module.num_encoder_layers: choice(4, 6, 8)
+    training.model.module.num_decoder_layers: choice(8, 4, 6)
+    training.model.module.nhead: choice(4, 8) #16
+    training.model.module.dim_feedforward: choice(1024, 2048, 4096)
+    training.model.module.dropout_rate: interval(0.1, 0.5)
     
     training.optimizer.lr: tag(log, interval(5e-8, 5e-5))
     # training.optimizer.weight_decay: tag(log, interval(0.001, 0.2))
     # training.optimizer.betas.0: interval(0.8, 0.95)
     # training.optimizer.betas.1: interval(0.9, 0.999)
     
-    training.loss_module.clip_loss_scaling_factor: interval(80, 1000)
-    training.loss_module.cycle_loss_scaling_factor: interval(40, 500)
-    # training.loss_module.trajectory_loss_scaling_factor: interval(0.5, 15.0)
-    training.loss_module.contrastive_loss_scaling_factor: interval(1, 40)
-    # training.loss_module.angle_loss_scaling_factor: interval(100, 250)
+    training.loss_module.losses_list.clip: interval(200, 800)
+    training.loss_module.losses_list.first_frame: interval(1, 5)
+    training.loss_module.losses_list.relative: interval(4, 20)
+    training.loss_module.losses_list.speed: interval(60, 200)
+    training.loss_module.losses_list.cycle: interval(200, 800)
+    training.loss_module.losses_list.contrastive: interval(5, 20)
     
     training.lr_scheduler.warmup_steps: choice(5, 10, 15)
     training.lr_scheduler.rate: interval(0.4, 0.8)
