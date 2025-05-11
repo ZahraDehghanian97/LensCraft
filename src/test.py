@@ -13,7 +13,7 @@ from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
 from testing.metrics.callback import MetricCallback
 from utils.checkpoint import load_checkpoint
-from visualization import tSNE_visualize_embeddings
+from src.visualization.visualization_utils import tSNE_visualize_embeddings
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
 from testing.ccdm import process_ccdm_batch

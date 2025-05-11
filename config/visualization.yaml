@@ -49,13 +49,12 @@ plot:
 metrics:
   losses_list:
     - clip
-    - trajectory
     - contrastive
+    - first_frame_loss
+    - relative_loss
+    - speed
+    - cycle
     - total
-
-  trajectory:
-    - val_trajectory_epoch
-    - train_trajectory_epoch
 
   contrastive:
     - val_contrastive_epoch
@@ -64,6 +63,23 @@ metrics:
   total_loss:
     - val_total_epoch
     - train_total_epoch
+  
+  first_frame_loss:
+    - val_first_frame_epoch
+    - train_first_frame_epoch
+
+  relative_loss:
+    - val_relative_epoch
+    - train_relative_epoch
+  
+  speed_loss:
+    - val_speed_epoch
+    - train_speed_epoch
+
+  cycle_loss:
+    - val_cycle_epoch
+    - train_cycle_epoch
+    
 
   clips:
     num_clips: 28
@@ -155,38 +171,38 @@ color_map:
 
 clip_structure:
   cinematography:
-    initial:       # parameter:
-      - clip_0     # initial_cameraAngle
-      - clip_1     # initial_shotSize
-      - clip_2     # initial_subjectView
-      - clip_3     # initial_subjectFraming
-    movement:      #   
-      - clip_4     # movement_type
-      - clip_5     # movement_speed
-    final:         #   
-      - clip_6     # final_cameraAngle
-      - clip_7     # final_shotSize
-      - clip_8     # final_subjectView
-      - clip_9     # final_subjectFraming
-  simulation:      #    
-    initial_setup: #   
-      - clip_10    # initialSetup_cameraAngle
-      - clip_11    # initialSetup_shotSize
-      - clip_12    # initialSetup_subjectView
-      - clip_13    # initialSetup_subjectFraming_position
-      - clip_14    # initialSetup_subjectFraming_dutchAngleScale
-    dynamic:       #   
-      - clip_15    # dynamic_easing
-      - clip_16    # dynamic_endSetup_cameraAngle
-      - clip_17    # dynamic_endSetup_shotSize
-      - clip_18    # dynamic_endSetup_subjectView
-      - clip_19    # dynamic_endSetup_subjectFraming_position
-      - clip_20    # dynamic_endSetup_subjectFraming_dutchAngleScale
-      - clip_21    # dynamic_endSetup_subjectAwareInterpolation
-      - clip_22    # dynamic_scale
-      - clip_23    # dynamic_direction
-      - clip_24    # dynamic_movementMode
-    constraints:   #   
-      - clip_25    # constraints_allFramesVisibility
-      - clip_26    # constraints_staticDistance
-      - clip_27    # constraints_staticCameraSubjectRotation
+    initial:    
+      - clip_elements_0     # initial_cameraAngle
+      - clip_elements_1     # initial_shotSize
+      - clip_elements_2     # initial_subjectView
+      - clip_elements_3     # initial_subjectFraming
+    movement:        
+      - clip_elements_4     # movement_type
+      - clip_elements_5     # movement_speed
+    final:           
+      - clip_elements_6     # final_cameraAngle
+      - clip_elements_7     # final_shotSize
+      - clip_elements_8     # final_subjectView
+      - clip_elements_9     # final_subjectFraming
+  simulation:         
+    initial_setup:   
+      - clip_elements_10    # initialSetup_cameraAngle
+      - clip_elements_11    # initialSetup_shotSize
+      - clip_elements_12    # initialSetup_subjectView
+      - clip_elements_13    # initialSetup_subjectFraming_position
+      - clip_elements_14    # initialSetup_subjectFraming_dutchAngleScale
+    dynamic:       
+      - clip_elements_15    # dynamic_easing
+      - clip_elements_16    # dynamic_endSetup_cameraAngle
+      - clip_elements_17    # dynamic_endSetup_shotSize
+      - clip_elements_18    # dynamic_endSetup_subjectView
+      - clip_elements_19    # dynamic_endSetup_subjectFraming_position
+      - clip_elements_20    # dynamic_endSetup_subjectFraming_dutchAngleScale
+      - clip_elements_21    # dynamic_endSetup_subjectAwareInterpolation
+      - clip_elements_22    # dynamic_scale
+      - clip_elements_23    # dynamic_direction
+      - clip_elements_24    # dynamic_movementMode
+    constraints:    
+      - clip_elements_25    # constraints_allFramesVisibility
+      - clip_elements_26    # constraints_staticDistance
+      - clip_elements_27    # constraints_staticCameraSubjectRotation

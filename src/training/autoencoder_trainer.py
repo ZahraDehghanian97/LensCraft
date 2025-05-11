@@ -51,7 +51,7 @@ class LightningMultiTaskAutoencoder(BaseTrainer):
         
         [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
         
-        compute_cycle = self.use_cycle_consistency and stage == "train" and self.dataset_mode == 'simulation'
+        compute_cycle = self.use_cycle_consistency and self.dataset_mode == 'simulation'
         
         output = self._forward_step(
             camera_trajectory,
