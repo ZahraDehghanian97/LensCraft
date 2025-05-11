@@ -105,7 +105,7 @@ class CCDMConvertor(BaseConvertor):
         subject_volume: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, None]:
         subject_position = (
-            subject_trajectory[..., :3] if subject_trajectory is not None else None
+            subject_trajectory[..., :3, 3] if subject_trajectory is not None else None
         )
         trajectory = self.transform_to_ccdm(transform, subject_position)
         subject_trajectory = None
