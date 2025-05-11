@@ -55,9 +55,14 @@ def main(cfg: DictConfig) -> None:
     elif model_type == "et":
         model = ETAdapter(cfg.training.model.inference, device)
     elif model_type in "simulation":
-        checkpoint_cfg_path = to_absolute_path(cfg.training.model.inference.config)
-        checkpoint_cfg  = OmegaConf.load(checkpoint_cfg_path)
-        model: MultiTaskAutoencoder = instantiate(checkpoint_cfg.training.model.module)
+        model_config = None
+        if cfg.training.model.inference.config:
+            checkpoint_cfg_path = to_absolute_path(cfg.training.model.inference.config)
+            if os.path.exists(checkpoint_cfg_path):
+                model_config = OmegaConf.load(checkpoint_cfg_path).training.model.module
+        if model_config is None: 
+            model_config = cfg.training.model.module
+        model: MultiTaskAutoencoder = instantiate(model_config)
         model = load_checkpoint(cfg.training.model.inference.checkpoint_path, model, device)
         model.to(device)
         model.eval()
