@@ -28,7 +28,7 @@ class Decoder(nn.Module):
 
         if tgt_key_padding_mask is not None:
             batch_size = tgt_key_padding_mask.shape[0]
-            subject_volume_mask = torch.ones((batch_size, 1), dtype=torch.bool, device=tgt_key_padding_mask.device)
+            subject_volume_mask = torch.zeros((batch_size, 1), dtype=torch.bool, device=tgt_key_padding_mask.device)
             tgt_key_padding_mask = torch.cat(
                 [tgt_key_padding_mask, subject_volume_mask, tgt_key_padding_mask], dim=1)
 

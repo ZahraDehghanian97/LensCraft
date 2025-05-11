@@ -102,18 +102,18 @@ class CameraTrajectoryLoss:
             first_frame_loss, relative_loss, speed_loss = self.compute_trajectory_loss(trajectory_pred, trajectory_target)
             
             if self.losses_list.get("first_frame", 0):
-                loss_dict["first_frame"] = first_frame_loss.item()
+                loss_dict["first_frame"] = first_frame_loss
             
             if self.losses_list.get("relative", 0):
-                loss_dict["relative"] = relative_loss.item()
+                loss_dict["relative"] = relative_loss
             
             if self.losses_list.get("speed", 0):
-                loss_dict["speed"] = speed_loss.item()
+                loss_dict["speed"] = speed_loss
 
 
         if self.losses_list.get("contrastive", 0):
             contrastive_loss = self.compute_contrastive_loss(clip_pred, clip_target, batch)
-            loss_dict["contrastive"] = contrastive_loss.item()
+            loss_dict["contrastive"] = contrastive_loss
 
 
 

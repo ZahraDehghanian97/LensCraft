@@ -156,7 +156,7 @@ class BaseTrainer(L.LightningModule):
             )
             cycle_embeddings = self.model.encoder(
                 noisy_masked_trajectory,
-                output["subject_embedding_loc_rot_vol"],
+                output["subject_embedding"],
                 src_key_mask
             )
             output['cycle_embeddings'] = cycle_embeddings
