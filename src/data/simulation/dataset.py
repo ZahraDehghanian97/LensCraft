@@ -177,14 +177,16 @@ class SimulationDataset(Dataset):
         return loc_rot, vol
 
 def collate_fn(batch):
-    if len(batch) > 0:
-        if batch[0]['subject_volume'] is None:
-            subject_volume = None
-        if batch[0]['subject_trajectory'] is None:
-            subject_trajectory = None
+    if len(batch) > 0 and batch[0]['subject_volume'] is None:
+        subject_volume = None
     else:
         subject_volume = torch.stack([item["subject_volume"] for item in batch])
+        
+    if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
+        subject_trajectory = None
+    else:
         subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
+    
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": subject_trajectory,
