@@ -35,13 +35,13 @@ class CCDMAdapter:
         ddpm = DDPM(nn_model=transformer, betas=(1e-4, 0.02), n_T=self.n_T, device=self.device)
         ddpm.to(self.device)
         
-        if not os.path.exists(self.config.ccdm_checkpoint_path):
-            logger.info(f"Checkpoint file not found at {self.config.ccdm_checkpoint_path}, downloading...")
-            os.makedirs(os.path.dirname(self.config.ccdm_checkpoint_path), exist_ok=True)
-            gdown.download(id="136IZeL4PSf9L6FJ4n_jFM6QFLTDjbvr1", output=self.config.ccdm_checkpoint_path, quiet=False)
-            logger.info(f"Downloaded checkpoint to {self.config.ccdm_checkpoint_path}")
+        if not os.path.exists(self.config.checkpoint_path):
+            logger.info(f"Checkpoint file not found at {self.config.checkpoint_path}, downloading...")
+            os.makedirs(os.path.dirname(self.config.checkpoint_path), exist_ok=True)
+            gdown.download(id="136IZeL4PSf9L6FJ4n_jFM6QFLTDjbvr1", output=self.config.checkpoint_path, quiet=False)
+            logger.info(f"Downloaded checkpoint to {self.config.checkpoint_path}")
         
-        ddpm.load_state_dict(torch.load(self.config.ccdm_checkpoint_path, map_location=self.device))
+        ddpm.load_state_dict(torch.load(self.config.checkpoint_path, map_location=self.device))
         ddpm.eval()
         
         clip_embedder = CLIPEmbedder(
@@ -50,8 +50,8 @@ class CCDMAdapter:
             chunk_size=getattr(self.config, "chunk_size", 100)
         )
         
-        mean_std_path = os.path.join(os.path.dirname(self.config.ccdm_data_dir), "Mean_Std.npy")
-        data_path = os.path.join(os.path.dirname(self.config.ccdm_data_dir), "data.npy")
+        mean_std_path = os.path.join(self.config.data_dir, "Mean_Std.npy")
+        data_path = os.path.join(self.config.data_dir, "data.npy")
         
         if not os.path.exists(data_path):
             logger.info(f"Data file not found at {data_path}, downloading...")

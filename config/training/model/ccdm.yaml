@@ -3,6 +3,6 @@ data_format:
   seq_length: 300
 
 inference:
-  checkpoint_path: "third_parties/Camera-control/[2024][EG]Text+keyframe/weight/latest.pth"
+  checkpoint_path: ${oc.env:CCDM_CHECKPOINT_PATH}
   data_dir: ${oc.env:CCDM_DATA_DIR}
   guidance_scale: 2.0

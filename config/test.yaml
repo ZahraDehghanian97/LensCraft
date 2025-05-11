@@ -8,4 +8,4 @@ defaults:
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 device: cuda
 
-caption_top1_metric: true
+caption_top1_metric: false
