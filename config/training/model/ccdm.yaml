@@ -1,0 +1,8 @@
+data_format: 
+  type: ccdm
+  seq_length: 300
+
+inference:
+  checkpoint_path: "third_parties/Camera-control/[2024][EG]Text+keyframe/weight/latest.pth"
+  data_dir: ${oc.env:CCDM_DATA_DIR}
+  guidance_scale: 2.0

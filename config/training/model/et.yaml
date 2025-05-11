@@ -1,0 +1,7 @@
+data_format: 
+  type: et
+  seq_length: 300
+
+inference:
+  project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
+  dataset_dir: ${oc.env:ET_DATA_DIR}

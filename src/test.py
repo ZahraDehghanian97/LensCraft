@@ -7,13 +7,14 @@ import torch
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
+from hydra.utils import to_absolute_path
 from tqdm import tqdm
 
 from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
 from testing.metrics.callback import MetricCallback
 from utils.checkpoint import load_checkpoint
-from src.visualization.visualization_utils import tSNE_visualize_embeddings
+from visualization.tsne import tSNE_visualize_embeddings
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
 from testing.ccdm import process_ccdm_batch
@@ -38,23 +39,26 @@ def main(cfg: DictConfig) -> None:
         OmegaConf.register_new_resolver("eval", eval)
 
     clip_embeddings = None
-    if cfg.get("caption_top1_metric", False):
+    
+    model_type = cfg.training.model.data_format.get("type", "simulation")
+    if model_type == "simulation" and cfg.get("caption_top1_metric", False):
         from data.simulation.init_embeddings import initialize_all_clip_embeddings
-        clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
+        clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.training.model.inference.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
 
-    model_type = cfg.model_config.get("type", "simulation")
     model = None
 
     if model_type == "ccdm":
         if CCDMAdapter is None:
             raise ImportError("CCDM adapter not found. Please ensure models/ccdm_adapter.py exists.")
         logger.info("Using CCDM model for inference")
-        model = CCDMAdapter(cfg.model_config, device)
+        model = CCDMAdapter(cfg.training.model.inference, device)
     elif model_type == "et":
-        model = ETAdapter(cfg.model_config, device)
+        model = ETAdapter(cfg.training.model.inference, device)
     elif model_type in "simulation":
-        model: MultiTaskAutoencoder = instantiate(cfg.training.model.module)
-        model = load_checkpoint(cfg.model_config.checkpoint_path, model, device)
+        checkpoint_cfg_path = to_absolute_path(cfg.training.model.inference.config)
+        checkpoint_cfg  = OmegaConf.load(checkpoint_cfg_path)
+        model: MultiTaskAutoencoder = instantiate(checkpoint_cfg.training.model.module)
+        model = load_checkpoint(cfg.training.model.inference.checkpoint_path, model, device)
         model.to(device)
         model.eval()
     else:

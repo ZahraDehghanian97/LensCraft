@@ -15,3 +15,8 @@ module:
   latent_dim: ${clip.latent_dim}
   use_merged_memory: ${training.use_merged_memory}
   denormalize_memory: false
+
+inference:
+  checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH}
+  config: ${oc.env:TEST_CONFIG_PATH}
+  clip_embeddings_cache: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
