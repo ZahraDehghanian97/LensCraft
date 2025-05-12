@@ -69,6 +69,7 @@ def main(cfg: DictConfig) -> None:
     batch_dir = Path(cfg.output.batch_dir)
     results_dir = Path(cfg.output.results_dir)
     output_dir = Path(cfg.output.annotations_dir)
+    num_batches = 10
 
     for p in (batch_dir, results_dir, output_dir):
         p.mkdir(exist_ok=True)
@@ -97,13 +98,13 @@ def main(cfg: DictConfig) -> None:
                (batch["item_ids"] if dataset_type == "et" else range(len(batch["text_prompts"])))]
         prompt_id_pairs.extend(list(zip(batch["text_prompts"], ids)))
     
-    batches = split_into_batches(prompt_id_pairs, num_batches=5)
+    batches = split_into_batches(prompt_id_pairs, num_batches=num_batches)
     
     for i, batch in enumerate(batches):
         batch_file = batch_dir / f"{dataset_type}_dataset_batch_{i+1}.jsonl"
         create_openai_batch_file(batch, str(batch_file))
     
-    logger.info(f"Created 5 batch files in {batch_dir}")
+    logger.info(f"Created {num_batches} batch files in {batch_dir}")
 
 if __name__ == "__main__":
     main()

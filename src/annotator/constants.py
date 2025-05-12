@@ -199,10 +199,36 @@ CINEMATOGRAPHY_JSON_SCHEMA = {
                         "final": {
                             "type": "object",
                             "properties": {
-                                "cameraAngle": {"$ref": "#/schema/properties/cinematographyPrompts/items/properties/initial/properties/cameraAngle"},
-                                "shotSize":   {"$ref": "#/schema/properties/cinematographyPrompts/items/properties/initial/properties/shotSize"},
-                                "subjectView":{"$ref": "#/schema/properties/cinematographyPrompts/items/properties/initial/properties/subjectView"},
-                                "subjectFraming":{"$ref": "#/schema/properties/cinematographyPrompts/items/properties/initial/properties/subjectFraming"},
+                                "cameraAngle": {
+                                    "type": "string",
+                                    "enum": [
+                                        "low", "eye", "high", "overhead", "birdsEye"
+                                    ]
+                                },
+                                "shotSize": {
+                                    "type": "string",
+                                    "enum": [
+                                        "extremeCloseUp", "closeUp", "mediumCloseUp",
+                                        "mediumShot", "fullShot", "longShot",
+                                        "veryLongShot", "extremeLongShot"
+                                    ]
+                                },
+                                "subjectView": {
+                                    "type": "string",
+                                    "enum": [
+                                        "front", "back", "left", "right",
+                                        "threeQuarterFrontLeft", "threeQuarterFrontRight",
+                                        "threeQuarterBackLeft", "threeQuarterBackRight"
+                                    ]
+                                },
+                                "subjectFraming": {
+                                    "type": "string",
+                                    "enum": [
+                                        "left", "right", "top", "bottom", "center",
+                                        "topLeft", "topRight", "bottomLeft", "bottomRight",
+                                        "outerLeft", "outerRight", "outerTop", "outerBottom"
+                                    ]
+                                },
                             },
                             "required": [
                                 "cameraAngle", "shotSize", "subjectView", "subjectFraming"
