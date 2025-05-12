@@ -3,7 +3,8 @@ _target_: training.autoencoder_trainer.LightningMultiTaskAutoencoder
 defaults:
   - model: default
   - optimizer: adamW
-  - lr_scheduler: root_warmup_cosine  
+  - lr_scheduler: root_warmup_cosine
+  - sim_model: default
 
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss

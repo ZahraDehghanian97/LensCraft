@@ -5,6 +5,10 @@ defaults:
   - training: default
   - hydra: default
 
+sim_model: 
+  module: ${training.sim_model.module}
+  inference: ${training.sim_model.inference}
+
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 device: cuda
 

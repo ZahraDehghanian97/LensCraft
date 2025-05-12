@@ -5,20 +5,16 @@ from typing import Literal
 import hydra
 import torch
 from hydra.core.global_hydra import GlobalHydra
-from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-from hydra.utils import to_absolute_path
 from tqdm import tqdm
 
-from models.camera_trajectory_model import MultiTaskAutoencoder
 from data.datamodule import CameraTrajectoryDataModule
+from testing.lens_craft import load_simulation_model
+from testing.process import test_batch
 from testing.metrics.callback import MetricCallback
-from utils.checkpoint import load_checkpoint
 from visualization.tsne import tSNE_visualize_embeddings
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
-from testing.ccdm import process_ccdm_batch
-from testing.lens_craft import process_lens_craft_batch
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -26,6 +22,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 DatasetType = Literal["ccdm", "et", "simulation"]
+
 
 @hydra.main(version_base=None, config_path="../config", config_name="test")
 def main(cfg: DictConfig) -> None:
@@ -46,29 +43,20 @@ def main(cfg: DictConfig) -> None:
         clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.training.model.inference.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
 
     model = None
-
-    if model_type == "ccdm":
-        if CCDMAdapter is None:
-            raise ImportError("CCDM adapter not found. Please ensure models/ccdm_adapter.py exists.")
-        logger.info("Using CCDM model for inference")
-        model = CCDMAdapter(cfg.training.model.inference, device)
-    elif model_type == "et":
-        model = ETAdapter(cfg.training.model.inference, device)
-    elif model_type in "simulation":
-        model_config = None
-        if cfg.training.model.inference.config:
-            checkpoint_cfg_path = to_absolute_path(cfg.training.model.inference.config)
-            if os.path.exists(checkpoint_cfg_path):
-                model_config = OmegaConf.load(checkpoint_cfg_path).training.model.module
-        if model_config is None: 
-            model_config = cfg.training.model.module
-        model: MultiTaskAutoencoder = instantiate(model_config)
-        model = load_checkpoint(cfg.training.model.inference.checkpoint_path, model, device)
-        model.to(device)
-        model.eval()
+    sim_model = None
+    
+    if model_type == "simulation":
+        model = load_simulation_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.module, device=device)
+        sim_model = model
     else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-
+        if model_type == "ccdm":
+            model = CCDMAdapter(cfg.training.model.inference, device)
+        elif model_type == "et":
+            model = ETAdapter(cfg.training.model.inference, device)        
+        else:
+            raise ValueError(f"Unsupported model type: {model_type}")
+        sim_model = load_simulation_model(model_module=cfg.sim_model.module, model_inference=cfg.sim_model.inference, device=device)
+    
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
@@ -96,39 +84,31 @@ def main(cfg: DictConfig) -> None:
             else ["reconstruction"]
         )
 
-    metric_features = {metric_type: {"GT": None, "GEN": None} for metric_type in metric_items}
 
     with torch.no_grad():
         for batch in tqdm(test_dataloader):
-            text_prompts = batch["text_prompts"]
-            subject_trajectory = batch["subject_trajectory"]
-            padding_mask = batch.get("padding_mask", None)
-            if model_type == "ccdm":
-                process_ccdm_batch(model, batch, metric_callback, device)
-            elif model_type == "et":
-                model.generate_using_text(text_prompts, subject_trajectory, padding_mask)
-            else:
-                process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
+            test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation')
 
-        for metric_type in metric_items:
-            if metric_type in metric_callback.active_metrics:
-                if metric_type in metric_callback.metrics and "clatr_prdc" in metric_callback.metrics[metric_type]:
-                    prdc = metric_callback.metrics[metric_type]["clatr_prdc"]
-                    if hasattr(prdc, "real_features") and prdc.real_features is not None:
-                        metric_features[metric_type]["GT"] = prdc.real_features
-                    if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
-                        metric_features[metric_type]["GEN"] = prdc.fake_features
+    metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
+    for metric_item in metric_items:
+        if metric_item in metric_callback.active_metrics:
+            if metric_item in metric_callback.metrics and "clatr_prdc" in metric_callback.metrics[metric_item]:
+                prdc = metric_callback.metrics[metric_item]["clatr_prdc"]
+                if hasattr(prdc, "real_features") and prdc.real_features is not None:
+                    metric_features[metric_item]["GT"] = prdc.real_features
+                if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
+                    metric_features[metric_item]["GEN"] = prdc.fake_features
 
     output_dir = cfg.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    for metric_type, features in metric_features.items():
+    for metric_item, features in metric_features.items():
         if features["GT"] is not None and features["GEN"] is not None:
-            logger.info(f"Creating t‑SNE visualization for {metric_type}")
-            save_path = os.path.join(output_dir, f"embeddings_tSNE_{metric_type}.png")
+            logger.info(f"Creating t‑SNE visualization for {metric_item}")
+            save_path = os.path.join(output_dir, f"embeddings_tSNE_{metric_item}.png")
             tSNE_visualize_embeddings(
                 features,
-                title=f"Embedding Visualization using t‑SNE ({metric_type})",
+                title=f"Embedding Visualization using t‑SNE ({metric_item})",
                 save_path=save_path,
             )
 

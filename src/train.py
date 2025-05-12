@@ -9,7 +9,7 @@ import torch
 from data.datamodule import CameraTrajectoryDataModule
 from data.multi_dataset_module import MultiDatasetModule
 from testing.metrics.callback import MetricCallback
-from testing.lens_craft import process_lens_craft_batch
+from testing.process import test_batch
 from dotenv import load_dotenv
 import logging
 
@@ -110,32 +110,28 @@ def main(cfg: DictConfig):
         
         val_dataloader = data_module.val_dataloader()
         
+        metric_items = ["prompt_generation", "hybrid_generation"]
+        
         with torch.no_grad():
             for batch in val_dataloader:
-                process_lens_craft_batch(model, batch, metric_callback, dataset_type, device)
+                test_batch(model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation')
         
-        metric_types = ["prompt_generation", "hybrid_generation"]
-        for metric_type in metric_types:
-            metrics = metric_callback.compute_clatr_metrics(metric_type)
-            logger.info(f"{metric_type} Metrics: {metrics}")
+        for metric_item in metric_items:
+            metrics = metric_callback.compute_clatr_metrics(metric_item)
+            logger.info(f"{metric_item} Metrics: {metrics}")
             # Sum PRDC metrics
             type_prdc_sum = (
-                max(0, min(1, metrics[f"{metric_type}/precision"])) + 
-                max(0, min(1, metrics[f"{metric_type}/recall"])) + 
-                max(0, min(1, metrics[f"{metric_type}/density"])) + 
-                max(0, min(1, metrics[f"{metric_type}/coverage"]))
+                max(0, min(1, metrics[f"{metric_item}/precision"])) + 
+                max(0, min(1, metrics[f"{metric_item}/recall"])) + 
+                max(0, min(1, metrics[f"{metric_item}/density"])) + 
+                max(0, min(1, metrics[f"{metric_item}/coverage"]))
             )
             prdc_sum += type_prdc_sum
-            logger.info(f"{metric_type} PRDC sum: {type_prdc_sum}")
+            logger.info(f"{metric_item} PRDC sum: {type_prdc_sum}")
         
         logger.info(f"Total PRDC sum: {prdc_sum}")
 
-    trajectory_loss = 0.0
-    if 'val_trajectory_epoch' in trainer.callback_metrics:
-        trajectory_loss = trainer.callback_metrics['val_trajectory_epoch'].item()
-        logger.info(f"trajectory loss: {trajectory_loss}")
-
-    return -float(prdc_sum) + (trajectory_loss * 0.1)
+    return -float(prdc_sum)
 
 
 if __name__ == "__main__":

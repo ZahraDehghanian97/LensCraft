@@ -101,13 +101,13 @@ class ETAdapter:
             caption_feat = caption_tokens
         
         return caption_feat
-    
+
     def generate_using_text(self, text_prompts, subject_trajectory=None, padding_mask=None):
         self.diffuser.gen_seeds = np.arange(len(text_prompts))
 
         caption_feat = self._generate_caption_feat(text_prompts)
         char_feat = sim_to_et_subject_traj(subject_trajectory, self.device)
-        
+
         batch = self._prepare_model_input(caption_feat, char_feat, self.num_frames)
         
         with torch.no_grad():
