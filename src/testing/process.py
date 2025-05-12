@@ -2,6 +2,8 @@ from typing import Dict
 
 import torch
 
+from data.convertor.convertor import convert_to_target
+
 
 def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
     prepared_data = {}
@@ -14,7 +16,7 @@ def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, t
     return prepared_data
 
 
-def test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation'):
+def test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation', seq_length=30):
     batch = to_cuda(batch, device)
     batch_size = len(batch["text_prompts"])
     
@@ -30,11 +32,26 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
         if model_type == "simulation":
             caption_embedding = batch.get("cinematography_prompt", None)
         
+        
+        if dataset_type != "simulation":
+            sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = convert_to_target(
+                dataset_type,
+                "simulation",
+                batch["camera_trajectory"],
+                batch["subject_trajectory"],
+                batch["subject_volume"],
+                batch["padding_mask"],
+                seq_length
+            )
+        else:
+            sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
+                batch["camera_trajectory"], batch["subject_trajectory"], batch["subject_volume"], batch["padding_mask"]
+        
         sim_output = sim_model.generate_camera_trajectory(
-            subject_trajectory=batch["subject_trajectory"],
-            subject_volume=batch["subject_volume"],
-            camera_trajectory=batch["camera_trajectory"],
-            padding_mask=batch["padding_mask"],
+            subject_trajectory=sim_subject_trajectory,
+            subject_volume=sim_subject_volume,
+            camera_trajectory=sim_camera_trajectory,
+            padding_mask=sim_padding_mask,
             memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
             caption_embedding=caption_embedding
         )
@@ -44,16 +61,35 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
         decoder_memory = decoder_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
         
         if model_type in ["ccdm", "et"] and dataset_type == "simulation":
+            _, subject_trajectory, _, padding_mask = convert_to_target(
+                dataset_type,
+                model_type,
+                batch["camera_trajectory"],
+                batch["subject_trajectory"],
+                batch["subject_volume"],
+                batch["padding_mask"],
+                seq_length
+            )
             generated_trajecotry = model.generate_using_text(
                 batch["text_prompts"],
+                subject_trajectory,
+                # (~padding_mask).sum(dim=1)
+            )
+            
+            sim_generated_trajectory, _, _, _ = convert_to_target(
+                model_type,
+                "simulation",
+                generated_trajecotry,
                 batch["subject_trajectory"],
-                batch["padding_mask"]
+                batch["subject_volume"],
+                batch["padding_mask"],
+                seq_length
             )
             
             reconstructed_memory = sim_model.encoder(
-                generated_trajecotry, 
+                sim_generated_trajectory, 
                 subject_embedding
-            )[:model.memory_tokens_count, ...].detach().clone()
+            )[:sim_model.memory_tokens_count, ...].detach().clone()
         
         elif model_type == "simulation":
             reconstructed_memory = model.encoder(

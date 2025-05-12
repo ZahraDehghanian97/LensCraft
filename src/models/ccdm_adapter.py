@@ -90,9 +90,7 @@ class CCDMAdapter:
 
         return traj.permute(0, 2, 1)
         
-    def process_batch(self, batch):
-        text_prompts = batch["text_prompts"]
-        
+    def generate_using_text(self, text_prompts, subject_trajectory=None):        
         with torch.no_grad():
             text_embeddings = self.clip_embedder.extract_clip_embeddings(text_prompts, return_seq=False).to(self.device)
             
@@ -108,22 +106,4 @@ class CCDMAdapter:
             denormalized = generated * self.std[None, None, :] + self.mean[None, None, :]
             smoothed_batch = self._smooth_trajectory_batch(denormalized)
             
-            camera_trajectory_sim, subject_loc_rot, subject_volume, padding_mask = convert_to_target(
-                "ccdm",
-                "simulation",
-                smoothed_batch,
-                None,
-                None,
-                None,
-                self.sim_seq_len
-            )
-            
-            return {
-                "camera_trajectory": camera_trajectory_sim,
-                "subject_trajectory": subject_loc_rot,
-                "subject_volume": subject_volume,
-                "padding_mask": padding_mask,
-                "caption_feat": text_embeddings,
-                "raw_text": text_prompts,
-                "original_camera_trajectory": smoothed_batch,
-            }
+            return smoothed_batch

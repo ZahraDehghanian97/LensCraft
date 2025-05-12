@@ -4,7 +4,6 @@ import torch
 import msgpack
 from pathlib import Path
 
-from data.convertor.convertor import convert_to_target
 from .loader import parse_simulation_file_to_dict
 
 from .constants import (
@@ -28,13 +27,11 @@ class SimulationDataset(Dataset):
                  data_path: str, 
                  embedding_dim: int, 
                  fill_none_with_mean: bool, 
-                 clip_embeddings: Dict, 
-                 target = None):
+                 clip_embeddings: Dict):
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
         self.fill_none_with_mean = fill_none_with_mean
         self.clip_embeddings = clip_embeddings
-        self.target = target
 
         if self.fill_none_with_mean:
             self.embedding_means = load_clip_means()
@@ -107,21 +104,8 @@ class SimulationDataset(Dataset):
             n_clip_embs=n_clip_embs
         )
         
-        padding_mask = None
+        padding_mask = torch.zeros(30, dtype=torch.bool)
         
-        if "type" in self.target and self.target["type"] != "simulation":
-            camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-                "simulation",
-                self.target["type"],
-                camera_trajectory,
-                subject_trajectory,
-                subject_volume,
-                padding_mask,
-                self.target.get("seq_length", 30)
-            )
-        else:
-            padding_mask = torch.zeros(30, dtype=torch.bool)
-
         return {
             "camera_trajectory": camera_trajectory,
             "subject_trajectory": subject_trajectory,
@@ -132,7 +116,7 @@ class SimulationDataset(Dataset):
             "simulation_instruction_parameters": simulation_instruction,
             "cinematography_prompt_parameters": cinematography_prompt,
             "text_prompt": text_prompt,
-            "prompt_none_mask": prompt_none_mask
+            "prompt_none_mask": prompt_none_mask,
         }
 
 
@@ -201,5 +185,5 @@ def collate_fn(batch):
             item["cinematography_prompt_parameters"] for item in batch
         ],
         "text_prompts": [item["text_prompt"] for item in batch],
-        "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch])
+        "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
     }

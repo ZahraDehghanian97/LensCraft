@@ -7,4 +7,3 @@ config:
   clip_model_name: ${clip.model_name}
   embedding_dim: 512
   standardize: true
-  target: ${training.model.data_format}

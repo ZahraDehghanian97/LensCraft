@@ -1,0 +1,24 @@
+data_format: 
+  type: simulation
+  seq_length: 30
+
+
+module:
+  _target_: models.camera_trajectory_model.MultiTaskAutoencoder
+  input_dim: 6
+  subject_dim: 6
+  nhead: 8
+  num_encoder_layers: 4
+  num_decoder_layers: 4
+  dim_feedforward: 2048
+  dropout_rate: 0.3
+  seq_length: ${training.model.data_format.seq_length}
+  latent_dim: ${clip.latent_dim}
+  use_merged_memory: ${training.use_merged_memory}
+  denormalize_memory: false
+
+
+inference:
+  checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH}
+  config: ${oc.env:TEST_CONFIG_PATH}
+  clip_embeddings_cache: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl

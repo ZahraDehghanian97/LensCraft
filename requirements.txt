@@ -29,3 +29,5 @@ bitsandbytes==0.45.2
 # pytorch3d
 rerun==1.0.30
 git+https://github.com/openai/CLIP.git
+
+openai

@@ -151,3 +151,5 @@ datasets/files
 
 test_results
 *.db
+
+cache

@@ -17,7 +17,6 @@ class CCDMDataset(Dataset):
         hfov_deg: float = 45.0,
         aspect: float = 16 / 9,
         device: str | torch.device | None = None,
-        target: Optional[Dict[str, Any]] = None
     ) -> None:
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
@@ -27,8 +26,6 @@ class CCDMDataset(Dataset):
         
         self.hfov_deg = hfov_deg
         self.aspect = aspect
-
-        self.target = target
 
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.clip_embedder = CLIPEmbedder(model_name=self.clip_model_name, device=self.device)
@@ -77,18 +74,6 @@ class CCDMDataset(Dataset):
         subject_trajectory = None
         subject_volume = None
 
-        if self.target and "type" in self.target:
-            camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-                "ccdm",
-                self.target["type"],
-                camera_trajectory,
-                subject_trajectory,
-                subject_volume,
-                padding_mask,
-                self.target.get("seq_length", 30)
-            )
-        
-
         text = " ".join(text_description)
         with torch.no_grad():
             text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
@@ -104,10 +89,20 @@ class CCDMDataset(Dataset):
         }
 
 def collate_fn(batch):
+    if len(batch) > 0 and batch[0]['subject_volume'] is None:
+        subject_volume = None
+    else:
+        subject_volume = torch.stack([item["subject_volume"] for item in batch])
+        
+    if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
+        subject_trajectory = None
+    else:
+        subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
+        
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory": torch.stack([item["subject_trajectory"] for item in batch]),
-        "subject_volume": torch.stack([item["subject_volume"] for item in batch]),
+        "subject_trajectory": subject_trajectory,
+        "subject_volume": subject_volume,
         "padding_mask": torch.stack([item["padding_mask"] for item in batch]),
         "caption_feat": torch.stack([item["caption_feat"] for item in batch]),
         "text_prompts": [item["text_prompts"] for item in batch],
