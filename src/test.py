@@ -46,7 +46,7 @@ def main(cfg: DictConfig) -> None:
     sim_model = None
     
     if model_type == "simulation":
-        model = load_simulation_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.module, device=device)
+        model = load_simulation_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
         sim_model = model
     else:
         if model_type == "ccdm":

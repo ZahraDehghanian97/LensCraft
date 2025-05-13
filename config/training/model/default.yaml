@@ -18,5 +18,5 @@ module:
 
 inference:
   checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH}
-  config: ${oc.env:TEST_CONFIG_PATH}
+  config: ${oc.env:TEST_CONFIG_PATH,None}
   clip_embeddings_cache: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl

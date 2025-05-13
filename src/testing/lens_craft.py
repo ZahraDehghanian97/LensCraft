@@ -8,7 +8,7 @@ from utils.checkpoint import load_checkpoint
 
 
 def load_simulation_model(model_module: DictConfig, model_inference: DictConfig, device: torch.device) -> MultiTaskAutoencoder:
-    if model_inference.config:
+    if model_inference.config and model_inference.config != 'None':
         checkpoint_cfg_path = to_absolute_path(model_inference.config)
         if os.path.exists(checkpoint_cfg_path):
             loaded_config = OmegaConf.load(checkpoint_cfg_path)
