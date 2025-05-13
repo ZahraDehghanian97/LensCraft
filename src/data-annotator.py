@@ -69,7 +69,7 @@ def main(cfg: DictConfig) -> None:
     batch_dir = Path(cfg.output.batch_dir)
     results_dir = Path(cfg.output.results_dir)
     output_dir = Path(cfg.output.annotations_dir)
-    num_batches = 10
+    num_batches = int(getattr(cfg, "num_batches", 10))
 
     for p in (batch_dir, results_dir, output_dir):
         p.mkdir(exist_ok=True)
