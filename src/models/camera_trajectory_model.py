@@ -111,10 +111,12 @@ class MultiTaskAutoencoder(nn.Module):
                             teacher_forcing_ratio * (caption_embedding[i, :, :] * std + mean)
                         )
                 else:
-                    merged_memory = (
-                        (1 - teacher_forcing_ratio) * merged_memory +
-                        teacher_forcing_ratio * caption_embedding
-                    )
+                    # merged_memory = (
+                    #     (1 - teacher_forcing_ratio) * merged_memory +
+                    #     teacher_forcing_ratio * caption_embedding
+                    # )
+                    merge_memory_mask = torch.rand_like(merged_memory) > teacher_forcing_ratio
+                    merged_memory = merge_memory_mask * merged_memory + (~merge_memory_mask) * caption_embedding
 
         
         if mask_memory_prob > 0.0:
