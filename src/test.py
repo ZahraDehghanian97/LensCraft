@@ -12,7 +12,7 @@ from data.datamodule import CameraTrajectoryDataModule
 from utils.load_lens_craft import load_simulation_model
 from testing.process import test_batch
 from testing.metrics.callback import MetricCallback
-from visualization.tsne import tSNE_visualize_embeddings
+from tsne import tSNE_visualize_embeddings
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
 
@@ -100,7 +100,13 @@ def main(cfg: DictConfig) -> None:
                     metric_features[metric_item]["GT"] = prdc.real_features
                 if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
                     metric_features[metric_item]["GEN"] = prdc.fake_features
-
+    
+    features_save_dir = os.path.dirname(os.path.dirname(cfg.sim_model.inference.config))
+    features_save_dir = os.path.join(features_save_dir, "features")
+    os.makedirs(features_save_dir, exist_ok=True)
+    features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
+    torch.save(metric_features, features_save_path)
+    
     output_dir = cfg.output_dir
     os.makedirs(output_dir, exist_ok=True)
 

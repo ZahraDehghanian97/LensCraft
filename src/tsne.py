@@ -4,6 +4,47 @@ from typing import Dict, Union
 import torch
 from sklearn.manifold import TSNE
 import seaborn as sns
+import os
+import logging
+from omegaconf import DictConfig
+import hydra
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+@hydra.main(version_base=None, config_path="../config", config_name="tsne")
+def main(cfg: DictConfig) -> None:
+
+    features_path = cfg.feature_path
+    save_path = os.path.join(features_path, "Embedding Visualization using t‑SNE.png")
+
+    features_simulation_path = os.path.join(features_path, "dataset_simulation_model_simulation.pth")
+    features_et_path = os.path.join(features_path, "dataset_simulation_model_et.pth")
+    features_ccdm_path = os.path.join(features_path, "dataset_simulation_model_ccdm.pth")
+    
+    prompt_generation_simulation = torch.load(features_simulation_path)["prompt_generation"]
+    prompt_generation_et = torch.load(features_et_path)["prompt_generation"]
+    prompt_generation_ccdm = torch.load(features_ccdm_path)["prompt_generation"]
+    
+    all_prompt_generations = dict()
+
+    all_prompt_generations["Simulation Features"] = prompt_generation_simulation["GEN"]
+    all_prompt_generations["ET Features"] = prompt_generation_et["GEN"]
+    all_prompt_generations["CCDM Features"] = prompt_generation_ccdm["GEN"]
+    all_prompt_generations["GT"] = prompt_generation_simulation["GT"]
+
+
+    tSNE_visualize_embeddings(
+        all_prompt_generations,
+        title=f"Embedding Visualization using t‑SNE",
+        save_path=save_path,
+    )
+
+    
 
 def tSNE_visualize_embeddings(
     embeddings_dict: Dict[str, Union[np.ndarray, torch.Tensor]],
@@ -79,3 +120,8 @@ def tSNE_visualize_embeddings(
         if verbose: print(f"Figure saved to {save_path}")
     
     return fig
+
+
+
+if "__main__" == __name__:
+    main()

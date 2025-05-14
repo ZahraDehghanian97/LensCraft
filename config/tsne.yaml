@@ -1,0 +1,1 @@
+feature_path: ${oc.env:TSNE_FEATURE_PATH,/media/external_10TB/amir_vahedi/LensCraft/outputs/2025-05-13/18-04-18/lightning_logs/version_0/features}
