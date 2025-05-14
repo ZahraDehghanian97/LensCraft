@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from data.datamodule import CameraTrajectoryDataModule
-from testing.lens_craft import load_simulation_model
+from utils.load_lens_craft import load_simulation_model
 from testing.process import test_batch
 from testing.metrics.callback import MetricCallback
 from visualization.tsne import tSNE_visualize_embeddings

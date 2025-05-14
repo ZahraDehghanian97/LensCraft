@@ -68,23 +68,24 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
                 batch["subject_trajectory"],
                 batch["subject_volume"],
                 batch["padding_mask"],
-                seq_length
+                seq_length,
+                torch.full((batch_size,), 30, device=device)
             )
             generated_trajecotry = model.generate_using_text(
                 batch["text_prompts"],
                 subject_trajectory,
-                trajectory
-                # (~padding_mask).sum(dim=1)
+                trajectory,
+                padding_mask
             )
             
             sim_generated_trajectory, _, _, _ = convert_to_target(
                 model_type,
                 "simulation",
                 generated_trajecotry,
-                batch["subject_trajectory"],
+                subject_trajectory,
                 batch["subject_volume"],
-                batch["padding_mask"],
-                seq_length
+                padding_mask,
+                30
             )
             
             reconstructed_memory = sim_model.encoder(

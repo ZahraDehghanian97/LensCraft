@@ -90,7 +90,7 @@ class CCDMAdapter:
 
         return traj.permute(0, 2, 1)
         
-    def generate_using_text(self, text_prompts, subject_trajectory=None):        
+    def generate_using_text(self, text_prompts, subject_trajectory=None, trajectory=None, padding_mask=None):        
         with torch.no_grad():
             text_embeddings = self.clip_embedder.extract_clip_embeddings(text_prompts, return_seq=False).to(self.device)
             

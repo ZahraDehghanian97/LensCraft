@@ -5,11 +5,12 @@ import logging
 import gdown
 import zipfile
 import torch.nn.functional as F
+import torch
 
 from hydra.utils import instantiate
 
+from data.convertor.constant import default_convertors
 from data.et.caption_encoder import CaptionEncoder
-from data.et.utils import et_to_sim_cam_traj, sim_to_et_subject_traj
 from data.et.load import load_et_config
 from utils.seed import set_random_seed
 from utils.importing import ModuleImporter
@@ -21,7 +22,6 @@ class ETAdapter:
         self.config = config
         self.device = device
         self.guidance_scale = config.get("guidance_scale", 1.4)
-        self.num_frames = config.get("num_frames", 30)
         self._load_models(config["project_config_dir"], config["dataset_dir"])
         set_random_seed(42)
         self.caption_encoder = CaptionEncoder(device=device)
@@ -73,20 +73,6 @@ class ETAdapter:
         et_batch["char_feat"] = torch.zeros_like(et_batch["char_feat"], device=device)
         et_batch["char_feat"][:, :, :subject_positions.shape[2]] = subject_positions.to(device)
     
-    def _prepare_model_input(self, caption_feat, char_feat, num_frames=30):
-        batch_size = caption_feat.shape[0]
-        batch = {
-            "char_feat": char_feat,
-            "caption_feat": caption_feat,
-        }
-        
-        padding_mask = torch.zeros([batch_size, 300])
-        padding_mask[:, :num_frames] = 1
-        for key in ["padding_mask", "char_padding_mask", "caption_padding_mask"]:
-            batch[key] = padding_mask
-        
-        return batch
-    
     def _generate_caption_feat(self, text_prompts):
         caption_seq_list, caption_tokens = self.caption_encoder.encode_text(text_prompts)
         
@@ -102,19 +88,22 @@ class ETAdapter:
         
         return caption_feat
 
-    def generate_using_text(self, text_prompts, subject_trajectory=None, traj_feat=None):
+    def generate_using_text(self, text_prompts, subject_trajectory=None, trajectory=None, padding_mask=None):
         self.diffuser.gen_seeds = np.arange(len(text_prompts))
-
         caption_feat = self._generate_caption_feat(text_prompts)
-
-        batch = self._prepare_model_input(caption_feat, subject_trajectory, self.num_frames)
-        batch["caption_raw"] = text_prompts
-        batch["char_raw"] = None
-        batch['traj_feat'] = traj_feat
+        
+        batch = {
+            "traj_feat": trajectory.permute(0, 2, 1),
+            "char_feat": subject_trajectory.permute(0, 2, 1),
+            "caption_feat": caption_feat,
+            "padding_mask": ~padding_mask,
+            "char_padding_mask": ~padding_mask,
+            "caption_padding_mask": ~padding_mask,
+            "caption_raw": text_prompts,
+            "char_raw": None,
+        }
         
         with torch.no_grad():
             out = self.diffuser.predict_step(batch, 0)
-            
-            print(out["padding_mask"])
-            
-            return out["gen_samples"]
+            traj_6d =  default_convertors['et'].get_feature(out["gen_samples"])
+            return traj_6d
