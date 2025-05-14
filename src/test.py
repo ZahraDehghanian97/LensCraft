@@ -45,18 +45,6 @@ def main(cfg: DictConfig) -> None:
     model = None
     sim_model = None
     
-    if model_type == "simulation":
-        model = load_simulation_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
-        sim_model = model
-    else:
-        if model_type == "ccdm":
-            model = CCDMAdapter(cfg.training.model.inference, device)
-        elif model_type == "et":
-            model = ETAdapter(cfg.training.model.inference, device)        
-        else:
-            raise ValueError(f"Unsupported model type: {model_type}")
-        sim_model = load_simulation_model(model_module=cfg.sim_model.module, model_inference=cfg.sim_model.inference, device=device)
-    
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
@@ -65,13 +53,38 @@ def main(cfg: DictConfig) -> None:
         test_size=cfg.data.test_size,
     )
     data_module.setup()
-
-    metric_callback = MetricCallback(num_cams=1, device=device, clip_embeddings=clip_embeddings)
-
+    
     target = cfg.data.dataset.config["_target_"]
     dataset_type = (
         "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
     )
+    
+    
+    save_dir = os.path.dirname(os.path.dirname(cfg.sim_model.inference.config))
+    trajectories_dir = os.path.join(save_dir, "generated_trajectory")
+    os.makedirs(trajectories_dir, exist_ok=True)
+    trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
+    
+    features_save_dir = os.path.join(save_dir, "features")
+    os.makedirs(features_save_dir, exist_ok=True)
+    features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
+
+    
+    if model_type == "simulation":
+        model = load_simulation_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
+        sim_model = model
+    else:
+        sim_model = load_simulation_model(model_module=cfg.sim_model.module, model_inference=cfg.sim_model.inference, device=device)
+        
+        if not os.path.exists(trajectory_save_path):
+            if model_type == "ccdm":
+                model = CCDMAdapter(cfg.training.model.inference, device)
+            elif model_type == "et":
+                model = ETAdapter(cfg.training.model.inference, device)        
+            else:
+                raise ValueError(f"Unsupported model type: {model_type}")
+
+    metric_callback = MetricCallback(num_cams=1, device=device, clip_embeddings=clip_embeddings)
 
     test_dataloader = data_module.test_dataloader()
 
@@ -83,13 +96,36 @@ def main(cfg: DictConfig) -> None:
             if dataset_type == "simulation"
             else ["reconstruction"]
         )
+    
+    if os.path.exists(trajectory_save_path) and model_type in ["ccdm", "et"]:
+        logger.info(f"Loading pre-generated trajectories from {trajectory_save_path}")
+        generated_trajectories = torch.load(trajectory_save_path)
+        logger.info(f"Loaded {len(generated_trajectories)} pre-generated trajectories")
+        
+        with torch.no_grad():
+            for batch, generated_trajectory in tqdm(zip(test_dataloader, generated_trajectories)):
+                test_batch(
+                    sim_model, model, batch, metric_callback, device, metric_items, 
+                    dataset_type=dataset_type, model_type=model_type, 
+                    seq_length=cfg.training.model.data_format.seq_length,
+                    pre_generated_trajectory=generated_trajectory.to(device)
+                )
+    else:
+        all_generated_trajectories = []
+        with torch.no_grad():
+            for batch in tqdm(test_dataloader):
+                generated_trajectory_data = test_batch(
+                    sim_model, model, batch, metric_callback, device, metric_items, 
+                    dataset_type=dataset_type, model_type=model_type, 
+                    seq_length=cfg.training.model.data_format.seq_length
+                )
+                
+                if generated_trajectory_data is not None:
+                    all_generated_trajectories.append(generated_trajectory_data)
 
-
-    with torch.no_grad():
-        for batch in tqdm(test_dataloader):
-            test_batch(sim_model, model, batch, metric_callback, device, metric_items, 
-                       dataset_type=dataset_type, model_type=model_type, 
-                       seq_length=cfg.training.model.data_format.seq_length)
+        if all_generated_trajectories and model_type in ["ccdm", "et"]:
+            torch.save(all_generated_trajectories, trajectory_save_path)
+            logger.info(f"Saved {len(all_generated_trajectories)} generated trajectories to {trajectory_save_path}")
 
     metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
     for metric_item in metric_items:
@@ -101,10 +137,6 @@ def main(cfg: DictConfig) -> None:
                 if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
                     metric_features[metric_item]["GEN"] = prdc.fake_features
     
-    features_save_dir = os.path.dirname(os.path.dirname(cfg.sim_model.inference.config))
-    features_save_dir = os.path.join(features_save_dir, "features")
-    os.makedirs(features_save_dir, exist_ok=True)
-    features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
     torch.save(metric_features, features_save_path)
     
     output_dir = cfg.output_dir

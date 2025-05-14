@@ -16,9 +16,11 @@ def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, t
     return prepared_data
 
 
-def test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation', seq_length=30):
+def test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation', seq_length=30, pre_generated_trajectory=None):
     batch = to_cuda(batch, device)
     batch_size = len(batch["text_prompts"])
+    
+    generated_trajectory_data = None
     
     for metric_item in metric_items:
         if metric_item == 'reconstruction':
@@ -71,12 +73,18 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
                 seq_length,
                 torch.full((batch_size,), 30, device=device)
             )
-            generated_trajecotry = model.generate_using_text(
-                batch["text_prompts"],
-                subject_trajectory,
-                trajectory,
-                padding_mask
-            )
+            
+            if pre_generated_trajectory is not None:
+                generated_trajecotry = pre_generated_trajectory
+            else:
+                generated_trajecotry = model.generate_using_text(
+                    batch["text_prompts"],
+                    subject_trajectory,
+                    trajectory,
+                    padding_mask
+                )
+            
+                generated_trajectory_data = generated_trajecotry.detach().cpu()
             
             sim_generated_trajectory, _, _, _ = convert_to_target(
                 model_type,
@@ -110,3 +118,5 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
             decoder_memory,
             caption_embedding
         )
+    
+    return generated_trajectory_data
