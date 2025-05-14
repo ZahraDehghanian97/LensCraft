@@ -31,3 +31,4 @@ rerun==1.0.30
 git+https://github.com/openai/CLIP.git
 
 openai
+ema_pytorch
