@@ -56,7 +56,8 @@ def _decode_compressed_subject_data(compressed_subjects: List[Dict]) -> List[Dic
                     "depth": subject['d'][2]
                 }
             },
-            "frames": frames
+            "frames": frames,
+            "movementType": subject['m']
         }
         
         if 'a' in subject:

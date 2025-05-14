@@ -3,7 +3,7 @@ defaults:
   - clip: default
   - data: default
   - training: default
-  - hydra: default
+  - hydra: test
   - sim_model: default
 
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}

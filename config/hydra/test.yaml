@@ -1,0 +1,7 @@
+run:
+  dir: ${oc.env:TEST_OUTPUT_DIR,outputs/test}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+sweep:
+  dir: ${oc.env:TEST_OUTPUT_DIR,outputs/test}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  subdir: ${hydra.job.num}
+job:
+  chdir: True
