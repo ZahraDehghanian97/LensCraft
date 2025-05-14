@@ -29,7 +29,7 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
             memory_teacher_forcing_ratio = 0.5
         
         caption_embedding = None
-        if model_type == "simulation":
+        if dataset_type == "simulation":
             caption_embedding = batch.get("cinematography_prompt", None)
         
         

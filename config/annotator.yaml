@@ -11,6 +11,9 @@ output:
   results_dir: ${oc.env:RESULTS_DIR,./batch_results}
   annotations_dir: ${oc.env:ANNOTATIONS_DIR,./cinematography_annotations}
 
+
+num_batches: 100
+
 api:
   model: gpt-4.1-nano
   max_batch_size: 1000
