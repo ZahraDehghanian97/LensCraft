@@ -49,7 +49,7 @@ class MultiTaskAutoencoder(nn.Module):
             num_decoder_layers,
             dim_feedforward,
             dropout_rate,
-            seq_length
+            30
         )
         
         self.embedding_merger = nn.Sequential(

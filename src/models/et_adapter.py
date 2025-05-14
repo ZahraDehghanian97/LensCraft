@@ -102,22 +102,19 @@ class ETAdapter:
         
         return caption_feat
 
-    def generate_using_text(self, text_prompts, subject_trajectory=None, padding_mask=None):
+    def generate_using_text(self, text_prompts, subject_trajectory=None, traj_feat=None):
         self.diffuser.gen_seeds = np.arange(len(text_prompts))
 
         caption_feat = self._generate_caption_feat(text_prompts)
-        char_feat = sim_to_et_subject_traj(subject_trajectory, self.device)
 
-        batch = self._prepare_model_input(caption_feat, char_feat, self.num_frames)
+        batch = self._prepare_model_input(caption_feat, subject_trajectory, self.num_frames)
+        batch["caption_raw"] = text_prompts
+        batch["char_raw"] = None
+        batch['traj_feat'] = traj_feat
         
         with torch.no_grad():
             out = self.diffuser.predict_step(batch, 0)
-            camera_trajectory = et_to_sim_cam_traj(
-                out["gen_samples"][out["padding_mask"].to(bool)], 
-                self.num_frames
-            )
             
-            return {
-                "generated": camera_trajectory,
-                "caption_feat": caption_feat,
-            }
+            print(out["padding_mask"])
+            
+            return out["gen_samples"]

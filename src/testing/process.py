@@ -41,7 +41,7 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
                 batch["subject_trajectory"],
                 batch["subject_volume"],
                 batch["padding_mask"],
-                seq_length
+                30
             )
         else:
             sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
@@ -61,7 +61,7 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
         decoder_memory = decoder_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
         
         if model_type in ["ccdm", "et"] and dataset_type == "simulation":
-            _, subject_trajectory, _, padding_mask = convert_to_target(
+            trajectory, subject_trajectory, _, padding_mask = convert_to_target(
                 dataset_type,
                 model_type,
                 batch["camera_trajectory"],
@@ -73,6 +73,7 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
             generated_trajecotry = model.generate_using_text(
                 batch["text_prompts"],
                 subject_trajectory,
+                trajectory
                 # (~padding_mask).sum(dim=1)
             )
             

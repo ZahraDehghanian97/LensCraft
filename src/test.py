@@ -87,7 +87,9 @@ def main(cfg: DictConfig) -> None:
 
     with torch.no_grad():
         for batch in tqdm(test_dataloader):
-            test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type=dataset_type, model_type=model_type)
+            test_batch(sim_model, model, batch, metric_callback, device, metric_items, 
+                       dataset_type=dataset_type, model_type=model_type, 
+                       seq_length=cfg.training.model.data_format.seq_length)
 
     metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
     for metric_item in metric_items:
