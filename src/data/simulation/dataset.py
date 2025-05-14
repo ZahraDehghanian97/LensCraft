@@ -27,11 +27,13 @@ class SimulationDataset(Dataset):
                  data_path: str, 
                  embedding_dim: int, 
                  fill_none_with_mean: bool, 
-                 clip_embeddings: Dict):
+                 clip_embeddings: Dict,
+                 allowed_movement_types: List[str] = None):
         self.data_path = Path(data_path)
         self.embedding_dim = embedding_dim
         self.fill_none_with_mean = fill_none_with_mean
         self.clip_embeddings = clip_embeddings
+        self.allowed_movement_types = allowed_movement_types or []
 
         if self.fill_none_with_mean:
             self.embedding_means = load_clip_means()
@@ -55,9 +57,68 @@ class SimulationDataset(Dataset):
         if not self.simulation_files:
             raise ValueError(f"No simulation files found in {data_path}")
 
+        self._generate_movement_types_file()
+        
+        if self.allowed_movement_types:
+            self.simulation_files = self._filter_by_movement_types(self.allowed_movement_types)
+            print(f"Filtered to {len(self.simulation_files)} files with movement types: {self.allowed_movement_types}")
+
+    def _generate_movement_types_file(self):
+        movement_types_file = self.data_path / "movement_types.txt"
+        
+        if movement_types_file.exists():
+            print(f"Movement types file already exists at {movement_types_file}")
+            return
+        
+        print(f"Generating movement types file at {movement_types_file}...")
+        processed = 0
+        
+        with open(movement_types_file, 'w') as f:
+            for idx, file_path in enumerate(self.simulation_files):
+                try:
+                    data = parse_simulation_file_to_dict(file_path, self.parameter_dictionary)
+                    if data and "subjectsInfo" in data and data["subjectsInfo"]:
+                        movement_type = data["subjectsInfo"][0].get("movementType", "unknown")
+                        f.write(f"{file_path.name}|{movement_type}\n")
+                    else:
+                        f.write(f"{file_path.name}|unknown\n")
+                    
+                    processed += 1
+                    if processed % 100 == 0:
+                        print(f"Processed {processed}/{len(self.simulation_files)} files...")
+                except Exception as e:
+                    f.write(f"{file_path.name}|error\n")
+                    print(f"Error processing {file_path}: {e}")
+        
+        print(f"Completed generating movement types file. Processed {processed} files.")
+
+    def _load_movement_types(self):
+        movement_types_file = self.data_path / "movement_types.txt"
+        movement_types = {}
+        
+        with open(movement_types_file, 'r') as f:
+            for line in f:
+                if line.strip():
+                    parts = line.strip().split('|')
+                    if len(parts) == 2:
+                        file_name, movement_type = parts
+                        movement_types[file_name] = movement_type
+        
+        return movement_types
+
+    def _filter_by_movement_types(self, allowed_movement_types):
+        if not allowed_movement_types:
+            return self.simulation_files
+        
+        movement_types = self._load_movement_types()
+        return [
+            file_path for file_path in self.simulation_files 
+            if movement_types.get(file_path.name, "unknown") in allowed_movement_types
+        ]
+
     def __len__(self) -> int:
         # return len(self.simulation_files)
-        return 100000
+        return min(100000, len(self.simulation_files))
 
     def __getitem__(self, index: int) -> Dict:
         file_path = self.simulation_files[index]
