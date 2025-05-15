@@ -95,7 +95,7 @@ class ETAdapter:
         
         batch = {
             "traj_feat": trajectory.permute(0, 2, 1),
-            "char_feat": subject_trajectory.permute(0, 2, 1),
+            "char_feat": subject_trajectory.permute(0, 2, 1).reshape(subject_trajectory.shape[0], -1),
             "caption_feat": caption_feat,
             "padding_mask": ~padding_mask,
             "char_padding_mask": ~padding_mask,
