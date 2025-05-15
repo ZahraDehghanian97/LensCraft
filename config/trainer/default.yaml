@@ -1,5 +1,5 @@
 _target_: lightning.Trainer
-max_epochs: 30
+max_epochs: 20
 accelerator: "auto"
 devices: [0]
 precision: 32

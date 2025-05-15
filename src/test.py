@@ -62,14 +62,16 @@ def main(cfg: DictConfig) -> None:
     
     trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
-    trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
-    
+    if model_type == "et":
+        trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}_{cfg.training.model.inference.et_type}.pth")
+    else:
+        trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth")        
+
     if model_type == "lens_craft":
         model = load_lens_craft_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
         ref_model = model
     else:
         ref_model = load_lens_craft_model(model_module=cfg.ref_model.module, model_inference=cfg.ref_model.inference, device=device)
-        
         if not os.path.exists(trajectory_save_path):
             if model_type == "ccdm":
                 model = CCDMAdapter(cfg.training.model.inference, device)
@@ -151,19 +153,19 @@ def main(cfg: DictConfig) -> None:
                 save_path=save_path,
             )
 
-    movement_types = []
-    
-    if dataset_type == "simulation":
-        for batch in test_dataloader:
-            batch_movement_types = []
-            for prompt_params in batch["cinematography_prompt_parameters"]:
-                movement_type = prompt_params[4][1]
-                batch_movement_types.append(movement_type)
-            movement_types.extend(batch_movement_types)
+    if model_type == "lens_craft" and dataset_type == "simulation" and "prompt_generation" in metric_items:
+        movement_types = []
         
-        logger.info(f"Extracted {len(movement_types)} movement types from the test dataset")
+        if dataset_type == "simulation":
+            for batch in test_dataloader:
+                batch_movement_types = []
+                for prompt_params in batch["cinematography_prompt_parameters"]:
+                    movement_type = prompt_params[4][1]
+                    batch_movement_types.append(movement_type)
+                movement_types.extend(batch_movement_types)
+            
+            logger.info(f"Extracted {len(movement_types)} movement types from the test dataset")
 
-    if dataset_type == "simulation" and "prompt_generation" in metric_items:
         if (metric_features["prompt_generation"]["GT"] is not None and 
             metric_features["prompt_generation"]["GEN"] is not None and 
             len(movement_types) > 0):
