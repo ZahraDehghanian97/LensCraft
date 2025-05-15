@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def main(cfg: DictConfig) -> None:
 
     features_path = cfg.feature_path
-    save_path = os.path.join(features_path, "Embedding Visualization using t‑SNE.png")
+    save_path = os.path.join(features_path, "Embedding Visualization using t-SNE.png")
 
     features_lens_craft_path = os.path.join(features_path, "dataset_simulation_model_lens_craft.pth")
     features_et_path = os.path.join(features_path, "dataset_simulation_model_et.pth")
@@ -37,7 +37,7 @@ def main(cfg: DictConfig) -> None:
 
     tSNE_visualize_embeddings(
         all_prompt_generations,
-        title=f"Embedding Visualization using t‑SNE",
+        title=f"Embedding Visualization using t-SNE",
         save_path=save_path,
     )
 
