@@ -114,7 +114,7 @@ def main(cfg: DictConfig):
         
         with torch.no_grad():
             for batch in val_dataloader:
-                test_batch(model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation')
+                test_batch(model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='lens_craft')
         
         for metric_item in metric_items:
             metrics = metric_callback.compute_clatr_metrics(metric_item)

@@ -105,5 +105,5 @@ class ETAdapter:
         
         with torch.no_grad():
             out = self.diffuser.predict_step(batch, 0)
-            traj_6d =  default_convertors['et'].get_feature(out["gen_samples"])
+            traj_6d = default_convertors['et'].get_feature(out["gen_samples"])
             return traj_6d

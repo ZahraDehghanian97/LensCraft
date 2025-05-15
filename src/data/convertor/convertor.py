@@ -33,6 +33,10 @@ def convert_to_target(
     valid_target_len=None,
     convertors=None
 ):
+    if source == 'lens_craft':
+        source = 'simulation'
+    if target == 'lens_craft':
+        target = 'simulation'
     if source == target:
         return trajectory, subject_trajectory, subject_volume, padding_mask
     

@@ -3,7 +3,7 @@ data_format:
   seq_length: 30
 
 module:
-  _target_: models.camera_trajectory_model.MultiTaskAutoencoder
+  _target_: models.camera_trajectory_model.LensCraft
   input_dim: 6
   subject_dim: 6
   nhead: 8

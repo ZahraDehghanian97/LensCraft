@@ -1,4 +1,4 @@
-_target_: training.autoencoder_trainer.LightningMultiTaskAutoencoder
+_target_: training.autoencoder_trainer.LightningLensCraft
 
 defaults:
   - model: default

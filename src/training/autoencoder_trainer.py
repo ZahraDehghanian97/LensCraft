@@ -1,10 +1,10 @@
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
 
 
-class LightningMultiTaskAutoencoder(BaseTrainer):
+class LightningLensCraft(BaseTrainer):
     def __init__(
         self,
         model: torch.nn.Module,

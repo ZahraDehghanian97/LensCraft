@@ -9,7 +9,7 @@ from .decoder import Decoder
 from data.simulation.constants import cinematography_struct_size, simulation_struct_size
 
 
-class MultiTaskAutoencoder(nn.Module):
+class LensCraft(nn.Module):
     def __init__(
         self,
         input_dim: int = 6,
@@ -24,7 +24,7 @@ class MultiTaskAutoencoder(nn.Module):
         use_merged_memory: bool = False,
         denormalize_memory: bool = False
     ):
-        super(MultiTaskAutoencoder, self).__init__()
+        super(LensCraft, self).__init__()
         
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
         self.memory_tokens_count = cinematography_struct_size

@@ -4,9 +4,10 @@ defaults:
   - data: default
   - training: default
   - hydra: test
-  - sim_model: default
+  - ref_model: default
 
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
+cache_dir: ${oc.env:CACHE_DIR}
 device: cuda
 
 caption_top1_metric: false

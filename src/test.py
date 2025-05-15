@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from data.datamodule import CameraTrajectoryDataModule
-from utils.load_lens_craft import load_simulation_model
+from utils.load_lens_craft import load_lens_craft_model
 from testing.process import test_batch
 from testing.metrics.callback import MetricCallback
 from tsne import tSNE_visualize_embeddings
@@ -37,13 +37,14 @@ def main(cfg: DictConfig) -> None:
 
     clip_embeddings = None
     
-    model_type = cfg.training.model.data_format.get("type", "simulation")
-    if model_type == "simulation" and cfg.get("caption_top1_metric", False):
+    data_format_type = cfg.training.model.data_format.get("type", "simulation")
+    model_type = "lens_craft" if data_format_type == "simulation" else data_format_type
+    if model_type == "lens_craft" and cfg.get("caption_top1_metric", False):
         from data.simulation.init_embeddings import initialize_all_clip_embeddings
         clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.training.model.inference.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
 
     model = None
-    sim_model = None
+    ref_model = None
     
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -59,22 +60,15 @@ def main(cfg: DictConfig) -> None:
         "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
     )
     
-    
-    save_dir = os.path.dirname(os.path.dirname(cfg.sim_model.inference.config))
-    trajectories_dir = os.path.join(save_dir, "generated_trajectory")
+    trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
     trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
     
-    features_save_dir = os.path.join(save_dir, "features")
-    os.makedirs(features_save_dir, exist_ok=True)
-    features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
-
-    
-    if model_type == "simulation":
-        model = load_simulation_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
-        sim_model = model
+    if model_type == "lens_craft":
+        model = load_lens_craft_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
+        ref_model = model
     else:
-        sim_model = load_simulation_model(model_module=cfg.sim_model.module, model_inference=cfg.sim_model.inference, device=device)
+        ref_model = load_lens_craft_model(model_module=cfg.ref_model.module, model_inference=cfg.ref_model.inference, device=device)
         
         if not os.path.exists(trajectory_save_path):
             if model_type == "ccdm":
@@ -105,7 +99,7 @@ def main(cfg: DictConfig) -> None:
         with torch.no_grad():
             for batch, generated_trajectory in tqdm(zip(test_dataloader, generated_trajectories)):
                 test_batch(
-                    sim_model, model, batch, metric_callback, device, metric_items, 
+                    ref_model, model, batch, metric_callback, device, metric_items, 
                     dataset_type=dataset_type, model_type=model_type, 
                     seq_length=cfg.training.model.data_format.seq_length,
                     pre_generated_trajectory=generated_trajectory.to(device)
@@ -115,7 +109,7 @@ def main(cfg: DictConfig) -> None:
         with torch.no_grad():
             for batch in tqdm(test_dataloader):
                 generated_trajectory_data = test_batch(
-                    sim_model, model, batch, metric_callback, device, metric_items, 
+                    ref_model, model, batch, metric_callback, device, metric_items, 
                     dataset_type=dataset_type, model_type=model_type, 
                     seq_length=cfg.training.model.data_format.seq_length
                 )
@@ -136,6 +130,12 @@ def main(cfg: DictConfig) -> None:
                     metric_features[metric_item]["GT"] = prdc.real_features
                 if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
                     metric_features[metric_item]["GEN"] = prdc.fake_features
+    
+    
+    save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
+    features_save_dir = os.path.join(save_dir, "features")
+    os.makedirs(features_save_dir, exist_ok=True)
+    features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
     
     torch.save(metric_features, features_save_path)
     

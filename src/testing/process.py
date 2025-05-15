@@ -16,7 +16,7 @@ def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, t
     return prepared_data
 
 
-def test_batch(sim_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='simulation', seq_length=30, pre_generated_trajectory=None):
+def test_batch(ref_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='lens_craft', seq_length=30, pre_generated_trajectory=None):
     batch = to_cuda(batch, device)
     batch_size = len(batch["text_prompts"])
     
@@ -49,7 +49,7 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
             sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
                 batch["camera_trajectory"], batch["subject_trajectory"], batch["subject_volume"], batch["padding_mask"]
         
-        sim_output = sim_model.generate_camera_trajectory(
+        ref_output = ref_model.generate_camera_trajectory(
             subject_trajectory=sim_subject_trajectory,
             subject_volume=sim_subject_volume,
             camera_trajectory=sim_camera_trajectory,
@@ -58,8 +58,8 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
             caption_embedding=caption_embedding
         )
         
-        decoder_memory = sim_output['embeddings'][:sim_model.memory_tokens_count, ...]
-        subject_embedding = sim_output['subject_embedding']
+        decoder_memory = ref_output['embeddings'][:ref_model.memory_tokens_count, ...]
+        subject_embedding = ref_output['subject_embedding']
         decoder_memory = decoder_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
         
         if model_type in ["ccdm", "et"] and dataset_type == "simulation":
@@ -95,17 +95,14 @@ def test_batch(sim_model, model, batch, metric_callback, device, metric_items, d
                 padding_mask,
                 30
             )
-            
-            reconstructed_memory = sim_model.encoder(
-                sim_generated_trajectory, 
-                subject_embedding
-            )[:sim_model.memory_tokens_count, ...].detach().clone()
         
-        elif model_type == "simulation":
-            reconstructed_memory = model.encoder(
-                sim_output["reconstructed"], 
-                subject_embedding
-            )[:model.memory_tokens_count, ...].detach().clone()
+        elif model_type == "lens_craft":
+            sim_generated_trajectory = ref_output["reconstructed"]
+        
+        reconstructed_memory = ref_model.encoder(
+            sim_generated_trajectory, 
+            subject_embedding
+        )[:ref_model.memory_tokens_count, ...].detach().clone()
             
         reconstructed_memory = reconstructed_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
         

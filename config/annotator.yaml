@@ -4,7 +4,7 @@ defaults:
   - data: default
   - training: default
   - hydra: default
-  - sim_model: default
+  - ref_model: default
 
 output:
   batch_dir: ${oc.env:BATCH_DIR,./batch_files}

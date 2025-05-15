@@ -19,7 +19,6 @@ class CCDMAdapter:
         self.n_textemb = 512
         
         self.seq_len = getattr(config, "seq_len", 300)
-        self.sim_seq_len = 30
         self.tan_half_fov_x = getattr(config, "tan_half_fov_x", 0.3639)
         self.tan_half_fov_y = getattr(config, "tan_half_fov_y", 0.2055)
         
