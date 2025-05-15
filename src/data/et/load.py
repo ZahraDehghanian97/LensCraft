@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from utils.importing import ModuleImporter
 
 
-def load_et_config(project_config_dir: str, config_name: str="config.yaml" , dataset_dir: str = None, set_name: str = None):
+def load_et_config(project_config_dir: str, config_name: str="config.yaml" , dataset_dir: str=None, set_name: str=None, et_type=None):
     config_rel_path = os.path.dirname(
         os.path.relpath(project_config_dir, os.path.dirname(__file__)))
     
@@ -16,6 +16,9 @@ def load_et_config(project_config_dir: str, config_name: str="config.yaml" , dat
         overrides.append(f"dataset.trajectory.set_name={set_name}")
     if dataset_dir is not None:
         overrides.append(f"data_dir={dataset_dir}")
+    if et_type is not None:
+        overrides.append(f"diffuser/network/module={et_type}_director")
+        overrides.append(f"checkpoint_path=checkpoints/director/{et_type}-mixed-e449.ckpt")
     
     with initialize(version_base=None, config_path=config_rel_path):
         return compose(config_name=config_name, overrides=overrides)

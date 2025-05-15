@@ -22,7 +22,7 @@ class ETAdapter:
         self.config = config
         self.device = device
         self.guidance_scale = config.get("guidance_scale", 1.4)
-        self._load_models(config["project_config_dir"], config["dataset_dir"])
+        self._load_models(config["project_config_dir"], config["dataset_dir"], config["et_type"])
         set_random_seed(42)
         self.caption_encoder = CaptionEncoder(device=device)
     
@@ -46,12 +46,13 @@ class ETAdapter:
             
             logger.info(f"Extracted DIRECTOR checkpoints to {director_dir}")
     
-    def _load_models(self, project_config_dir, dataset_dir):
+    def _load_models(self, project_config_dir, dataset_dir, et_type):
         checkpoints_dir = os.path.join(os.path.dirname(os.path.dirname(project_config_dir)), "checkpoints")
         self._prepare_checkpoints(checkpoints_dir)
         
         project_dir = os.path.dirname(os.path.dirname(project_config_dir))
-        director_config = load_et_config(project_config_dir, "config_viz.yaml", dataset_dir=dataset_dir)
+        director_config = load_et_config(project_config_dir, "config_viz.yaml", dataset_dir=dataset_dir, et_type=et_type)
+        
         with ModuleImporter.temporary_module(project_dir, ['utils.file_utils', 'utils.rotation_utils', 'utils.random_utils', 'utils.visualization'], project_dir):
             dataset = instantiate(director_config.dataset).set_split("test")
             self.diffuser = instantiate(director_config.diffuser)
