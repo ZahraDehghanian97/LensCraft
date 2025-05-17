@@ -142,45 +142,45 @@ def main(cfg: DictConfig) -> None:
     torch.save(metric_features, features_save_path)
     
     os.makedirs(cfg.output_dir, exist_ok=True)
+    if cfg.tsne:
+        for metric_item, features in metric_features.items():
+            if features["GT"] is not None and features["GEN"] is not None:
+                logger.info(f"Creating t-SNE visualization for {metric_item}")
+                save_path = os.path.join(cfg.output_dir, f"embeddings_tSNE_{metric_item}.png")
+                tSNE_visualize_embeddings(
+                    features,
+                    title=f"Embedding Visualization using t-SNE ({metric_item})",
+                    save_path=save_path,
+                )
 
-    for metric_item, features in metric_features.items():
-        if features["GT"] is not None and features["GEN"] is not None:
-            logger.info(f"Creating t-SNE visualization for {metric_item}")
-            save_path = os.path.join(cfg.output_dir, f"embeddings_tSNE_{metric_item}.png")
-            tSNE_visualize_embeddings(
-                features,
-                title=f"Embedding Visualization using t-SNE ({metric_item})",
-                save_path=save_path,
-            )
+        if model_type == "lens_craft" and dataset_type == "simulation" and "prompt_generation" in metric_items:
+            movement_types = []
+            
+            if dataset_type == "simulation":
+                for batch in test_dataloader:
+                    batch_movement_types = []
+                    for prompt_params in batch["cinematography_prompt_parameters"]:
+                        movement_type = prompt_params[4][1]
+                        batch_movement_types.append(movement_type)
+                    movement_types.extend(batch_movement_types)
+                
+                logger.info(f"Extracted {len(movement_types)} movement types from the test dataset")
 
-    if model_type == "lens_craft" and dataset_type == "simulation" and "prompt_generation" in metric_items:
-        movement_types = []
-        
-        if dataset_type == "simulation":
-            for batch in test_dataloader:
-                batch_movement_types = []
-                for prompt_params in batch["cinematography_prompt_parameters"]:
-                    movement_type = prompt_params[4][1]
-                    batch_movement_types.append(movement_type)
-                movement_types.extend(batch_movement_types)
-            
-            logger.info(f"Extracted {len(movement_types)} movement types from the test dataset")
-
-        if (metric_features["prompt_generation"]["GT"] is not None and 
-            metric_features["prompt_generation"]["GEN"] is not None and 
-            len(movement_types) > 0):
-            
-            logger.info("Creating t-SNE visualization colored by movement type")
-            
-            tSNE_visualize_embeddings_by_class_type(
-                caption_embeddings=metric_features["prompt_generation"]["GT"],
-                encoder_embeddings=metric_features["prompt_generation"]["GEN"],
-                class_types=movement_types,
-                title=f"Embedding Visualization using t-SNE (Colored by Movement Type)",
-                save_path=os.path.join(cfg.output_dir, "embeddings_tSNE_by_movement_type.png"),
-            )
-            
-            logger.info(f"Movement type t-SNE visualization saved to {cfg.output_dir}/embeddings_tSNE_by_movement_type.png")
+            if (metric_features["prompt_generation"]["GT"] is not None and 
+                metric_features["prompt_generation"]["GEN"] is not None and 
+                len(movement_types) > 0):
+                
+                logger.info("Creating t-SNE visualization colored by movement type")
+                
+                tSNE_visualize_embeddings_by_class_type(
+                    caption_embeddings=metric_features["prompt_generation"]["GT"],
+                    encoder_embeddings=metric_features["prompt_generation"]["GEN"],
+                    class_types=movement_types,
+                    title=f"Embedding Visualization using t-SNE (Colored by Movement Type)",
+                    save_path=os.path.join(cfg.output_dir, "embeddings_tSNE_by_movement_type.png"),
+                )
+                
+                logger.info(f"Movement type t-SNE visualization saved to {cfg.output_dir}/embeddings_tSNE_by_movement_type.png")
 
     metrics = {
         item: metric_callback.compute_clatr_metrics(item)

@@ -9,5 +9,6 @@ defaults:
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 cache_dir: ${oc.env:CACHE_DIR}
 device: cuda
+tsne: false
 
 caption_top1_metric: false

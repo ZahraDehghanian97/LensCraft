@@ -19,11 +19,11 @@ def _prepare_embeddings(
     else:
         embeddings = np.array(embeddings)
     
-    if max_points and len(embeddings) > max_points:
-        indices = np.random.RandomState(random_state).choice(
-            len(embeddings), max_points, replace=False)
-        embeddings = embeddings[indices]
-        return embeddings, indices
+    # if max_points and len(embeddings) > max_points:
+    #     indices = np.random.RandomState(random_state).choice(
+    #         len(embeddings), max_points, replace=False)
+    #     embeddings = embeddings[indices]
+    #     return embeddings, indices
     
     return embeddings, None
 
@@ -133,12 +133,11 @@ def tSNE_visualize_embeddings(
 
 
 def tSNE_visualize_embeddings_by_class_type(
-    caption_embeddings: Union[np.ndarray, torch.Tensor],
+    caption_embeddings: dict,
     encoder_embeddings: Union[np.ndarray, torch.Tensor],
     class_types: List[str],
     random_state: int = 42,
     perplexity: int = 30,
-    max_points: int = 1000,
     figsize: tuple = (14, 10),
     title: str = 'Embedding Visualization using t-SNE (Colored by Movement Type)',
     point_size: int = 60,
@@ -149,21 +148,20 @@ def tSNE_visualize_embeddings_by_class_type(
     """
     Visualize caption and encoder embeddings in 2D using t-SNE, colored by class type.
     """
-    prepared_caption, indices = _prepare_embeddings(caption_embeddings, max_points, random_state)
+    caption_embeddings_values = []
+    caption_embeddings_keys = []
+    for key, value in caption_embeddings.items():
+        caption_embeddings_values.append(value)
+        caption_embeddings_keys.append(key)
+    
+    prepared_caption, _ = _prepare_embeddings([torch.stack(caption_embeddings_values)], max_points=None, random_state=random_state)
     prepared_encoder, _ = _prepare_embeddings(encoder_embeddings, max_points=None, random_state=random_state)
+
+    indices = None
     
-    if indices is not None:
-        class_types = [class_types[i] for i in indices]
-    
-    assert len(prepared_caption) == len(class_types), (
-        f"Number of caption embeddings ({len(prepared_caption)}) doesn't match "
-        f"number of class types ({len(class_types)})"
-    )
-    assert len(prepared_encoder) == len(class_types), (
-        f"Number of encoder embeddings ({len(prepared_encoder)}) doesn't match "
-        f"number of class types ({len(class_types)})"
-    )
-    
+    # if indices is not None:
+    #     class_types = [class_types[i] for i in indices]
+  
     all_embeddings = np.vstack([prepared_caption, prepared_encoder])
     
     embeddings_2d = _compute_tsne(all_embeddings, random_state, perplexity, verbose)
@@ -179,11 +177,12 @@ def tSNE_visualize_embeddings_by_class_type(
     
     for mt_idx, mt in enumerate(unique_class_types):
         indices = [i for i, type_val in enumerate(class_types) if type_val == mt]
+        key_index = caption_embeddings_keys.index(mt)
         
         if indices:
             ax.scatter(
-                caption_points[indices, 0], 
-                caption_points[indices, 1],
+                caption_points[key_index, 0], 
+                caption_points[key_index, 1],
                 color=class_type_to_color[mt], 
                 alpha=point_alpha, 
                 s=point_size, 
