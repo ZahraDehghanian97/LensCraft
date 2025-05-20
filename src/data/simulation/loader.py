@@ -196,18 +196,15 @@ def filter_files_by_movement_types(simulation_files: List[Path], allowed_movemen
         if movement_types.get(file_path.name, "unknown") in allowed_movement_types
     ]
 
-def calculate_normalization_parameters(data_path: Path, parameter_dictionary: Dict) -> Dict:
-    """Calculate normalization parameters from the dataset."""
-    print(f"Calculating normalization parameters from dataset at {data_path}")
+def calculate_normalization_parameters_tensor(data_path: Path, parameter_dictionary: Dict) -> Dict[str, Dict[str, torch.Tensor]]:
+    print(f"Processing dataset for normalization parameters...")
     
     simulation_files = find_simulation_files(data_path)
     
     print(f"Processing {len(simulation_files)} files for normalization parameters...")
     
     camera_positions = []
-    camera_rotations = []
     subject_positions = []
-    subject_rotations = []
     subject_dimensions = []
     
     for file_path in tqdm(simulation_files):
@@ -219,11 +216,6 @@ def calculate_normalization_parameters(data_path: Path, parameter_dictionary: Di
                     frame["position"]["x"],
                     frame["position"]["y"],
                     frame["position"]["z"]
-                ])
-                camera_rotations.append([
-                    frame["rotation"]["x"],
-                    frame["rotation"]["y"],
-                    frame["rotation"]["z"]
                 ])
             
             if data["subjectsInfo"]:
@@ -242,63 +234,81 @@ def calculate_normalization_parameters(data_path: Path, parameter_dictionary: Di
                         frame["position"]["y"],
                         frame["position"]["z"]
                     ])
-                    subject_rotations.append([
-                        frame["rotation"]["x"],
-                        frame["rotation"]["y"],
-                        frame["rotation"]["z"]
-                    ])
                 
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
     
     camera_positions = torch.tensor(camera_positions, dtype=torch.float32)
-    camera_rotations = torch.tensor(camera_rotations, dtype=torch.float32)
     subject_positions = torch.tensor(subject_positions, dtype=torch.float32)
-    subject_rotations = torch.tensor(subject_rotations, dtype=torch.float32)
     subject_dimensions = torch.tensor(subject_dimensions, dtype=torch.float32)
+    
+    camera_pos_mean = camera_positions.mean(dim=0)
+    camera_pos_std = camera_positions.std(dim=0)
+    subject_pos_mean = subject_positions.mean(dim=0)
+    subject_pos_std = subject_positions.std(dim=0)
+    subject_dim_mean = subject_dimensions.mean(dim=0)
+    subject_dim_std = subject_dimensions.std(dim=0)
+    
+    camera_pos_std = torch.where(camera_pos_std == 0, torch.ones_like(camera_pos_std), camera_pos_std)
+    subject_pos_std = torch.where(subject_pos_std == 0, torch.ones_like(subject_pos_std), subject_pos_std)
+    subject_dim_std = torch.where(subject_dim_std == 0, torch.ones_like(subject_dim_std), subject_dim_std)
     
     norm_params = {
         "camera_position": {
-            "mean": camera_positions.mean(dim=0).tolist(),
-            "std": camera_positions.std(dim=0).tolist()
-        },
-        "camera_rotation": {
-            "mean": camera_rotations.mean(dim=0).tolist(),
-            "std": camera_rotations.std(dim=0).tolist()
+            "mean": camera_pos_mean,
+            "std": camera_pos_std
         },
         "subject_position": {
-            "mean": subject_positions.mean(dim=0).tolist(),
-            "std": subject_positions.std(dim=0).tolist()
-        },
-        "subject_rotation": {
-            "mean": subject_rotations.mean(dim=0).tolist(),
-            "std": subject_rotations.std(dim=0).tolist()
+            "mean": subject_pos_mean,
+            "std": subject_pos_std
         },
         "subject_dimensions": {
-            "mean": subject_dimensions.mean(dim=0).tolist(),
-            "std": subject_dimensions.std(dim=0).tolist()
+            "mean": subject_dim_mean,
+            "std": subject_dim_std
         }
     }
     
     return norm_params
 
-def load_or_calculate_normalization_parameters(data_path: Path, parameter_dictionary: Dict = None) -> Dict:
-    """Load existing normalization parameters or calculate them if not available."""
+def load_or_calculate_normalization_parameters(data_path: Path, parameter_dictionary: Dict = None) -> Dict[str, Dict[str, torch.Tensor]]:
     data_path = Path(data_path)
     norm_params_file = data_path / "normalization_parameters.json"
     
     if norm_params_file.exists():
         print(f"Loading existing normalization parameters from {norm_params_file}")
         with open(norm_params_file, 'r') as f:
-            return json.load(f)
+            json_params = json.load(f)
+            
+            tensor_params = {}
+            for key, params in json_params.items():
+                tensor_params[key] = {
+                    "mean": torch.tensor(params["mean"], dtype=torch.float32),
+                    "std": torch.tensor(params["std"], dtype=torch.float32)
+                }
+                
+                tensor_params[key]["std"] = torch.where(
+                    tensor_params[key]["std"] == 0,
+                    torch.ones_like(tensor_params[key]["std"]),
+                    tensor_params[key]["std"]
+                )
+            
+            return tensor_params
     
     if parameter_dictionary is None:
         parameter_dictionary = load_parameter_dictionary(data_path)
     
-    norm_params = calculate_normalization_parameters(data_path, parameter_dictionary)
+    print(f"Calculating normalization parameters from dataset at {data_path}")
+    norm_params = calculate_normalization_parameters_tensor(data_path, parameter_dictionary)
+    
+    json_params = {}
+    for key, params in norm_params.items():
+        json_params[key] = {
+            "mean": params["mean"].tolist(),
+            "std": params["std"].tolist()
+        }
     
     with open(norm_params_file, 'w') as f:
-        json.dump(norm_params, f, indent=4)
+        json.dump(json_params, f, indent=4)
     
     print(f"Normalization parameters saved to {norm_params_file}")
     return norm_params

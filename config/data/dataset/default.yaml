@@ -6,6 +6,7 @@ config:
   data_path: ${oc.env:SIMULATION_DATA_PATH}
   embedding_dim: ${clip.latent_dim}
   fill_none_with_mean: true
+  normalize: true
   # allowed_movement_types:
   #   - static
   #   - circular

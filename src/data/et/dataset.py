@@ -3,17 +3,74 @@ import os
 from typing import Any, Dict
 from torch.utils.data import Dataset
 
+from data.et.config import STANDARDIZATION_CONFIG_TORCH
+
 from .load import load_et_dataset
 
 
 class ETDataset(Dataset):
-    def __init__(self, project_config_dir: str, dataset_dir: str, set_name: str, split: str):
+    def __init__(self, project_config_dir: str, dataset_dir: str, set_name: str, split: str, normalize: bool):
         self.original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
+        self.normalize = normalize # Fixme: denormalize if false
 
     def __len__(self) -> int:
         return len(self.original_dataset)
+    
+    @staticmethod
+    def normalize_item(camera_trajectory, subject_trajectory, subject_volume=None, normalize:bool= True):
+        device = camera_trajectory.device
+        camera_trajectory = camera_trajectory.clone()
+        subject_trajectory = subject_trajectory.clone()
+        
+        if normalize:
+            camera_trajectory[..., 0, 6:] -= STANDARDIZATION_CONFIG_TORCH["shift_mean"].to(device)
+            camera_trajectory[..., 0, 6:] /= STANDARDIZATION_CONFIG_TORCH["shift_std"].to(device)
+
+            camera_trajectory[..., 1:, 6:] -= STANDARDIZATION_CONFIG_TORCH["norm_mean"].to(device)
+            camera_trajectory[..., 1:, 6:] /= STANDARDIZATION_CONFIG_TORCH["norm_std"].to(device)
+
+            if len(STANDARDIZATION_CONFIG_TORCH["norm_mean_h"]) == 6:
+                subject_trajectory[..., 0, :] -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][:3].to(device)
+                subject_trajectory[..., 0, :] /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"][:3].to(device)
+
+                subject_trajectory[..., 1:, :] -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][3:].to(device)
+                subject_trajectory[..., 1:, :] /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"][3:].to(device)
+            else:
+                subject_trajectory -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"].to(device)
+                subject_trajectory /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"].to(device)
+
+        else:
+            camera_trajectory[..., 0, 6:] = (
+                camera_trajectory[..., 0, 6:] * STANDARDIZATION_CONFIG_TORCH["shift_std"].to(device)
+                + STANDARDIZATION_CONFIG_TORCH["shift_mean"].to(device)
+            )
+
+            camera_trajectory[..., 1:, 6:] = (
+                camera_trajectory[..., 1:, 6:] * STANDARDIZATION_CONFIG_TORCH["norm_std"].to(device)
+                + STANDARDIZATION_CONFIG_TORCH["norm_mean"].to(device)
+            )
+
+            if len(STANDARDIZATION_CONFIG_TORCH["norm_mean_h"]) == 6:
+                subject_trajectory[..., 0, :] = (
+                    subject_trajectory[..., 0, :]
+                    * STANDARDIZATION_CONFIG_TORCH["norm_std_h"][:3].to(device)
+                    + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][:3].to(device)
+                )
+                subject_trajectory[..., 1:, :] = (
+                    subject_trajectory[..., 1:, :]
+                    * STANDARDIZATION_CONFIG_TORCH["norm_std_h"][3:].to(device)
+                    + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][3:].to(device)
+                )
+            else:
+                subject_trajectory = (
+                    subject_trajectory
+                    * STANDARDIZATION_CONFIG_TORCH["norm_std_h"].to(device)
+                    + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"].to(device)
+                )
+
+        return camera_trajectory, subject_trajectory, subject_volume
 
     def _get_average_caption_feat(self, item):
         caption_feat = item['caption_feat']
@@ -25,11 +82,19 @@ class ETDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = self.original_dataset[index]
+        
+        camera_trajectory = item["traj_feat"].permute(1, 0)
+        subject_trajectory = item['char_feat'].permute(1, 0)
+        
+        if not self.normalize:
+            camera_trajectory, subject_trajectory, _ = \
+                ETDataset.normalize_item(camera_trajectory, subject_trajectory , None, False) # Checkme: is it need to premute inputs?
+        
         caption_feat = self._get_average_caption_feat(item)
                 
         return {
-            'camera_trajectory': item["traj_feat"].permute(1, 0),
-            'subject_trajectory': item['char_feat'].permute(1, 0),
+            'camera_trajectory': camera_trajectory,
+            'subject_trajectory': subject_trajectory,
             'subject_volume': None,
             'padding_mask': ~item['padding_mask'].to(torch.bool),
             'caption_feat': caption_feat,

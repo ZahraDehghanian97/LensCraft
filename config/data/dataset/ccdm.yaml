@@ -6,4 +6,4 @@ config:
   data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
   clip_model_name: ${clip.model_name}
   embedding_dim: 512
-  standardize: true
+  normalize: true

@@ -7,3 +7,4 @@ config:
   dataset_dir: ${oc.env:ET_DATA_DIR}
   set_name: mixed
   split: train
+  normalize: true

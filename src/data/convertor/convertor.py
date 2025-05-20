@@ -3,23 +3,6 @@ import torch
 from .base_convertor import BaseConvertor
 from data.convertor.utils import handle_single_or_batch, resample_batch_trajectories
 
-@handle_single_or_batch(arg_specs=[(2, 2), (3, 2), (5, 0), (7, 0)])
-def convert(
-    source_convertor: BaseConvertor,
-    target_convertor: BaseConvertor,
-    trajectory: torch.Tensor,
-    subject_trajectory: torch.Tensor | None = None,
-    subject_volume: torch.Tensor | None = None,
-    current_valid_len: torch.Tensor | None = None,
-    target_len=30,
-    valid_target_len: torch.Tensor | None = None,
-):
-    transform, subject_trajectory, subject_volume = source_convertor.to_standard(trajectory, subject_trajectory, subject_volume)
-    transform, padding_mask = resample_batch_trajectories(transform, current_valid_len, target_len, valid_target_len)
-    subject_trajectory, padding_mask = resample_batch_trajectories(subject_trajectory, current_valid_len, target_len, valid_target_len)
-    trajectory, subject_trajectory, subject_volume = target_convertor.from_standard(transform, subject_trajectory, subject_volume)
-    return trajectory, subject_trajectory, subject_volume, padding_mask
-
 
 @handle_single_or_batch(arg_specs=[(2, 2), (3, 2), (5, 1), (7, 0)])
 def convert_to_target(
@@ -41,6 +24,7 @@ def convert_to_target(
         return trajectory, subject_trajectory, subject_volume, padding_mask
     
     
+    from .constant import default_normalizers
     if convertors is None:
         from .constant import default_convertors
         convertors = default_convertors
@@ -52,13 +36,17 @@ def convert_to_target(
     else:
         valid_lengths = torch.full((trajectory.shape[0],), trajectory.shape[1], dtype=torch.long, device=trajectory.device)
     
-    return convert(
-        convertors[source], 
-        convertors[target], 
-        trajectory, 
-        subject_trajectory, 
-        subject_volume,
-        valid_lengths,
-        target_len,
-        valid_target_len
-    )
+    source_convertor: BaseConvertor = convertors[source]
+    target_convertor: BaseConvertor = convertors[target]
+    
+    batch_size = trajectory.shape[0]
+    
+    trajectory, subject_trajectory, subject_volume = default_normalizers[source](trajectory, subject_trajectory, subject_volume, False)
+    transform, subject_trajectory, subject_volume = source_convertor.to_standard(trajectory, subject_trajectory, subject_volume)
+    if subject_volume.shape[0] == 1 and batch_size != 1:
+        subject_volume = subject_volume.repeat(batch_size, 1)
+    transform, padding_mask = resample_batch_trajectories(transform, valid_lengths, target_len, valid_target_len)
+    subject_trajectory, padding_mask = resample_batch_trajectories(subject_trajectory, valid_lengths, target_len, valid_target_len)
+    trajectory, subject_trajectory, subject_volume = target_convertor.from_standard(transform, subject_trajectory, subject_volume)    
+    trajectory, subject_trajectory, subject_volume = default_normalizers[target](trajectory, subject_trajectory, subject_volume, True)
+    return trajectory, subject_trajectory, subject_volume, padding_mask
