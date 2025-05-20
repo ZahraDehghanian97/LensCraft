@@ -30,88 +30,7 @@ Example 1:
     }
 
 
-    Example 2:
-    Input: "As the character moves down and backward, the camera pulls out to maintain a consistent framing while capturing their actions."
-    Output:
-    
-    {
-      "cinematographyPrompts": [
-        {
-          "initial": {
-            "cameraAngle": "eye",
-            "shotSize": "mediumShot",
-            "subjectView": "front",
-            "subjectFraming": "center"
-          },
-          "movement": {
-            "type": "dollyOut",
-            "speed": "constant"
-          },
-          "final": {
-            "cameraAngle": "high",
-            "shotSize": "longShot",
-            "subjectView": "front",
-            "subjectFraming": "center"
-          }
-        }
-      ]
-    }
-
-
-    Example 3:
-    Input: "The camera arcs around the subject who stands still, starting from the front and ending at a three-quarter back view."
-    Output:
-    
-    {
-      "cinematographyPrompts": [
-        {
-          "initial": {
-            "cameraAngle": "eye",
-            "shotSize": "mediumShot",
-            "subjectView": "front",
-            "subjectFraming": "center"
-          },
-          "movement": {
-            "type": "arcRight",
-            "speed": "smoothStartStop"
-          },
-          "final": {
-            "cameraAngle": "eye",
-            "shotSize": "mediumShot",
-            "subjectView": "threeQuarterBackRight",
-            "subjectFraming": "center"
-          }
-        }
-      ]
-    }
-
-
-    Example 4:
-    Input: "Starting with an extreme close-up, the camera gradually pulls back to reveal the character's surroundings."
-    Output:
-    
-    {
-      "cinematographyPrompts": [
-        {
-          "initial": {
-            "cameraAngle": "eye",
-            "shotSize": "extremeCloseUp",
-            "subjectView": "front",
-            "subjectFraming": "center"
-          },
-          "movement": {
-            "type": "dollyOut",
-            "speed": "slowToFast"
-          },
-          "final": {
-            "cameraAngle": "eye",
-            "shotSize": "longShot",
-            "subjectView": "front",
-            "subjectFraming": "center"
-          }
-        }
-      ]
-    }
+    Example 2:\n    Input: \"While the character moves backward, the camera gradually moves in with a push-in, and as the character starts moving forward, the camera continues to move in while also trucking left, eventually reversing the trucking direction and pushing in while the character continues forward.\"\n    Output:{\"cinematographyPrompts\":[{\"initial\":{\"cameraAngle\":\"eye\",\"shotSize\":\"mediumShot\",\"subjectView\":\"front\",\"subjectFraming\":\"center\"},\"movement\":{\"type\":\"dollyIn\",\"speed\":\"slowToFast\"},\"final\":{\"cameraAngle\":\"eye\",\"shotSize\":\"mediumShot\",\"subjectView\":\"front\",\"subjectFraming\":\"center\"}},{\"initial\":{\"cameraAngle\":\"eye\",\"shotSize\":\"mediumShot\",\"subjectView\":\"front\",\"subjectFraming\":\"center\"},\"movement\":{\"type\":\"truckLeft\",\"speed\":\"constant\"},\"final\":{\"cameraAngle\":\"eye\",\"shotSize\":\"mediumShot\",\"subjectView\":\"front\",\"subjectFraming\":\"center\"}},{\"initial\":{\"cameraAngle\":\"eye\",\"shotSize\":\"mediumShot\",\"subjectView\":\"front\",\"subjectFraming\":\"center\"},\"movement\":{\"type\":\"truckRight\",\"speed\":\"constant\"},\"final\":{\"cameraAngle\":\"eye\",\"shotSize\":\"mediumShot\",\"subjectView\":\"front\",\"subjectFraming\":\"center\"}}]}
 
 **exactly** matches the schema you have been provided via the API call.
 Do **not** add any keys, omit any required keys, or change field names.
@@ -127,8 +46,6 @@ CINEMATOGRAPHY_JSON_SCHEMA = {
         "properties": {
             "cinematographyPrompts": {
                 "type": "array",
-                "minItems": 1,
-                "maxItems": 1,
                 "items": {
                     "type": "object",
                     "properties": {

@@ -19,7 +19,6 @@ def get_enum_index(enum_class, value) -> int:
     return -1
 
 
-
 def extract_cinematography_parameters(
     data: Dict,
     struct: List,
@@ -81,7 +80,6 @@ def extract_cinematography_parameters(
     return parameters
 
 
-
 def count_total_parameters_in_struct(struct: List) -> int:
     count = 0
     
@@ -94,7 +92,6 @@ def count_total_parameters_in_struct(struct: List) -> int:
     return count
 
 
-
 def flatten_struct_parameters(struct: list, last_value=None) -> list:
     parameter_list = list()
     for parameter, value_type in struct:
@@ -103,7 +100,6 @@ def flatten_struct_parameters(struct: list, last_value=None) -> list:
         else:
             parameter_list.append((last_value + "_" + parameter, value_type))
     return parameter_list
-
 
 
 def convert_parameters_to_embedding_tensor(parameters: List, struct_size: int) -> torch.Tensor:
@@ -117,7 +113,6 @@ def convert_parameters_to_embedding_tensor(parameters: List, struct_size: int) -
     return instruction_tensor
 
 
-
 def load_clip_means():
     with open("embedding_means.pkl", 'rb') as f:
         embedding_means = pickle.load(f)
@@ -126,7 +121,6 @@ def load_clip_means():
         embedding_means[key] = torch.tensor(value)
 
     return embedding_means
-
 
 
 def get_mean_embedding(value_type, embedding_means):

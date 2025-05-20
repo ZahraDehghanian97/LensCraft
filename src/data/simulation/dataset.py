@@ -1,10 +1,19 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from torch.utils.data import Dataset
 import torch
-import msgpack
 from pathlib import Path
 
-from .loader import parse_simulation_file_to_dict
+from .loader import (
+    parse_simulation_file_to_dict,
+    validate_dataset_directory,
+    load_parameter_dictionary,
+    find_simulation_files,
+    generate_movement_types_file,
+    filter_files_by_movement_types,
+    load_or_calculate_normalization_parameters,
+    extract_camera_trajectory,
+    extract_subject_components
+)
 
 from .constants import (
     cinematography_struct,
@@ -23,6 +32,8 @@ from .utils import (
 
 
 class SimulationDataset(Dataset):
+    _normalization_parameters = None
+    
     def __init__(self, 
                  data_path: str, 
                  embedding_dim: int, 
@@ -40,81 +51,27 @@ class SimulationDataset(Dataset):
         else:
             self.embedding_means = None
         
-        if not self.data_path.is_dir():
-            raise ValueError(f"Expected directory at {data_path}")
-            
-        dict_path = self.data_path / "parameter_dictionary.msgpack"
-        if not dict_path.exists():
-            raise ValueError(f"parameter_dictionary.msgpack not found in {data_path}")
-            
-        with open(dict_path, 'rb') as f:
-            self.parameter_dictionary = msgpack.unpackb(f.read(), raw=False)
-            
-        self.simulation_files = sorted(
-            self.data_path.glob('simulation_*.msgpack')
-        )
+        validate_dataset_directory(self.data_path)
+        self.parameter_dictionary = load_parameter_dictionary(self.data_path)
+        self.simulation_files = find_simulation_files(self.data_path)
         
-        if not self.simulation_files:
-            raise ValueError(f"No simulation files found in {data_path}")
-
-        self._generate_movement_types_file()
+        generate_movement_types_file(self.data_path, self.simulation_files, self.parameter_dictionary)
         
         if self.allowed_movement_types:
-            self.simulation_files = self._filter_by_movement_types(self.allowed_movement_types)
+            self.simulation_files = filter_files_by_movement_types(
+                self.simulation_files, 
+                self.allowed_movement_types,
+                self.data_path
+            )
             print(f"Filtered to {len(self.simulation_files)} files with movement types: {self.allowed_movement_types}")
-
-    def _generate_movement_types_file(self):
-        movement_types_file = self.data_path / "movement_types.txt"
-        
-        if movement_types_file.exists():
-            print(f"Movement types file already exists at {movement_types_file}")
-            return
-        
-        print(f"Generating movement types file at {movement_types_file}...")
-        processed = 0
-        
-        with open(movement_types_file, 'w') as f:
-            for idx, file_path in enumerate(self.simulation_files):
-                try:
-                    data = parse_simulation_file_to_dict(file_path, self.parameter_dictionary)
-                    if data and "subjectsInfo" in data and data["subjectsInfo"]:
-                        movement_type = data["subjectsInfo"][0].get("movementType", "unknown")
-                        f.write(f"{file_path.name}|{movement_type}\n")
-                    else:
-                        f.write(f"{file_path.name}|unknown\n")
-                    
-                    processed += 1
-                    if processed % 100 == 0:
-                        print(f"Processed {processed}/{len(self.simulation_files)} files...")
-                except Exception as e:
-                    f.write(f"{file_path.name}|error\n")
-                    print(f"Error processing {file_path}: {e}")
-        
-        print(f"Completed generating movement types file. Processed {processed} files.")
-
-    def _load_movement_types(self):
-        movement_types_file = self.data_path / "movement_types.txt"
-        movement_types = {}
-        
-        with open(movement_types_file, 'r') as f:
-            for line in f:
-                if line.strip():
-                    parts = line.strip().split('|')
-                    if len(parts) == 2:
-                        file_name, movement_type = parts
-                        movement_types[file_name] = movement_type
-        
-        return movement_types
-
-    def _filter_by_movement_types(self, allowed_movement_types):
-        if not allowed_movement_types:
-            return self.simulation_files
-        
-        movement_types = self._load_movement_types()
-        return [
-            file_path for file_path in self.simulation_files 
-            if movement_types.get(file_path.name, "unknown") in allowed_movement_types
-        ]
+    
+    @staticmethod
+    def get_normalization_parameters(data_path: str) -> Dict:
+        if SimulationDataset._normalization_parameters is not None:
+            return SimulationDataset._normalization_parameters
+            
+        SimulationDataset._normalization_parameters = load_or_calculate_normalization_parameters(data_path)
+        return SimulationDataset._normalization_parameters
 
     def __len__(self) -> int:
         # return len(self.simulation_files)
@@ -124,8 +81,8 @@ class SimulationDataset(Dataset):
         file_path = self.simulation_files[index]
         data = parse_simulation_file_to_dict(file_path, self.parameter_dictionary)
         
-        camera_trajectory = self._extract_camera_trajectory(data["cameraFrames"])
-        subject_trajectory, subject_volume = self._extract_subject_components(data["subjectsInfo"])
+        camera_trajectory = extract_camera_trajectory(data["cameraFrames"])
+        subject_trajectory, subject_volume = extract_subject_components(data["subjectsInfo"])
         instruction = data["simulationInstructions"][0]
         prompt = data["cinematographyPrompts"][0]
 
@@ -180,46 +137,6 @@ class SimulationDataset(Dataset):
             "prompt_none_mask": prompt_none_mask,
         }
 
-
-    def _extract_camera_trajectory(self, camera_frames: List[Dict]) -> List[List[float]]:
-        return torch.tensor([
-            [
-                frame["position"]["x"],
-                frame["position"]["y"],
-                frame["position"]["z"],
-                frame["rotation"]["x"],
-                frame["rotation"]["y"],
-                frame["rotation"]["z"],
-                # frame["focalLength"]
-            ]
-            for frame in camera_frames
-        ], dtype=torch.float32)
-
-    def _extract_subject_components(self, subjects_info: List[Dict]) -> Tuple[List[List[float]], List[List[float]]]:
-        subject_info = subjects_info[0]
-        subject = subject_info["subject"]
-        
-        loc_rot = torch.tensor([
-            [
-                frame["position"]["x"],
-                frame["position"]["y"],
-                frame["position"]["z"],
-                frame["rotation"]["x"],
-                frame["rotation"]["y"],
-                frame["rotation"]["z"]
-            ]
-            for frame in subject_info["frames"]
-        ], dtype=torch.float32)
-        
-        vol = torch.tensor([
-            [
-                subject["dimensions"]["width"],
-                subject["dimensions"]["height"],
-                subject["dimensions"]["depth"]
-            ]
-        ], dtype=torch.float32)
-        
-        return loc_rot, vol
 
 def collate_fn(batch):
     if len(batch) > 0 and batch[0]['subject_volume'] is None:

@@ -25,8 +25,14 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
     for metric_item in metric_items:
         if metric_item == 'reconstruction':
             memory_teacher_forcing_ratio = 0
+        elif metric_item == 'key_framing':
+            batch["padding_mask"] = torch.rand((batch_size, 30)) > 1/6
+            memory_teacher_forcing_ratio = 0
         elif metric_item == 'prompt_generation':
             memory_teacher_forcing_ratio = 1
+        elif metric_item == 'key_framing+prompt':
+            batch["padding_mask"] = torch.rand((batch_size, 30)) > 1/6
+            memory_teacher_forcing_ratio = 0.5
         elif metric_item == 'hybrid_generation':
             memory_teacher_forcing_ratio = 0.5
         
@@ -62,18 +68,19 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
         subject_embedding = ref_output['subject_embedding']
         decoder_memory = decoder_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
         
-        if model_type in ["ccdm", "et"] and dataset_type == "simulation":
-            trajectory, subject_trajectory, _, padding_mask = convert_to_target(
-                dataset_type,
-                model_type,
-                batch["camera_trajectory"],
-                batch["subject_trajectory"],
-                batch["subject_volume"],
-                batch["padding_mask"],
-                seq_length,
-                torch.full((batch_size,), 30, device=device)
-            )
-            
+        trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
+            dataset_type,
+            model_type,
+            batch["camera_trajectory"],
+            batch["subject_trajectory"],
+            batch["subject_volume"],
+            batch["padding_mask"],
+            seq_length,
+            torch.full((batch_size,), 30, device=device) # fix me for other datasets
+        )
+        
+        
+        if model_type in ["ccdm", "et"]:
             if pre_generated_trajectory is not None:
                 generated_trajecotry = pre_generated_trajectory
             else:
@@ -95,7 +102,6 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
                 padding_mask,
                 30
             )
-        
         elif model_type == "lens_craft":
             sim_generated_trajectory = ref_output["reconstructed"]
         
