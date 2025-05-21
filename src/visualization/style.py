@@ -2,7 +2,7 @@ import math
 import string
 from omegaconf import DictConfig
 from typing import Dict, Any, List
-from data.simulation.constants import CLIP_PARAMETERS
+from data.simulation.utils import CLIP_PARAMETERS
 
 
 

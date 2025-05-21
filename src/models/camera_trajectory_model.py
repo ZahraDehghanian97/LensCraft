@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from .encoder import Encoder
 from .decoder import Decoder
-from data.simulation.constants import cinematography_struct_size, simulation_struct_size
+from data.simulation.utils import cinematography_struct_size, simulation_struct_size
 
 
 class LensCraft(nn.Module):

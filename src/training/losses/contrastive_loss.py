@@ -2,7 +2,7 @@ import torch
 from torch.nn.functional import cosine_similarity
 import random
 import numpy as np
-from data.simulation.constants import CLIP_PARAMETERS_DICT
+from data.simulation.utils import CLIP_PARAMETERS_DICT
 
 
 class ContrastiveLoss:

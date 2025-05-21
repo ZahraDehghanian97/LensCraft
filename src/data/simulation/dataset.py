@@ -16,20 +16,7 @@ from .loader import (
     extract_subject_components
 )
 
-from .constants import (
-    cinematography_struct,
-    cinematography_struct_size,
-    simulation_struct,
-    simulation_struct_size,
-)
-
-from .utils import (
-    extract_cinematography_parameters,
-    convert_parameters_to_embedding_tensor,
-    load_clip_means,
-    extract_text_prompt,
-    create_prompt_none_mask,
-)
+from .utils import fix_prompts_and_instructions, load_clip_means, extract_text_prompt
 
 
 class SimulationDataset(Dataset):
@@ -140,46 +127,14 @@ class SimulationDataset(Dataset):
         subject_trajectory, subject_volume = extract_subject_components(data["subjectsInfo"])
         instruction = data["simulationInstructions"][0]
         prompt = data["cinematographyPrompts"][0]
+        
+        simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask, simulation_instruction_parameters, cinematography_prompt_parameters = \
+            fix_prompts_and_instructions(instruction, prompt, self.clip_embeddings, self.fill_none_with_mean, self.embedding_means)
 
         if self.normalize:
             camera_trajectory, subject_trajectory, subject_volume = \
                 SimulationDataset.normalize_item(camera_trajectory, subject_trajectory, subject_volume)
 
-        simulation_instruction = extract_cinematography_parameters(
-            data=instruction,
-            struct=simulation_struct,
-            clip_embeddings=self.clip_embeddings,
-            fill_none_with_mean=self.fill_none_with_mean,
-            embedding_means=self.embedding_means,
-        )
-
-        cinematography_prompt = extract_cinematography_parameters(
-            data=prompt,
-            struct=cinematography_struct,
-            clip_embeddings=self.clip_embeddings,
-            fill_none_with_mean=self.fill_none_with_mean,
-            embedding_means=self.embedding_means,
-        )
-
-        simulation_instruction_tensor = convert_parameters_to_embedding_tensor(
-            simulation_instruction,
-            simulation_struct_size
-        )
-        
-        cinematography_prompt_tensor = convert_parameters_to_embedding_tensor(
-            cinematography_prompt,
-            cinematography_struct_size
-        )
-        
-        text_prompt = extract_text_prompt(prompt)
-
-        n_clip_embs = len(cinematography_prompt) + len(simulation_instruction)
-        
-        prompt_none_mask = create_prompt_none_mask(
-            cinematography_prompt_parameters=cinematography_prompt,
-            simulation_instruction_parameters=simulation_instruction,
-            n_clip_embs=n_clip_embs
-        )
         
         padding_mask = torch.zeros(30, dtype=torch.bool)
         
@@ -190,9 +145,9 @@ class SimulationDataset(Dataset):
             "padding_mask": padding_mask,
             "simulation_instruction": simulation_instruction_tensor,
             "cinematography_prompt": cinematography_prompt_tensor,
-            "simulation_instruction_parameters": simulation_instruction,
-            "cinematography_prompt_parameters": cinematography_prompt,
-            "text_prompt": text_prompt,
+            "simulation_instruction_parameters": simulation_instruction_parameters,
+            "cinematography_prompt_parameters": cinematography_prompt_parameters,
+            "text_prompt": extract_text_prompt(prompt),
             "prompt_none_mask": prompt_none_mask,
         }
 

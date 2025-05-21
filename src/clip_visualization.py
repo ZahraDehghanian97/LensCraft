@@ -1,5 +1,5 @@
 from data.simulation.init_embeddings import initialize_all_clip_embeddings
-from data.simulation.constants import *
+from data.simulation.utils import CLIP_PARAMETERS
 from matplotlib import pyplot as plt
 import numpy as np
 import random

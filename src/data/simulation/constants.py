@@ -1,8 +1,5 @@
 from enum import Enum
 
-from data.simulation.utils import count_total_parameters_in_struct, flatten_struct_parameters
-
-
 class CameraVerticalAngle(Enum):
     LOW = "low"
     EYE = "eye"
@@ -150,8 +147,6 @@ cinematography_struct = [
     ])
 ]
 
-cinematography_struct_size = count_total_parameters_in_struct(cinematography_struct)
-
 simulation_struct = [
     ("initialSetup", [
         ("cameraAngle", CameraVerticalAngle),
@@ -184,13 +179,3 @@ simulation_struct = [
         ("staticCameraSubjectRotation", bool)
     ])
 ]
-
-simulation_struct_size = count_total_parameters_in_struct(simulation_struct)
-
-cinematography_struct_parameters = flatten_struct_parameters(cinematography_struct)
-
-simulation_struct_parameters = flatten_struct_parameters(simulation_struct)
-
-CLIP_PARAMETERS = cinematography_struct_parameters + simulation_struct_parameters
-
-CLIP_PARAMETERS_DICT = dict(CLIP_PARAMETERS)

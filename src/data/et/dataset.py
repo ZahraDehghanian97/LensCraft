@@ -1,19 +1,33 @@
-import torch
 import os
+import json
 from typing import Any, Dict
+import torch
 from torch.utils.data import Dataset
 
 from data.et.config import STANDARDIZATION_CONFIG_TORCH
+from data.simulation.utils import fix_prompts_and_instructions, load_clip_means
 
 from .load import load_et_dataset
 
 
 class ETDataset(Dataset):
-    def __init__(self, project_config_dir: str, dataset_dir: str, set_name: str, split: str, normalize: bool):
+    def __init__(self, project_config_dir: str, dataset_dir: str, et_cin_lang_path: str, fill_none_with_mean: bool, 
+                 clip_embeddings: Dict, set_name: str, split: str, normalize: bool):
         self.original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
-        self.normalize = normalize # Fixme: denormalize if false
+        self.fill_none_with_mean = fill_none_with_mean
+        self.clip_embeddings = clip_embeddings
+        self.normalize = normalize
+        with open(et_cin_lang_path, 'r') as f:
+            prompt_data = json.load(f)
+            
+        self.prompt_lookup = {item['custom_id']: item for item in prompt_data}
+
+        if self.fill_none_with_mean:
+            self.embedding_means = load_clip_means()
+        else:
+            self.embedding_means = None
 
     def __len__(self) -> int:
         return len(self.original_dataset)
@@ -82,6 +96,15 @@ class ETDataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = self.original_dataset[index]
+        item_id = os.path.splitext(item['traj_filename'])[0]
+        item_data = self.prompt_lookup[f"et-{item_id}"]
+        
+        instruction = item_data["simulationInstructions"][0]
+        prompt = item_data["cinematographyPrompts"][0]
+        
+        simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask, simulation_instruction_parameters, cinematography_prompt_parameters = \
+            fix_prompts_and_instructions(instruction, prompt, self.clip_embeddings, self.fill_none_with_mean, self.embedding_means)
+
         
         camera_trajectory = item["traj_feat"].permute(1, 0)
         subject_trajectory = item['char_feat'].permute(1, 0)
@@ -99,8 +122,13 @@ class ETDataset(Dataset):
             'padding_mask': ~item['padding_mask'].to(torch.bool),
             'caption_feat': caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32),
+            "simulation_instruction": simulation_instruction_tensor,
+            "cinematography_prompt": cinematography_prompt_tensor,
+            "simulation_instruction_parameters": simulation_instruction_parameters,
+            "cinematography_prompt_parameters": cinematography_prompt_parameters,
+            "prompt_none_mask": prompt_none_mask,
             'text_prompts': item['caption_raw']['caption'],
-            'item_id': os.path.splitext(item['traj_filename'])[0]
+            'item_id': os.path.splitext(item['traj_filename'])[0],
         }
 
 
@@ -122,6 +150,15 @@ def collate_fn(batch):
         'padding_mask': torch.stack([item['padding_mask'] for item in batch]),
         'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
         'intrinsics': torch.stack([item['intrinsics'] for item in batch]),
+        "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
+        "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
+        "simulation_instruction_parameters": [
+            item["simulation_instruction_parameters"] for item in batch
+        ],
+        "cinematography_prompt_parameters": [
+            item["cinematography_prompt_parameters"] for item in batch
+        ],
+        "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
         'text_prompts': [item['text_prompts'] for item in batch],
-        'item_ids': [item['item_id'] for item in batch]
+        'item_ids': [item['item_id'] for item in batch],
     }

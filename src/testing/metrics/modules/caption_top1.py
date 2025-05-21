@@ -1,7 +1,7 @@
 from torch.nn.functional import cosine_similarity
 from torchmetrics import Metric
 
-from data.simulation.constants import CLIP_PARAMETERS_DICT
+from data.simulation.utils import CLIP_PARAMETERS_DICT
 
 
 class CaptionTop1(Metric):

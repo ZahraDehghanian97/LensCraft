@@ -4,7 +4,7 @@ from omegaconf import DictConfig
 from tensorboard.backend.event_processing import event_accumulator
 import matplotlib.pyplot as plt
 from typing import Dict, List
-from data.simulation.constants import CLIP_PARAMETERS
+from data.simulation.utils import CLIP_PARAMETERS
 from visualization.style import calc_dimensions, get_line_style, get_title
 
 

@@ -89,7 +89,7 @@ def main(cfg: DictConfig) -> None:
     else:
         metric_items = (
             ["reconstruction", "prompt_generation", "hybrid_generation"]
-            if dataset_type == "simulation"
+            if dataset_type in ["simulation", "et"]
             else ["reconstruction"]
         )
     

@@ -5,6 +5,15 @@ config:
   _target_: data.et.dataset.ETDataset
   project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
   dataset_dir: ${oc.env:ET_DATA_DIR}
+  et_cin_lang_path: ${oc.env:ET_CIN_LANG_PATH}
   set_name: mixed
   split: train
+  fill_none_with_mean: true
   normalize: true
+  clip_embeddings:
+    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
+    clip_model_name: ${clip.model_name}
+    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
+    embedding_dimension: 512
+    embedding_mode: "default" # choose between ["default", "normal", "pca"]
+    n_components_pca: 100

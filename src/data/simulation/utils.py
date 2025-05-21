@@ -3,6 +3,11 @@ from typing import Dict, List, Optional, Tuple, Any
 import torch
 import pickle
 
+from .constants import (
+    cinematography_struct,
+    simulation_struct,
+)
+
 
 def get_enum_index(enum_class, value) -> int:
     if isinstance(enum_class, bool) or enum_class is bool:
@@ -231,3 +236,55 @@ def create_prompt_none_mask(cinematography_prompt_parameters: list, simulation_i
             prompt_none_entries[emb_idx] = False
     
     return prompt_none_entries
+
+
+def fix_prompts_and_instructions(instruction, prompt, clip_embeddings, fill_none_with_mean, embedding_means):
+    simulation_instruction_parameters = extract_cinematography_parameters(
+        data=instruction,
+        struct=simulation_struct,
+        clip_embeddings=clip_embeddings,
+        fill_none_with_mean=fill_none_with_mean,
+        embedding_means=embedding_means,
+    )
+
+    cinematography_prompt_parameters = extract_cinematography_parameters(
+        data=prompt,
+        struct=cinematography_struct,
+        clip_embeddings=clip_embeddings,
+        fill_none_with_mean=fill_none_with_mean,
+        embedding_means=embedding_means,
+    )
+
+    simulation_instruction_tensor = convert_parameters_to_embedding_tensor(
+        simulation_instruction_parameters,
+        simulation_struct_size
+    )
+    
+    cinematography_prompt_tensor = convert_parameters_to_embedding_tensor(
+        cinematography_prompt_parameters,
+        cinematography_struct_size
+    )
+    
+    n_clip_embs = len(simulation_instruction_parameters) + len(cinematography_prompt_parameters)
+    
+    prompt_none_mask = create_prompt_none_mask(
+        cinematography_prompt_parameters=simulation_instruction_parameters,
+        simulation_instruction_parameters=cinematography_prompt_parameters,
+        n_clip_embs=n_clip_embs
+    )
+    
+    return simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask ,simulation_instruction_parameters, cinematography_prompt_parameters
+
+
+
+cinematography_struct_size = count_total_parameters_in_struct(cinematography_struct)
+
+simulation_struct_size = count_total_parameters_in_struct(simulation_struct)
+
+cinematography_struct_parameters = flatten_struct_parameters(cinematography_struct)
+
+simulation_struct_parameters = flatten_struct_parameters(simulation_struct)
+
+CLIP_PARAMETERS = cinematography_struct_parameters + simulation_struct_parameters
+
+CLIP_PARAMETERS_DICT = dict(CLIP_PARAMETERS)
