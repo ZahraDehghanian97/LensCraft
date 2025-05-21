@@ -15,7 +15,7 @@ loss_module:
     relative:         16     
     speed:            80     
     cycle:            100    
-    contrastive:      5      # TODO: Schedule    
+    # contrastive:      5      # TODO: Schedule    
   weighted_clip_loss: false
   weight_power: 1
   contrastive_loss_version: 3         # Select between versions [1, 2, 3]
