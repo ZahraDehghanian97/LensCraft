@@ -22,7 +22,35 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
     
     generated_trajectory_data = None
     
+   
+    
+    if dataset_type != "simulation":
+        sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = convert_to_target(
+            dataset_type,
+            "simulation",
+            batch["camera_trajectory"],
+            batch["subject_trajectory"],
+            batch["subject_volume"],
+            batch["padding_mask"],
+            30
+        )
+    else:
+        sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
+            batch["camera_trajectory"], batch["subject_trajectory"], batch["subject_volume"], batch["padding_mask"]
+    
+    camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
+            dataset_type,
+            model_type,
+            batch["camera_trajectory"],
+            batch["subject_trajectory"],
+            batch["subject_volume"],
+            batch["padding_mask"],
+            seq_length,
+            torch.full((batch_size,), 30, device=device) # fix me for other datasets
+        )
+    
     for metric_item in metric_items:
+        caption_embedding = batch.get("cinematography_prompt", None) if dataset_type in ["simulation", "et"] else None
         if metric_item == 'reconstruction':
             memory_teacher_forcing_ratio = 0
         elif metric_item == 'key_framing':
@@ -35,25 +63,6 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
             memory_teacher_forcing_ratio = 0.5
         elif metric_item == 'hybrid_generation':
             memory_teacher_forcing_ratio = 0.5
-        
-        caption_embedding = None
-        if dataset_type == "simulation":
-            caption_embedding = batch.get("cinematography_prompt", None)
-        
-        
-        if dataset_type != "simulation":
-            sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = convert_to_target(
-                dataset_type,
-                "simulation",
-                batch["camera_trajectory"],
-                batch["subject_trajectory"],
-                batch["subject_volume"],
-                batch["padding_mask"],
-                30
-            )
-        else:
-            sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
-                batch["camera_trajectory"], batch["subject_trajectory"], batch["subject_volume"], batch["padding_mask"]
         
         ref_output = ref_model.generate_camera_trajectory(
             subject_trajectory=sim_subject_trajectory,
@@ -68,18 +77,6 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
         subject_embedding = ref_output['subject_embedding']
         decoder_memory = decoder_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
         
-        trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-            dataset_type,
-            model_type,
-            batch["camera_trajectory"],
-            batch["subject_trajectory"],
-            batch["subject_volume"],
-            batch["padding_mask"],
-            seq_length,
-            torch.full((batch_size,), 30, device=device) # fix me for other datasets
-        )
-        
-        
         if model_type in ["ccdm", "et"]:
             if pre_generated_trajectory is not None:
                 generated_trajecotry = pre_generated_trajectory
@@ -87,7 +84,7 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
                 generated_trajecotry = model.generate_using_text(
                     batch["text_prompts"],
                     subject_trajectory,
-                    trajectory,
+                    camera_trajectory,
                     padding_mask
                 )
             

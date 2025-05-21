@@ -35,16 +35,8 @@ def main(cfg: DictConfig) -> None:
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
 
-    clip_embeddings = None
-    
     data_format_type = cfg.training.model.data_format.get("type", "simulation")
     model_type = "lens_craft" if data_format_type == "simulation" else data_format_type
-    if model_type == "lens_craft" and cfg.get("caption_top1_metric", False):
-        from data.simulation.init_embeddings import initialize_all_clip_embeddings
-        clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.training.model.inference.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
-
-    model = None
-    ref_model = None
     
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -56,9 +48,7 @@ def main(cfg: DictConfig) -> None:
     data_module.setup()
     
     target = cfg.data.dataset.config["_target_"]
-    dataset_type = (
-        "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
-    )
+    dataset_type = "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
     
     trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
@@ -67,6 +57,9 @@ def main(cfg: DictConfig) -> None:
     else:
         trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth")        
 
+    model = None
+    ref_model = None
+    
     if model_type == "lens_craft":
         model = load_lens_craft_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
         ref_model = model
@@ -80,6 +73,11 @@ def main(cfg: DictConfig) -> None:
             else:
                 raise ValueError(f"Unsupported model type: {model_type}")
 
+
+    clip_embeddings = None
+    if model_type == "lens_craft" and cfg.get("caption_top1_metric", False):
+        from data.simulation.init_embeddings import initialize_all_clip_embeddings
+        clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.training.model.inference.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
     metric_callback = MetricCallback(num_cams=1, device=device, clip_embeddings=clip_embeddings)
 
     test_dataloader = data_module.test_dataloader()
@@ -88,9 +86,9 @@ def main(cfg: DictConfig) -> None:
         metric_items = ["prompt_generation"]
     else:
         metric_items = (
-            ["reconstruction", "prompt_generation", "hybrid_generation"]
+            ["reconstruction", "key_framing", "prompt_generation", "key_framing+prompt", "hybrid_generation"]
             if dataset_type in ["simulation", "et"]
-            else ["reconstruction"]
+            else ["reconstruction", "key_framing"]
         )
     
     if os.path.exists(trajectory_save_path) and model_type in ["ccdm", "et"]:
@@ -123,26 +121,33 @@ def main(cfg: DictConfig) -> None:
         #     torch.save(all_generated_trajectories, trajectory_save_path)
         #     logger.info(f"Saved {len(all_generated_trajectories)} generated trajectories to {trajectory_save_path}")
 
-    metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
-    for metric_item in metric_items:
-        if metric_item in metric_callback.active_metrics:
-            if metric_item in metric_callback.metrics and "clatr_prdc" in metric_callback.metrics[metric_item]:
-                prdc = metric_callback.metrics[metric_item]["clatr_prdc"]
-                if hasattr(prdc, "real_features") and prdc.real_features is not None:
-                    metric_features[metric_item]["GT"] = prdc.real_features
-                if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
-                    metric_features[metric_item]["GEN"] = prdc.fake_features
+    metrics = {
+        item: metric_callback.compute_clatr_metrics(item)
+        for item in metric_items
+        if item in metric_callback.active_metrics
+    }
+
+    logger.info(f"Final Metrics: {metrics}")
     
-    
-    save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
-    features_save_dir = os.path.join(save_dir, "features")
-    os.makedirs(features_save_dir, exist_ok=True)
-    features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
-    
-    torch.save(metric_features, features_save_path)
-    
-    os.makedirs(cfg.output_dir, exist_ok=True)
     if cfg.tsne:
+        metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
+        for metric_item in metric_items:
+            if metric_item in metric_callback.active_metrics:
+                if metric_item in metric_callback.metrics and "clatr_prdc" in metric_callback.metrics[metric_item]:
+                    prdc = metric_callback.metrics[metric_item]["clatr_prdc"]
+                    if hasattr(prdc, "real_features") and prdc.real_features is not None:
+                        metric_features[metric_item]["GT"] = prdc.real_features
+                    if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
+                        metric_features[metric_item]["GEN"] = prdc.fake_features
+        
+        
+        save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
+        features_save_dir = os.path.join(save_dir, "features")
+        os.makedirs(features_save_dir, exist_ok=True)
+        features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
+        
+        torch.save(metric_features, features_save_path)
+        os.makedirs(cfg.output_dir, exist_ok=True)
         for metric_item, features in metric_features.items():
             if features["GT"] is not None and features["GEN"] is not None:
                 logger.info(f"Creating t-SNE visualization for {metric_item}")
@@ -181,14 +186,6 @@ def main(cfg: DictConfig) -> None:
                 )
                 
                 logger.info(f"Movement type t-SNE visualization saved to {cfg.output_dir}/embeddings_tSNE_by_movement_type.png")
-
-    metrics = {
-        item: metric_callback.compute_clatr_metrics(item)
-        for item in metric_items
-        if item in metric_callback.active_metrics
-    }
-
-    logger.info(f"Final Metrics: {metrics}")
 
 
 if __name__ == "__main__":

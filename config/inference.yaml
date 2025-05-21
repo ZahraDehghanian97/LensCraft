@@ -1,0 +1,9 @@
+defaults:
+  - _self_
+  - clip: default
+  - data: default
+  - training: default
+  - hydra: test
+
+output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
+device: cuda

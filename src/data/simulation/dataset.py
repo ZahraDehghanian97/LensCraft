@@ -147,6 +147,8 @@ class SimulationDataset(Dataset):
             "cinematography_prompt": cinematography_prompt_tensor,
             "simulation_instruction_parameters": simulation_instruction_parameters,
             "cinematography_prompt_parameters": cinematography_prompt_parameters,
+            "raw_prompt": prompt,
+            "raw_instruction": instruction,
             "text_prompt": extract_text_prompt(prompt),
             "prompt_none_mask": prompt_none_mask,
         }
@@ -170,12 +172,10 @@ def collate_fn(batch):
         "padding_mask": torch.stack([item["padding_mask"] for item in batch]),
         "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
         "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
-        "simulation_instruction_parameters": [
-            item["simulation_instruction_parameters"] for item in batch
-        ],
-        "cinematography_prompt_parameters": [
-            item["cinematography_prompt_parameters"] for item in batch
-        ],
+        "simulation_instruction_parameters": [item["simulation_instruction_parameters"] for item in batch],
+        "cinematography_prompt_parameters": [item["cinematography_prompt_parameters"] for item in batch],
+        "raw_prompt": [item["raw_prompt"] for item in batch],
+        "raw_instruction": [item["raw_instruction"] for item in batch],
         "text_prompts": [item["text_prompt"] for item in batch],
         "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
     }
