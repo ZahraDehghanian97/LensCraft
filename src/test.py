@@ -119,9 +119,9 @@ def main(cfg: DictConfig) -> None:
                 if generated_trajectory_data is not None:
                     all_generated_trajectories.append(generated_trajectory_data)
 
-        if all_generated_trajectories and model_type in ["ccdm", "et"]:
-            torch.save(all_generated_trajectories, trajectory_save_path)
-            logger.info(f"Saved {len(all_generated_trajectories)} generated trajectories to {trajectory_save_path}")
+        # if all_generated_trajectories and model_type in ["ccdm", "et"]:
+        #     torch.save(all_generated_trajectories, trajectory_save_path)
+        #     logger.info(f"Saved {len(all_generated_trajectories)} generated trajectories to {trajectory_save_path}")
 
     metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
     for metric_item in metric_items:
