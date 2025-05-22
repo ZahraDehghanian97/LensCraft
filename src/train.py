@@ -86,9 +86,15 @@ def main(cfg: DictConfig):
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
     
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
-    trainer.fit(lightning_model, datamodule=data_module)
-    if trainer.global_rank != 0:
-        sys.exit(0)
+    
+    training_completed = False
+    try:
+        trainer.fit(lightning_model, datamodule=data_module)
+        training_completed = True
+    except KeyboardInterrupt:
+        logger.info("Training was interrupted by user. Proceeding to testing with current model state...")
+    except Exception as e:
+        logger.info("Error: ", e)
     
     if use_multi_dataset:
         dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
@@ -131,6 +137,9 @@ def main(cfg: DictConfig):
         
         logger.info(f"Total PRDC sum: {prdc_sum}")
 
+    if not training_completed:
+        logger.info("Testing completed after training interruption")
+    
     return -float(prdc_sum)
 
 

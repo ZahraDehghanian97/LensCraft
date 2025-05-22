@@ -16,7 +16,8 @@ from .loader import (
     extract_subject_components
 )
 
-from .utils import fix_prompts_and_instructions, load_clip_means, extract_text_prompt
+from .utils import fix_prompts_and_instructions, load_clip_means
+from .caption import extract_text_prompt
 
 
 class SimulationDataset(Dataset):
@@ -59,7 +60,7 @@ class SimulationDataset(Dataset):
         print("Normalization enabled. Using normalization parameters.")
     
     @staticmethod
-    def get_normalization_parameters(data_path: str=os.environ.get('SIMULATION_DATA_PATH', '/media/disk1/arash/abolghasemi/simulation-data-3-mini')) -> Dict:
+    def get_normalization_parameters(data_path: str=os.environ.get('SIMULATION_DATA_PATH', '/media/disk1/arash/abolghasemi/simulation-data-4-mini')) -> Dict:
         if SimulationDataset._normalization_parameters is not None:
             return SimulationDataset._normalization_parameters
             
@@ -125,6 +126,7 @@ class SimulationDataset(Dataset):
         
         camera_trajectory = extract_camera_trajectory(data["cameraFrames"])
         subject_trajectory, subject_volume = extract_subject_components(data["subjectsInfo"])
+        movement_type = data["subjectsInfo"][0]["movementType"]
         instruction = data["simulationInstructions"][0]
         prompt = data["cinematographyPrompts"][0]
         
@@ -149,7 +151,7 @@ class SimulationDataset(Dataset):
             "cinematography_prompt_parameters": cinematography_prompt_parameters,
             "raw_prompt": prompt,
             "raw_instruction": instruction,
-            "text_prompt": extract_text_prompt(prompt),
+            "text_prompt": extract_text_prompt(prompt, movement_type),
             "prompt_none_mask": prompt_none_mask,
         }
 

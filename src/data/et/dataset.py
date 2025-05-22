@@ -13,12 +13,19 @@ from .load import load_et_dataset
 class ETDataset(Dataset):
     def __init__(self, project_config_dir: str, dataset_dir: str, et_cin_lang_path: str, fill_none_with_mean: bool, 
                  clip_embeddings: Dict, set_name: str, split: str, normalize: bool):
-        self.original_dataset = load_et_dataset(
+        original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
+        
+        
+        target_ids = None # {'2011_4lQ_MjU4QHw_00005_00005': 1328, '2011_KQM0klOXck8_00023_00000': 4891, '2012_ZryPGAMBuF4_00004_00002': 18583, '2014_pDEJr2Sqhxc_00005_00000': 24719, '2015_2ad7SgwLNXo_00014_00002': 25731, '2016_ux9JHznPT8E_00009_00001': 36731}
+        
+        self.original_dataset = [original_dataset[i] for i in target_ids.values()] if target_ids else original_dataset
+
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
         self.fill_none_with_mean = fill_none_with_mean
         self.clip_embeddings = clip_embeddings
         self.normalize = normalize
+        
         with open(et_cin_lang_path, 'r') as f:
             prompt_data = json.load(f)
             
@@ -127,6 +134,8 @@ class ETDataset(Dataset):
             "simulation_instruction_parameters": simulation_instruction_parameters,
             "cinematography_prompt_parameters": cinematography_prompt_parameters,
             "prompt_none_mask": prompt_none_mask,
+            "raw_prompt": prompt,
+            "raw_instruction": instruction,
             'text_prompts': item['caption_raw']['caption'],
             'item_id': os.path.splitext(item['traj_filename'])[0],
         }
@@ -159,6 +168,8 @@ def collate_fn(batch):
             item["cinematography_prompt_parameters"] for item in batch
         ],
         "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
+        "raw_prompt": [item["raw_prompt"] for item in batch],
+        "raw_instruction": [item["raw_instruction"] for item in batch],
         'text_prompts': [item['text_prompts'] for item in batch],
         'item_ids': [item['item_id'] for item in batch],
     }

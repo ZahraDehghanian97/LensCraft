@@ -113,20 +113,22 @@ def main(cfg: DictConfig) -> None:
             
             first_batch['random_prompt_index'] = np.random.randint(0, batch_size, size=batch_size).tolist()
             
-            trajectories =\
+            trajectories, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, key_framing_padding_mask =\
                 inference_batch(model, first_batch, device, dataset_type, model_type, seq_length=cfg.training.model.data_format.seq_length)
+            
+            trajectories['GT'] = sim_camera_trajectory
             
             result = {
                 "trajectories": trajectories,
                 "batch_data": {
-                    "camera_trajectory": first_batch.get("camera_trajectory"),
-                    "subject_trajectory": first_batch.get("subject_trajectory"),
-                    "subject_volume": first_batch.get("subject_volume"),
-                    "padding_mask": first_batch.get("padding_mask"),
+                    "subject_trajectory": sim_subject_trajectory,
+                    "subject_volume": sim_subject_volume,
+                    "padding_mask": sim_padding_mask,
                     "text_prompts": first_batch.get("text_prompts"),
                     "raw_prompt": first_batch.get("raw_prompt"),
                     "raw_instruction": first_batch.get("raw_instruction"),
                     "random_prompt_index": first_batch.get("random_prompt_index"),
+                    "key_framing_padding_mask": key_framing_padding_mask
                 },
                 "dataset_type": dataset_type,
                 "model_type": model_type,

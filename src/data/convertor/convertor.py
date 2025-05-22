@@ -14,7 +14,9 @@ def convert_to_target(
     padding_mask: torch.Tensor | None = None,
     target_len=30,
     valid_target_len=None,
-    convertors=None
+    convertors=None,
+    need_denormal=True,
+    need_normal=True
 ):
     if source == 'lens_craft':
         source = 'simulation'
@@ -41,12 +43,14 @@ def convert_to_target(
     
     batch_size = trajectory.shape[0]
     
-    trajectory, subject_trajectory, subject_volume = default_normalizers[source](trajectory, subject_trajectory, subject_volume, False)
+    if need_denormal:
+        trajectory, subject_trajectory, subject_volume = default_normalizers[source](trajectory, subject_trajectory, subject_volume, False)
     transform, subject_trajectory, subject_volume = source_convertor.to_standard(trajectory, subject_trajectory, subject_volume)
     if subject_volume.shape[0] == 1 and batch_size != 1:
         subject_volume = subject_volume.repeat(batch_size, 1)
     transform, padding_mask = resample_batch_trajectories(transform, valid_lengths, target_len, valid_target_len)
     subject_trajectory, padding_mask = resample_batch_trajectories(subject_trajectory, valid_lengths, target_len, valid_target_len)
-    trajectory, subject_trajectory, subject_volume = target_convertor.from_standard(transform, subject_trajectory, subject_volume)    
-    trajectory, subject_trajectory, subject_volume = default_normalizers[target](trajectory, subject_trajectory, subject_volume, True)
+    trajectory, subject_trajectory, subject_volume = target_convertor.from_standard(transform, subject_trajectory, subject_volume)
+    if need_normal:
+        trajectory, subject_trajectory, subject_volume = default_normalizers[target](trajectory, subject_trajectory, subject_volume, True)
     return trajectory, subject_trajectory, subject_volume, padding_mask

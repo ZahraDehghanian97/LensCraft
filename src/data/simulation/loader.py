@@ -149,10 +149,9 @@ def generate_movement_types_file(data_path: Path, simulation_files: List[Path], 
         return
     
     print(f"Generating movement types file at {movement_types_file}...")
-    processed = 0
     
     with open(movement_types_file, 'w') as f:
-        for idx, file_path in enumerate(simulation_files):
+        for file_path in tqdm(simulation_files, desc="Processing simulation files"):
             try:
                 data = parse_simulation_file_to_dict(file_path, parameter_dictionary)
                 if data and "subjectsInfo" in data and data["subjectsInfo"]:
@@ -161,14 +160,11 @@ def generate_movement_types_file(data_path: Path, simulation_files: List[Path], 
                 else:
                     f.write(f"{file_path.name}|unknown\n")
                 
-                processed += 1
-                if processed % 100 == 0:
-                    print(f"Processed {processed}/{len(simulation_files)} files...")
             except Exception as e:
                 f.write(f"{file_path.name}|error\n")
                 print(f"Error processing {file_path}: {e}")
     
-    print(f"Completed generating movement types file. Processed {processed} files.")
+    print(f"Completed generating movement types file.")
 
 def load_movement_types(data_path: Path) -> Dict[str, str]:
     """Load movement types from the movement_types.txt file."""

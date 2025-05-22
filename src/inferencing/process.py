@@ -3,6 +3,7 @@ from typing import Dict
 import torch
 
 from data.convertor.convertor import convert_to_target
+from data.convertor.constant import default_normalizers
 
 
 def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
@@ -62,32 +63,29 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
             subject_trajectory,
             batch["subject_volume"],
             padding_mask,
-            30
+            30,
+            need_normal=False
         )
-        return {'prompt_generation': sim_generated_trajectory}
+        return {'prompt_generation': sim_generated_trajectory}, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, None
         
     results = {}
+    template = torch.cat([torch.ones(26, dtype=torch.bool), torch.zeros(4, dtype=torch.bool)])
+    key_framing_padding_mask = torch.zeros((batch_size, 30), dtype=torch.bool, device=device)
+    for i in range(batch_size):
+        shuffled = template[torch.randperm(30)]
+        key_framing_padding_mask[i] = shuffled
+            
     for mode in ['prompt_generation', 'reconstruction', 'key_framing+prompt', 'key_framing', 'source_trajectory']:
         current_caption_embedding = caption_embedding
+        current_padding_mask = sim_padding_mask
         if mode == 'reconstruction':
             memory_teacher_forcing_ratio = 0
         elif mode == 'key_framing':
-            template = torch.cat([torch.ones(26, dtype=torch.bool), torch.zeros(4, dtype=torch.bool)])
-            padding_mask = torch.zeros((batch_size, 30), dtype=torch.bool, device=device)
-            for i in range(batch_size):
-                shuffled = template[torch.randperm(30)]
-                padding_mask[i] = shuffled
-            batch["padding_mask"] = padding_mask
-            memory_teacher_forcing_ratio = 0
+            current_padding_mask = key_framing_padding_mask
         elif mode == 'prompt_generation':
             memory_teacher_forcing_ratio = 1
         elif mode == 'key_framing+prompt':
-            template = torch.cat([torch.ones(26, dtype=torch.bool), torch.zeros(4, dtype=torch.bool)])
-            padding_mask = torch.zeros((batch_size, 30), dtype=torch.bool, device=device)
-            for i in range(batch_size):
-                shuffled = template[torch.randperm(30)]
-                padding_mask[i] = shuffled
-            batch["padding_mask"] = padding_mask
+            current_padding_mask = key_framing_padding_mask
             memory_teacher_forcing_ratio = 0.5
         elif mode == 'source_trajectory':
             memory_teacher_forcing_ratio = 0.5
@@ -101,10 +99,10 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
             subject_trajectory=sim_subject_trajectory,
             subject_volume=sim_subject_volume,
             camera_trajectory=sim_camera_trajectory,
-            padding_mask=sim_padding_mask,
+            padding_mask=current_padding_mask,
             memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
             caption_embedding=current_caption_embedding
         )
         results[mode] = output["reconstructed"]
     
-    return results
+    return results, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, key_framing_padding_mask
