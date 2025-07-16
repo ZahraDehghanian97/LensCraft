@@ -32,3 +32,4 @@ git+https://github.com/openai/CLIP.git
 
 openai
 ema_pytorch
+hydra-joblib-launcher==1.2.0

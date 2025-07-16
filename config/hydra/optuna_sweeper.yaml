@@ -16,7 +16,7 @@ sweeper:
   direction: minimize
   storage: sqlite:///optuna_camera_traj.db
   study_name: camera-traj-optimized
-  n_jobs: 1
+  n_jobs: 4
 
   params:
     training.model.module.num_encoder_layers: choice(4, 7, 10)
@@ -25,9 +25,9 @@ sweeper:
     training.model.module.dim_feedforward: choice(1024, 2048, 4096)
     training.model.module.dropout_rate: interval(0.1, 0.5)
     
-    trainer.max_epochs: 20
+    trainer.max_epochs: 1
     data.batch_size: choice(32, 64, 128)
-    data.num_workers: 8
+    data.num_workers: 0
 
     
     training.optimizer.lr: tag(log, interval(5e-8, 5e-4))
