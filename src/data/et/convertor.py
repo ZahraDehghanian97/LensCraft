@@ -40,7 +40,7 @@ class ETConvertor(BaseConvertor):
 
         return matrix_trajectory
 
-    @handle_single_or_batch(arg_specs=[(1, 2), (1, 2)])
+    @handle_single_or_batch(arg_specs=[(1, 3), (2, 3)])
     def to_standard(
         self,
         trajectory: torch.Tensor,
@@ -68,7 +68,7 @@ class ETConvertor(BaseConvertor):
         return transform, subject_transform, subject_volume
 
 
-    @handle_single_or_batch(arg_specs=[(1, 3), (1, 3)])
+    @handle_single_or_batch(arg_specs=[(1, 3), (2, 3)])
     def from_standard(
         self,
         transform: torch.Tensor,

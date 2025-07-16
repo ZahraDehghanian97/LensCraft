@@ -87,11 +87,14 @@ enum_descriptions = {
         "left": "towards the left",
         "right": "towards the right",
         "up": "upwards",
-        "down": "downwards"
+        "down": "downwards",
+        "forward": "forwards",
+        "backward": "backwards"
     },
     "MovementMode": {
         "transition": "using transitional movement",
-        "rotation": "using rotational movement"
+        "rotation": "using rotational movement",
+        "arc": "using arc movement"
     },
     "CameraMovementType": {
         "static": "remaining stationary",
@@ -121,6 +124,10 @@ enum_descriptions = {
         "fastToSlow": "decelerating from fast to slow",
         "constant": "at a constant speed",
         "smoothStartStop": "smoothly starting and stopping"
+    },
+    "SetupKind": {
+        "init": "from the initial setup",
+        "end": "towards the final setup"
     }
 }
 

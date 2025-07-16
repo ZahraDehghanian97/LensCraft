@@ -91,6 +91,8 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
             memory_teacher_forcing_ratio = 0.5
             random_indices = batch["random_prompt_index"]
             current_caption_embedding = []
+            if "cinematography_prompt" not in batch:
+                continue
             for idx in random_indices:
                 current_caption_embedding.append(batch["cinematography_prompt"][:, idx, :])
             current_caption_embedding = torch.stack(current_caption_embedding, dim=1).to(device)

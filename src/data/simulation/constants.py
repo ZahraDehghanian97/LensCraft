@@ -93,10 +93,13 @@ class Direction(Enum):
     RIGHT = "right"
     UP = "up"
     DOWN = "down"
+    FORWARD = "forward"
+    BACKWARD = "backward"
 
 class MovementMode(Enum):
     TRANSITION = "transition"
     ROTATION = "rotation"
+    ARC = "arc"
 
 class CameraMovementType(Enum):
     STATIC = "static"
@@ -127,6 +130,9 @@ class MovementSpeed(Enum):
     CONSTANT = "constant"
     SMOOTH_START_STOP = "smoothStartStop"
     
+class SetupKind(Enum):
+    INIT = "init"
+    END = "end"
 
 cinematography_struct = [
     ("initial", [
@@ -147,27 +153,24 @@ cinematography_struct = [
     ])
 ]
 
+setup_config_struct = [
+    ("cameraAngle", CameraVerticalAngle),
+    ("shotSize", ShotSize),
+    ("subjectView", SubjectView),
+    ("subjectFraming", [
+        ("position", SubjectInFramePosition),
+        ("dutchAngleScale", Scale)
+    ])
+]
+
 simulation_struct = [
-    ("initialSetup", [
-        ("cameraAngle", CameraVerticalAngle),
-        ("shotSize", ShotSize),
-        ("subjectView", SubjectView),
-        ("subjectFraming", [
-            ("position", SubjectInFramePosition),
-            ("dutchAngleScale", Scale)
-        ])
+    ("setup", [
+        ("config", setup_config_struct),
+        ("kind", SetupKind)
     ]),
     ("dynamic", [
         ("easing", MovementEasing),
-        ("endSetup", [
-            ("cameraAngle", CameraVerticalAngle),
-            ("shotSize", ShotSize),
-            ("subjectView", SubjectView),
-            ("subjectFraming", [
-                ("position", SubjectInFramePosition),
-                ("dutchAngleScale", Scale)
-            ])
-        ]),
+        ("complementSetup", setup_config_struct),
         ("subjectAwareInterpolation", bool),
         ("scale", Scale),
         ("direction", Direction),
