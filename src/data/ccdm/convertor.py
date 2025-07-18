@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from pytorch3d.transforms import axis_angle_to_matrix
+from utils.pytorch3d_transform import axis_angle_to_matrix
 from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 

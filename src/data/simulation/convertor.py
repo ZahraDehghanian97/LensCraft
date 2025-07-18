@@ -1,5 +1,5 @@
 import torch
-from pytorch3d.transforms import matrix_to_euler_angles, euler_angles_to_matrix
+from utils.pytorch3d_transform import matrix_to_euler_angles, euler_angles_to_matrix
 from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 

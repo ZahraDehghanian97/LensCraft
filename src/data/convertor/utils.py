@@ -3,7 +3,7 @@ import functools
 import torch
 import numpy as np
 import torch.nn.functional as F
-from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
+from utils.pytorch3d_transform import matrix_to_quaternion, quaternion_to_matrix
 
 
 def handle_single_or_batch(arg_specs=(0, 1), device=None, dtype=None):
