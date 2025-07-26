@@ -135,11 +135,11 @@ def get_mean_embedding(value_type, embedding_means):
         return embedding_means[value_type.__name__]
 
 
-def create_prompt_none_mask(cinematography_prompt_parameters: list, simulation_instruction_parameters: list, n_clip_embs: int):
-    prompt_none_entries = torch.ones(n_clip_embs, dtype=torch.bool)
+def create_prompt_none_mask(cinematography_prompt_parameters: list, simulation_instruction_parameters: list):
     clip_embedding_parameters = cinematography_prompt_parameters + simulation_instruction_parameters
-    
-    for emb_idx in range(n_clip_embs):
+    prompt_none_entries = torch.ones(len(clip_embedding_parameters), dtype=torch.bool)
+        
+    for emb_idx in range(len(clip_embedding_parameters)):
         _, _, value_idx, _ = clip_embedding_parameters[emb_idx]
         if value_idx == -1:
             prompt_none_entries[emb_idx] = False
@@ -173,16 +173,13 @@ def fix_prompts_and_instructions(instruction, prompt, clip_embeddings, fill_none
         cinematography_prompt_parameters,
         cinematography_struct_size
     )
-    
-    n_clip_embs = len(simulation_instruction_parameters) + len(cinematography_prompt_parameters)
-    
+        
     prompt_none_mask = create_prompt_none_mask(
-        cinematography_prompt_parameters=simulation_instruction_parameters,
-        simulation_instruction_parameters=cinematography_prompt_parameters,
-        n_clip_embs=n_clip_embs
+        cinematography_prompt_parameters=cinematography_prompt_parameters,
+        simulation_instruction_parameters=simulation_instruction_parameters,
     )
     
-    return simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask ,simulation_instruction_parameters, cinematography_prompt_parameters
+    return simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask, simulation_instruction_parameters, cinematography_prompt_parameters
 
 
 

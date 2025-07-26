@@ -9,7 +9,6 @@ from data.simulation.utils import load_clip_means
 class CameraTrajectoryLoss:
     def __init__(self,
                  contrastive_loss_margin: int=5,
-                 n_clip_embs: int=28,
                  losses_list: list=[],
                  weighted_clip_loss: bool=False,
                  weight_power: int=1,
@@ -21,7 +20,6 @@ class CameraTrajectoryLoss:
         self.angle_loss = AngleLoss()
         self.clip_loss = ClipLoss(clip_weights=clip_weights, weight_power=weight_power)
         self.contrastive_loss_margin = contrastive_loss_margin
-        self.n_clip_embs = n_clip_embs
         self.losses_list = losses_list
         self.weighted_clip_loss = weighted_clip_loss
         self.clip_weights = clip_weights
@@ -71,14 +69,13 @@ class CameraTrajectoryLoss:
             clip_losses, total_clip_loss = self.clip_loss.compute(
                 clip_target=clip_target,
                 clip_pred=clip_pred,
-                n_clip_embs=self.n_clip_embs,
                 weighted_clip_loss=self.weighted_clip_loss,
                 prompt_none_mask=batch.get("prompt_none_mask", None),
                 encoder_loss_function=self.encoder_loss_function
             )
 
             loss_dict["clip"] = total_clip_loss
-            loss_dict["clip_elements"] = {i: clip_losses[i] for i in range(self.n_clip_embs)} # FIXME
+            loss_dict["clip_elements"] = {i: clip_losses[i] for i in range(len(clip_losses))}
 
 
 
@@ -86,13 +83,12 @@ class CameraTrajectoryLoss:
             cycle_losses, total_cycle_loss = self.clip_loss.compute(
                 clip_target=clip_pred,
                 clip_pred=cycle_embeddings,
-                n_clip_embs=self.n_clip_embs,
                 weighted_clip_loss=self.weighted_clip_loss,
                 encoder_loss_function=self.encoder_loss_function
             )
             
             loss_dict["cycle"] = total_cycle_loss 
-            loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(self.n_clip_embs)} # FIXME
+            loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(len(cycle_losses))} # FIXME
 
         elif self.losses_list.get("cycle", 0) and cycle_embeddings is None:
             loss_dict["cycle"] = torch.tensor(0)
@@ -118,13 +114,14 @@ class CameraTrajectoryLoss:
 
 
         total_loss = 0
+        loss_factor = 1
         for loss_key in self.losses_list:
             if loss_key == "cycle" and \
                     "cycle" in loss_dict and \
                     "clip" in loss_dict and \
                     loss_dict["cycle"] < loss_dict["clip"]:
-                continue
-            total_loss += self.losses_list[loss_key] * loss_dict.get(loss_key, 0)
+                loss_factor = 0.5
+            total_loss += self.losses_list[loss_key] * loss_factor * loss_dict.get(loss_key, 0)
             
         loss_dict["total"] = total_loss.item()
         return total_loss, loss_dict

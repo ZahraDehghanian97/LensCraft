@@ -17,7 +17,6 @@ class ClipLoss:
     def compute(self,
                 clip_target,
                 clip_pred,
-                n_clip_embs,
                 weighted_clip_loss,
                 prompt_none_mask=None,
                 encoder_loss_function="clip"):
@@ -25,7 +24,7 @@ class ClipLoss:
         total_clip_loss = 0
         total_clip_loss_weighted = 0
         
-        for i in range(n_clip_embs):
+        for i in range(clip_target.shape[0]):
             if encoder_loss_function == "clip":
                 similarity = cosine_similarity(clip_target[i], clip_pred[i])
                 if prompt_none_mask is not None:
@@ -50,5 +49,5 @@ class ClipLoss:
             total_clip_loss_weighted = total_clip_loss_weighted / self.sum_clip_weights
             return clip_losses, total_clip_loss_weighted
 
-        total_clip_loss = total_clip_loss / n_clip_embs
+        total_clip_loss = total_clip_loss / clip_target.shape[0]
         return clip_losses, total_clip_loss
