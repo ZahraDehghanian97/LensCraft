@@ -105,6 +105,7 @@ def main(cfg: DictConfig):
         )
     
     prdc_sum = 0
+    clatr_sum = 0
     if dataset_type == "simulation":
         model = lightning_model.model
         model.eval()
@@ -133,14 +134,18 @@ def main(cfg: DictConfig):
                 max(0, min(1, metrics[f"{metric_item}/coverage"]))
             )
             prdc_sum += type_prdc_sum
+            clatr_score = metrics[f"{metric_item}/clatr_score"] / 100
+            clatr_sum +=  clatr_score
             logger.info(f"{metric_item} PRDC sum: {type_prdc_sum}")
+            logger.info(f"{metric_item} CLATR sum: {clatr_score}")
         
         logger.info(f"Total PRDC sum: {prdc_sum}")
+        logger.info(f"Total CLATR sum: {clatr_sum}")
 
     if not training_completed:
         logger.info("Testing completed after training interruption")
     
-    return -float(prdc_sum)
+    return -float(prdc_sum + clatr_sum * 2 - 1)
 
 
 if __name__ == "__main__":

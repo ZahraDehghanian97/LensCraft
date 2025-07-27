@@ -8,7 +8,6 @@ defaults:
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
   contrastive_loss_margin: 5
-  n_clip_embs: 28
   losses_list:
     clip:             1000   # Around 35 when converge
     first_frame:      2      

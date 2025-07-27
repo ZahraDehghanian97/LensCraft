@@ -8,7 +8,6 @@ defaults:
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
   contrastive_loss_margin: 5
-  n_clip_embs: 28
   losses_list:
     - clip
     - trajectory
@@ -49,6 +48,7 @@ loss_module:
     clip_25: 1     # constraints_allFramesVisibility
     clip_26: 1     # constraints_staticDistance
     clip_27: 1     # constraints_staticCameraSubjectRotation
+    clip_28: 1
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
