@@ -24,7 +24,7 @@ def convert_to_target(
         target = 'simulation'
     if source == target:
         return trajectory, subject_trajectory, subject_volume, padding_mask
-    
+
     
     from .constant import default_normalizers
     if convertors is None:
@@ -37,12 +37,12 @@ def convert_to_target(
         valid_lengths = (~padding_mask).sum(dim=1)
     else:
         valid_lengths = torch.full((trajectory.shape[0],), trajectory.shape[1], dtype=torch.long, device=trajectory.device)
-    
+
     source_convertor: BaseConvertor = convertors[source]
     target_convertor: BaseConvertor = convertors[target]
-    
+
     batch_size = trajectory.shape[0]
-    
+
     if need_denormal:
         trajectory, subject_trajectory, subject_volume = default_normalizers[source](trajectory, subject_trajectory, subject_volume, False)
     transform, subject_trajectory, subject_volume = source_convertor.to_standard(trajectory, subject_trajectory, subject_volume)

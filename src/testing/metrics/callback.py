@@ -48,7 +48,7 @@ class MetricCallback:
         """Update caption top-1 accuracy metric"""
         if self.clip_embeddings is None:
             return
-            
+
         metrics = self._get_or_create_metric(run_type)
         encoder_features = encoder_features.to(self._device)
         
@@ -76,7 +76,7 @@ class MetricCallback:
 
         fcd = metrics_dict["clatr_fd"].compute()
         metrics_dict["clatr_fd"].reset()
-        
+
         caption_top1_metrics = {}
         if "caption_top1" in metrics_dict and self.clip_embeddings is not None:
             caption_top1_metrics = metrics_dict["caption_top1"].compute()

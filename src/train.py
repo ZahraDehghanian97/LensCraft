@@ -22,11 +22,11 @@ def main(cfg: DictConfig):
     GlobalHydra.instance().clear()
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
-    
+
     L.seed_everything(cfg.seed)
 
     use_multi_dataset = cfg.data.use_multi_dataset if hasattr(cfg.data, 'use_multi_dataset') else False
-    
+
     if use_multi_dataset:
         data_module = MultiDatasetModule(
             simulation_config=cfg.data.dataset.simulation_config,
@@ -58,7 +58,7 @@ def main(cfg: DictConfig):
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
         logger.info(f"Loading model from checkpoint: {checkpoint_path}")
-        
+
         lightning_model = LightningModuleClass.load_from_checkpoint(
             checkpoint_path,
             model=model,
@@ -84,9 +84,9 @@ def main(cfg: DictConfig):
         )
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
-    
+
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
-    
+
     training_completed = False
     try:
         trainer.fit(lightning_model, datamodule=data_module)
@@ -95,7 +95,7 @@ def main(cfg: DictConfig):
         logger.info("Training was interrupted by user. Proceeding to testing with current model state...")
     except Exception as e:
         logger.info("Error: ", e)
-    
+
     if use_multi_dataset:
         dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
     else:
@@ -103,34 +103,34 @@ def main(cfg: DictConfig):
         dataset_type = (
             "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
         )
-    
+
     prdc_sum = 0
     clatr_sum = 0
     if dataset_type == "simulation":
         model = lightning_model.model
         model.eval()
-        
+
         device = model.device
         model.to(device)
 
         metric_callback = MetricCallback(num_cams=1, device=device)
-        
+
         val_dataloader = data_module.val_dataloader()
-        
+
         metric_items = ["prompt_generation", "hybrid_generation"]
-        
+
         with torch.no_grad():
             for batch in val_dataloader:
                 test_batch(model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='lens_craft')
-        
+
         for metric_item in metric_items:
             metrics = metric_callback.compute_clatr_metrics(metric_item)
             logger.info(f"{metric_item} Metrics: {metrics}")
             # Sum PRDC metrics
             type_prdc_sum = (
-                max(0, min(1, metrics[f"{metric_item}/precision"])) + 
-                max(0, min(1, metrics[f"{metric_item}/recall"])) + 
-                max(0, min(1, metrics[f"{metric_item}/density"])) + 
+                max(0, min(1, metrics[f"{metric_item}/precision"])) +
+                max(0, min(1, metrics[f"{metric_item}/recall"])) +
+                max(0, min(1, metrics[f"{metric_item}/density"])) +
                 max(0, min(1, metrics[f"{metric_item}/coverage"]))
             )
             prdc_sum += type_prdc_sum
@@ -138,13 +138,13 @@ def main(cfg: DictConfig):
             clatr_sum +=  clatr_score
             logger.info(f"{metric_item} PRDC sum: {type_prdc_sum}")
             logger.info(f"{metric_item} CLATR sum: {clatr_score}")
-        
+
         logger.info(f"Total PRDC sum: {prdc_sum}")
         logger.info(f"Total CLATR sum: {clatr_sum}")
 
     if not training_completed:
         logger.info("Testing completed after training interruption")
-    
+
     return -float(prdc_sum + clatr_sum * 2 - 1)
 
 

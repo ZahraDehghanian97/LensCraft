@@ -37,7 +37,7 @@ def main(cfg: DictConfig) -> None:
 
     data_format_type = cfg.training.model.data_format.get("type", "simulation")
     model_type = "lens_craft" if data_format_type == "simulation" else data_format_type
-    
+
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
@@ -49,7 +49,7 @@ def main(cfg: DictConfig) -> None:
     
     target = cfg.data.dataset.config["_target_"]
     dataset_type = "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
-    
+
     trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
     if model_type == "et":
@@ -69,7 +69,7 @@ def main(cfg: DictConfig) -> None:
             if model_type == "ccdm":
                 model = CCDMAdapter(cfg.training.model.inference, device)
             elif model_type == "et":
-                model = ETAdapter(cfg.training.model.inference, device)        
+                model = ETAdapter(cfg.training.model.inference, device)
             else:
                 raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -90,12 +90,12 @@ def main(cfg: DictConfig) -> None:
             if dataset_type in ["simulation", "et"]
             else ["reconstruction", "key_framing"]
         )
-    
+
     if os.path.exists(trajectory_save_path) and model_type in ["ccdm", "et"]:
         logger.info(f"Loading pre-generated trajectories from {trajectory_save_path}")
         generated_trajectories = torch.load(trajectory_save_path)
         logger.info(f"Loaded {len(generated_trajectories)} pre-generated trajectories")
-        
+
         with torch.no_grad():
             for batch, generated_trajectory in tqdm(zip(test_dataloader, generated_trajectories)):
                 test_batch(
@@ -128,7 +128,7 @@ def main(cfg: DictConfig) -> None:
     }
 
     logger.info(f"Final Metrics: {metrics}")
-    
+
     if cfg.tsne:
         metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
         for metric_item in metric_items:
@@ -139,7 +139,7 @@ def main(cfg: DictConfig) -> None:
                         metric_features[metric_item]["GT"] = prdc.real_features
                     if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
                         metric_features[metric_item]["GEN"] = prdc.fake_features
-        
+
         
         save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
         features_save_dir = os.path.join(save_dir, "features")
@@ -184,7 +184,7 @@ def main(cfg: DictConfig) -> None:
                     title=f"Embedding Visualization using t-SNE (Colored by Movement Type)",
                     save_path=os.path.join(cfg.output_dir, "embeddings_tSNE_by_movement_type.png"),
                 )
-                
+
                 logger.info(f"Movement type t-SNE visualization saved to {cfg.output_dir}/embeddings_tSNE_by_movement_type.png")
 
 

@@ -8,7 +8,7 @@ class ETConvertor(BaseConvertor):
     def __init__(self):
         self.augmentation = None
         self.velocity = STANDARDIZATION_CONFIG["velocity"]
-    
+
     @handle_single_or_batch(arg_specs=[(1, 3)])
     def get_feature(self, raw_matrix_trajectory):
         matrix_trajectory = torch.clone(raw_matrix_trajectory)
@@ -20,16 +20,16 @@ class ETConvertor(BaseConvertor):
 
         rot_matrices = matrix_trajectory[..., :3, :3]
         rot6d = matrix_to_rotation_6d(rot_matrices)
-        
+
         return torch.cat([rot6d, raw_trans], dim=-1)
-        
+
 
     @handle_single_or_batch(arg_specs=[(1, 2)])
     def get_matrix(self, rot6d_trajectory):
         device = rot6d_trajectory.device
         batch_size = rot6d_trajectory.shape[0]
         num_cams = rot6d_trajectory.shape[1]
-        
+
         matrix_trajectory = torch.eye(4, device=device).expand(batch_size, num_cams, 4, 4).clone()
 
         raw_trans = rot6d_trajectory[..., 6:]
@@ -74,11 +74,11 @@ class ETConvertor(BaseConvertor):
         transform: torch.Tensor,
         subject_trajectory: torch.Tensor | None = None,
         subject_volume: torch.Tensor | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:        
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         processed_subject_trajectory = None
         if subject_trajectory is not None:
             processed_subject_trajectory = subject_trajectory[..., :3, 3]
-            
+
         trajectory = self.get_feature(transform)
         subject_volume = None
         return trajectory, processed_subject_trajectory, subject_volume

@@ -40,7 +40,7 @@ class LightningLensCraft(BaseTrainer):
     def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
         if self.dataset_mode == 'et' or self.use_merged_memory:
             return [torch.stack([batch['caption_feat']]), torch.stack([])]
-        
+
         return [batch['cinematography_prompt'], batch['simulation_instruction']]
 
     def _step(self, batch: Dict[str, Any], batch_idx: int, stage: str) -> torch.Tensor:
@@ -48,11 +48,11 @@ class LightningLensCraft(BaseTrainer):
         subject_trajectory = batch['subject_trajectory']
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
-        
+
         [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
-        
+
         compute_cycle = self.use_cycle_consistency and self.dataset_mode == 'simulation'
-        
+
         output = self._forward_step(
             camera_trajectory,
             subject_trajectory,
@@ -63,9 +63,9 @@ class LightningLensCraft(BaseTrainer):
             decode_mode=self.decode_mode,
             compute_cycle_embeddings=compute_cycle
         )
-        
+
         merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)
-        
+
         loss, loss_dict = self.loss_module(
             output,
             camera_trajectory,
@@ -86,7 +86,7 @@ class LightningLensCraft(BaseTrainer):
 
     def test_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         return self._step(batch, batch_idx, "test")
-    
+
     def _get_total_steps(self) -> int:
         return self.trainer.max_epochs * len(
             self.trainer.datamodule.train_dataloader()
