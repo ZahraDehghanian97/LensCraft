@@ -23,7 +23,6 @@ class ETConvertor(BaseConvertor):
 
         return torch.cat([rot6d, raw_trans], dim=-1)
 
-
     @handle_single_or_batch(arg_specs=[(1, 2)])
     def get_matrix(self, rot6d_trajectory):
         device = rot6d_trajectory.device
@@ -66,7 +65,6 @@ class ETConvertor(BaseConvertor):
         subject_transform[..., :3, 3] = subject_positions
 
         return transform, subject_transform, subject_volume
-
 
     @handle_single_or_batch(arg_specs=[(1, 3), (2, 3)])
     def from_standard(

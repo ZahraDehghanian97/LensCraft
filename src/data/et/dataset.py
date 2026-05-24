@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import torch
 from torch.utils.data import Dataset
 
@@ -16,10 +16,11 @@ class ETDataset(Dataset):
         original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
 
-        
         target_ids = None # {'2011_4lQ_MjU4QHw_00005_00005': 1328, '2011_KQM0klOXck8_00023_00000': 4891, '2012_ZryPGAMBuF4_00004_00002': 18583, '2014_pDEJr2Sqhxc_00005_00000': 24719, '2015_2ad7SgwLNXo_00014_00002': 25731, '2016_ux9JHznPT8E_00009_00001': 36731, '2017_JjfbxBMmXTI_00001_00000': 40366}
 
-        self.original_dataset = [original_dataset[i] for i in target_ids.values()] if target_ids else original_dataset
+        self.original_dataset = (
+            [original_dataset[i] for i in target_ids.values()] if target_ids else original_dataset
+        )
 
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
         self.fill_none_with_mean = fill_none_with_mean
@@ -40,10 +41,16 @@ class ETDataset(Dataset):
         return len(self.original_dataset)
 
     @staticmethod
-    def normalize_item(camera_trajectory, subject_trajectory, subject_volume=None, normalize:bool= True):
+    def normalize_item(
+        camera_trajectory: torch.Tensor,
+        subject_trajectory: Optional[torch.Tensor],
+        subject_volume: Optional[torch.Tensor] = None,
+        normalize: bool = True,
+    ):
         device = camera_trajectory.device
         camera_trajectory = camera_trajectory.clone()
-        subject_trajectory = subject_trajectory.clone()
+        if subject_trajectory is not None:
+            subject_trajectory = subject_trajectory.clone()
 
         if normalize:
             camera_trajectory[..., 0, 6:] -= STANDARDIZATION_CONFIG_TORCH["shift_mean"].to(device)
@@ -52,15 +59,16 @@ class ETDataset(Dataset):
             camera_trajectory[..., 1:, 6:] -= STANDARDIZATION_CONFIG_TORCH["norm_mean"].to(device)
             camera_trajectory[..., 1:, 6:] /= STANDARDIZATION_CONFIG_TORCH["norm_std"].to(device)
 
-            if len(STANDARDIZATION_CONFIG_TORCH["norm_mean_h"]) == 6:
-                subject_trajectory[..., 0, :] -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][:3].to(device)
-                subject_trajectory[..., 0, :] /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"][:3].to(device)
+            if subject_trajectory is not None:
+                if len(STANDARDIZATION_CONFIG_TORCH["norm_mean_h"]) == 6:
+                    subject_trajectory[..., 0, :] -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][:3].to(device)
+                    subject_trajectory[..., 0, :] /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"][:3].to(device)
 
-                subject_trajectory[..., 1:, :] -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][3:].to(device)
-                subject_trajectory[..., 1:, :] /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"][3:].to(device)
-            else:
-                subject_trajectory -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"].to(device)
-                subject_trajectory /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"].to(device)
+                    subject_trajectory[..., 1:, :] -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][3:].to(device)
+                    subject_trajectory[..., 1:, :] /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"][3:].to(device)
+                else:
+                    subject_trajectory -= STANDARDIZATION_CONFIG_TORCH["norm_mean_h"].to(device)
+                    subject_trajectory /= STANDARDIZATION_CONFIG_TORCH["norm_std_h"].to(device)
 
         else:
             camera_trajectory[..., 0, 6:] = (
@@ -73,23 +81,24 @@ class ETDataset(Dataset):
                 + STANDARDIZATION_CONFIG_TORCH["norm_mean"].to(device)
             )
 
-            if len(STANDARDIZATION_CONFIG_TORCH["norm_mean_h"]) == 6:
-                subject_trajectory[..., 0, :] = (
-                    subject_trajectory[..., 0, :]
-                    * STANDARDIZATION_CONFIG_TORCH["norm_std_h"][:3].to(device)
-                    + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][:3].to(device)
-                )
-                subject_trajectory[..., 1:, :] = (
-                    subject_trajectory[..., 1:, :]
-                    * STANDARDIZATION_CONFIG_TORCH["norm_std_h"][3:].to(device)
-                    + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][3:].to(device)
-                )
-            else:
-                subject_trajectory = (
-                    subject_trajectory
-                    * STANDARDIZATION_CONFIG_TORCH["norm_std_h"].to(device)
-                    + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"].to(device)
-                )
+            if subject_trajectory is not None:
+                if len(STANDARDIZATION_CONFIG_TORCH["norm_mean_h"]) == 6:
+                    subject_trajectory[..., 0, :] = (
+                        subject_trajectory[..., 0, :]
+                        * STANDARDIZATION_CONFIG_TORCH["norm_std_h"][:3].to(device)
+                        + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][:3].to(device)
+                    )
+                    subject_trajectory[..., 1:, :] = (
+                        subject_trajectory[..., 1:, :]
+                        * STANDARDIZATION_CONFIG_TORCH["norm_std_h"][3:].to(device)
+                        + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"][3:].to(device)
+                    )
+                else:
+                    subject_trajectory = (
+                        subject_trajectory
+                        * STANDARDIZATION_CONFIG_TORCH["norm_std_h"].to(device)
+                        + STANDARDIZATION_CONFIG_TORCH["norm_mean_h"].to(device)
+                    )
 
         return camera_trajectory, subject_trajectory, subject_volume
 
@@ -109,16 +118,24 @@ class ETDataset(Dataset):
         instruction = item_data["simulationInstructions"][0]
         prompt = item_data["cinematographyPrompts"][0]
 
-        simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask, simulation_instruction_parameters, cinematography_prompt_parameters = \
-            fix_prompts_and_instructions(instruction, prompt, self.clip_embeddings, self.fill_none_with_mean, self.embedding_means)
-
+        (
+            simulation_instruction_tensor,
+            cinematography_prompt_tensor,
+            prompt_none_mask,
+            simulation_instruction_parameters,
+            cinematography_prompt_parameters,
+        ) = fix_prompts_and_instructions(
+            instruction, prompt, self.clip_embeddings,
+            self.fill_none_with_mean, self.embedding_means,
+        )
 
         camera_trajectory = item["traj_feat"].permute(1, 0)
         subject_trajectory = item['char_feat'].permute(1, 0)
 
         if not self.normalize:
-            camera_trajectory, subject_trajectory, _ = \
-                ETDataset.normalize_item(camera_trajectory, subject_trajectory , None, False) # Checkme: is it need to premute inputs?
+            camera_trajectory, subject_trajectory, _ = ETDataset.normalize_item(
+                camera_trajectory, subject_trajectory, None, False
+            )
 
         caption_feat = self._get_average_caption_feat(item)
 

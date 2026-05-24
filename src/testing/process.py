@@ -1,68 +1,90 @@
-from typing import Dict
+from typing import Any, Dict, List, Optional
 
 import torch
 
 from data.convertor.convertor import convert_to_target
 
 
-def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
-    prepared_data = {}
-    
-    for key in batch.keys():
-        prepared_data[key] = batch[key]
-        if prepared_data[key] is not None and torch.is_tensor(prepared_data[key]):
-                prepared_data[key] = prepared_data[key].to(device)
-    
+def to_cuda(
+    batch: Dict[str, torch.Tensor], device: torch.device
+) -> Dict[str, torch.Tensor]:
+    prepared_data: Dict[str, torch.Tensor] = {}
+    for key, value in batch.items():
+        if value is not None and torch.is_tensor(value):
+            prepared_data[key] = value.to(device)
+        else:
+            prepared_data[key] = value
     return prepared_data
 
 
+def _memory_teacher_forcing_for(metric_item: str) -> float:
+    if metric_item == "reconstruction":
+        return 0.0
+    if metric_item == "key_framing":
+        return 0.0
+    if metric_item == "prompt_generation":
+        return 1.0
+    if metric_item == "key_framing+prompt":
+        return 0.5
+    if metric_item == "hybrid_generation":
+        return 0.5
+    raise ValueError(f"Unknown metric item: {metric_item}")
+
+
 def test_batch(ref_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='lens_craft', seq_length=30, pre_generated_trajectory=None):
+
     batch = to_cuda(batch, device)
     batch_size = len(batch["text_prompts"])
 
-    generated_trajectory_data = None
-    
-   
+    generated_trajectory_data: Optional[torch.Tensor] = None
 
     if dataset_type != "simulation":
-        sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = convert_to_target(
+        (
+            sim_camera_trajectory,
+            sim_subject_trajectory,
+            sim_subject_volume,
+            sim_padding_mask,
+        ) = convert_to_target(
             dataset_type,
             "simulation",
             batch["camera_trajectory"],
             batch["subject_trajectory"],
             batch["subject_volume"],
             batch["padding_mask"],
-            30
+            30,
         )
     else:
-        sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
-            batch["camera_trajectory"], batch["subject_trajectory"], batch["subject_volume"], batch["padding_mask"]
+        sim_camera_trajectory = batch["camera_trajectory"]
+        sim_subject_trajectory = batch["subject_trajectory"]
+        sim_subject_volume = batch["subject_volume"]
+        sim_padding_mask = batch["padding_mask"]
 
-    camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-            dataset_type,
-            model_type,
-            batch["camera_trajectory"],
-            batch["subject_trajectory"],
-            batch["subject_volume"],
-            batch["padding_mask"],
-            seq_length,
-            torch.full((batch_size,), 30, device=device) # fix me for other datasets
-        )
+    (
+        camera_trajectory,
+        subject_trajectory,
+        subject_volume,
+        padding_mask,
+    ) = convert_to_target(
+        dataset_type,
+        model_type,
+        batch["camera_trajectory"],
+        batch["subject_trajectory"],
+        batch["subject_volume"],
+        batch["padding_mask"],
+        seq_length,
+        torch.full((batch_size,), 30, device=device), # fix me for other datasets
+    )
 
     for metric_item in metric_items:
-        caption_embedding = batch.get("cinematography_prompt", None) if dataset_type in ["simulation", "et"] else None
-        if metric_item == 'reconstruction':
-            memory_teacher_forcing_ratio = 0
-        elif metric_item == 'key_framing':
-            batch["padding_mask"] = torch.rand((batch_size, 30)) > 1/6
-            memory_teacher_forcing_ratio = 0
-        elif metric_item == 'prompt_generation':
-            memory_teacher_forcing_ratio = 1
-        elif metric_item == 'key_framing+prompt':
-            batch["padding_mask"] = torch.rand((batch_size, 30)) > 1/6
-            memory_teacher_forcing_ratio = 0.5
-        elif metric_item == 'hybrid_generation':
-            memory_teacher_forcing_ratio = 0.5
+        caption_embedding = (
+            batch.get("cinematography_prompt", None)
+            if dataset_type in ("simulation", "et")
+            else None
+        )
+        memory_teacher_forcing_ratio = _memory_teacher_forcing_for(metric_item)
+
+        if metric_item in ("key_framing", "key_framing+prompt"):
+            batch["padding_mask"] = torch.rand((batch_size, 30), device=device) > 1.0 / 6.0
 
         ref_output = ref_model.generate_camera_trajectory(
             subject_trajectory=sim_subject_trajectory,
@@ -70,7 +92,7 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
             camera_trajectory=sim_camera_trajectory,
             padding_mask=sim_padding_mask,
             memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
-            caption_embedding=caption_embedding
+            caption_embedding=caption_embedding,
         )
 
         decoder_memory = ref_output['embeddings'][:ref_model.memory_tokens_count, ...]
@@ -85,7 +107,7 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
                     batch["text_prompts"],
                     subject_trajectory,
                     camera_trajectory,
-                    padding_mask
+                    padding_mask,
                 )
 
                 generated_trajectory_data = generated_trajecotry.detach().cpu()
@@ -97,7 +119,7 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
                 subject_trajectory,
                 batch["subject_volume"],
                 padding_mask,
-                30
+                30,
             )
         elif model_type == "lens_craft":
             sim_generated_trajectory = ref_output["reconstructed"]

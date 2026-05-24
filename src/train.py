@@ -1,5 +1,7 @@
 import os
 import sys
+from dotenv import load_dotenv
+load_dotenv()
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate, get_class
@@ -10,11 +12,9 @@ from data.datamodule import CameraTrajectoryDataModule
 from data.multi_dataset_module import MultiDatasetModule
 from testing.metrics.callback import MetricCallback
 from testing.process import test_batch
-from dotenv import load_dotenv
 import logging
 
 logger = logging.getLogger(__name__)
-load_dotenv()
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
