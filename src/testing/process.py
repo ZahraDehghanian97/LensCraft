@@ -31,8 +31,19 @@ def _memory_teacher_forcing_for(metric_item: str) -> float:
     raise ValueError(f"Unknown metric item: {metric_item}")
 
 
-def test_batch(ref_model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='lens_craft', seq_length=30, pre_generated_trajectory=None):
-
+def test_batch(
+    ref_model,
+    model,
+    batch: Dict[str, Any],
+    metric_callback,
+    device: torch.device,
+    metric_items: List[str],
+    dataset_type: str = "simulation",
+    model_type: str = "lens_craft",
+    seq_length: int = 30,
+    pre_generated_trajectory: Optional[torch.Tensor] = None,
+    clatr_extractor=None,
+) -> Optional[torch.Tensor]:
     batch = to_cuda(batch, device)
     batch_size = len(batch["text_prompts"])
 
@@ -75,6 +86,18 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
         torch.full((batch_size,), 30, device=device), # fix me for other datasets
     )
 
+    ref_clatr: Optional[torch.Tensor] = None
+    text_clatr: Optional[torch.Tensor] = None
+    if clatr_extractor is not None:
+        ref_clatr = clatr_extractor.encode_trajectory(
+            sim_camera_trajectory,
+            sim_subject_trajectory,
+            sim_subject_volume,
+            sim_padding_mask,
+        )
+        if batch.get("text_prompts") is not None:
+            text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
+
     for metric_item in metric_items:
         caption_embedding = (
             batch.get("cinematography_prompt", None)
@@ -95,27 +118,27 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
             caption_embedding=caption_embedding,
         )
 
-        decoder_memory = ref_output['embeddings'][:ref_model.memory_tokens_count, ...]
-        subject_embedding = ref_output['subject_embedding']
-        decoder_memory = decoder_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
-        
-        if model_type in ["ccdm", "et"]:
+        if model_type in ("ccdm", "et"):
             if pre_generated_trajectory is not None:
-                generated_trajecotry = pre_generated_trajectory
+                generated_trajectory = pre_generated_trajectory
             else:
-                generated_trajecotry = model.generate_using_text(
+                generated_trajectory = model.generate_using_text(
                     batch["text_prompts"],
                     subject_trajectory,
                     camera_trajectory,
                     padding_mask,
                 )
+                generated_trajectory_data = generated_trajectory.detach().cpu()
 
-                generated_trajectory_data = generated_trajecotry.detach().cpu()
-            
-            sim_generated_trajectory, _, _, _ = convert_to_target(
+            (
+                sim_generated_trajectory,
+                _,
+                _,
+                _,
+            ) = convert_to_target(
                 model_type,
                 "simulation",
-                generated_trajecotry,
+                generated_trajectory,
                 subject_trajectory,
                 batch["subject_volume"],
                 padding_mask,
@@ -123,22 +146,36 @@ def test_batch(ref_model, model, batch, metric_callback, device, metric_items, d
             )
         elif model_type == "lens_craft":
             sim_generated_trajectory = ref_output["reconstructed"]
+        else:
+            raise ValueError(f"Unsupported model_type: {model_type}")
 
-        reconstructed_memory = ref_model.encoder(
-            sim_generated_trajectory, 
-            subject_embedding
-        )[:ref_model.memory_tokens_count, ...].detach().clone()
-            
-        reconstructed_memory = reconstructed_memory.permute(1, 0, 2).reshape(batch_size, -1).clone()
-        
-        if caption_embedding is not None:
-            caption_embedding = caption_embedding.permute(1, 0, 2).reshape(batch_size, -1).clone()
-        
-        metric_callback.update_clatr_metrics(
-            metric_item,
-            reconstructed_memory,
-            decoder_memory,
-            caption_embedding
-        )
+        if clatr_extractor is not None and ref_clatr is not None:
+            gen_clatr = clatr_extractor.encode_trajectory(
+                sim_generated_trajectory,
+                sim_subject_trajectory,
+                sim_subject_volume,
+                sim_padding_mask,
+            )
+            metric_callback.update_clatr_metrics(
+                metric_item,
+                gen_features=gen_clatr,
+                ref_features=ref_clatr,
+                text_features=text_clatr,
+            )
+
+        if (
+            model_type == "lens_craft"
+            and metric_callback.clip_embeddings is not None
+            and "cinematography_prompt_parameters" in batch
+        ):
+            encoder_features = ref_output["embeddings"][
+                : ref_model.memory_tokens_count, ...
+            ]
+            encoder_features = encoder_features.permute(1, 0, 2).detach()
+            metric_callback.update_caption_top1(
+                metric_item,
+                encoder_features,
+                batch["cinematography_prompt_parameters"],
+            )
 
     return generated_trajectory_data

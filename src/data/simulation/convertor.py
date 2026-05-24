@@ -42,12 +42,12 @@ class SIMConvertor(BaseConvertor):
             ).expand(batch_size, seq_len, 4, 4).clone()
 
             subject_transform[..., :3, 3] = subject_trajectory[..., :3]
-            euler_angles = subject_trajectory[..., 3:]
 
-            for b in range(batch_size):
-                for t in range(seq_len):
-                    rotation_matrix = euler_angles_to_matrix(euler_angles[b, t], convention="XYZ")
-                    subject_transform[b, t, :3, :3] = rotation_matrix
+            if subject_trajectory.shape[-1] >= 6:
+                euler_angles = subject_trajectory[..., 3:6]
+                subject_transform[..., :3, :3] = euler_angles_to_matrix(
+                    euler_angles, convention="XYZ"
+                )
         else:
             subject_transform = torch.eye(
                 4, device=trajectory.device, dtype=trajectory.dtype

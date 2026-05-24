@@ -1,61 +1,83 @@
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+
 import torch
 
+from testing.metrics.modules.caption_top1 import CaptionTop1
+from testing.metrics.modules.clatr_score import CLaTrScore
 from testing.metrics.modules.fcd import FrechetCLaTrDistance
 from testing.metrics.modules.prdc import ManifoldMetrics
-from testing.metrics.modules.clatr_score import CLaTrScore
-from testing.metrics.modules.caption_top1 import CaptionTop1
 
 
 class MetricCallback:
-    def __init__(self, num_cams: int, device: torch.device, clip_embeddings=None):
+    CLATR_FEAT_DIM: int = 256
+
+    def __init__(
+        self,
+        num_cams: int,
+        device: torch.device,
+        clip_embeddings: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.num_cams = num_cams
         self._device = device
-        self.metrics: Dict[str, Dict[str, Any]] = {}
-        self.active_metrics = set()
         self.clip_embeddings = clip_embeddings
 
-    def _get_or_create_metric(self, run_type: str):
+        self.metrics: Dict[str, Dict[str, Any]] = {}
+        self.active_metrics: set[str] = set()
+
+    def _get_or_create_metric(self, run_type: str) -> Dict[str, Any]:
         if run_type not in self.metrics:
             self.metrics[run_type] = {
-                "clatr_fd": FrechetCLaTrDistance().to(self._device),
+                "clatr_fd": FrechetCLaTrDistance(
+                    num_features=self.CLATR_FEAT_DIM
+                ).to(self._device),
                 "clatr_prdc": ManifoldMetrics(distance="euclidean").to(self._device),
                 "clatr_score": CLaTrScore().to(self._device),
             }
-            
             if self.clip_embeddings is not None:
                 self.metrics[run_type]["caption_top1"] = CaptionTop1(
                     clip_embeddings=self.clip_embeddings,
                 ).to(self._device)
-                
         self.active_metrics.add(run_type)
         return self.metrics[run_type]
 
-    def update_clatr_metrics(self, run_type: str, pred, ref, text):
-        metrics = self._get_or_create_metric(run_type)
+    def update_clatr_metrics(
+        self,
+        run_type: str,
+        gen_features: torch.Tensor,
+        ref_features: torch.Tensor,
+        text_features: Optional[torch.Tensor] = None,
+    ) -> None:
+        m = self._get_or_create_metric(run_type)
 
-        pred = pred.to(self._device, dtype=torch.float16)
-        ref = ref.to(self._device, dtype=torch.float16)
+        gen = gen_features.to(self._device, dtype=torch.float32)
+        ref = ref_features.to(self._device, dtype=torch.float32)
 
-        if text is not None:
-            text = text.to(self._device, dtype=torch.float16)
-            metrics["clatr_score"].update(pred, text)
+        m["clatr_prdc"].update(ref, gen)
+        m["clatr_fd"].update(ref, gen)
 
-        metrics["clatr_prdc"].update(pred, ref)
-        metrics["clatr_fd"].update(pred, ref)
+        if text_features is not None:
+            txt = text_features.to(self._device, dtype=torch.float32)
+            if txt.shape[-1] != gen.shape[-1]:
+                raise ValueError(
+                    "CLaTr-Score requires trajectory and text latents to live "
+                    f"in the same space; got traj={tuple(gen.shape)}, "
+                    f"text={tuple(txt.shape)}. Both must be 256-d CLaTr latents."
+                )
+            m["clatr_score"].update(gen, txt)
 
-    def update_caption_top1(self, run_type: str, encoder_features: torch.Tensor, params: list):
-        """Update caption top-1 accuracy metric"""
+    def update_caption_top1(
+        self,
+        run_type: str,
+        encoder_features: torch.Tensor,
+        params: List[Any],
+    ) -> None:
         if self.clip_embeddings is None:
             return
+        m = self._get_or_create_metric(run_type)
+        if "caption_top1" in m:
+            m["caption_top1"].update(encoder_features.to(self._device), params)
 
-        metrics = self._get_or_create_metric(run_type)
-        encoder_features = encoder_features.to(self._device)
-        
-        if "caption_top1" in metrics:
-            metrics["caption_top1"].update(encoder_features, params)
-
-    def compute_clatr_metrics(self, run_type: str) -> Dict[str, Any]:
+    def compute_clatr_metrics(self, run_type: str) -> Dict[str, float]:
         if run_type not in self.active_metrics:
             return {
                 f"{run_type}/clatr_score": 0.0,
@@ -66,38 +88,36 @@ class MetricCallback:
                 f"{run_type}/fcd": 0.0,
             }
 
-        metrics_dict = self.metrics[run_type]
+        m = self.metrics[run_type]
 
-        clatr_score = metrics_dict["clatr_score"].compute()
-        metrics_dict["clatr_score"].reset()
+        clatr_score = m["clatr_score"].compute()
+        m["clatr_score"].reset()
 
-        clatr_p, clatr_r, clatr_d, clatr_c = metrics_dict["clatr_prdc"].compute()
-        metrics_dict["clatr_prdc"].reset()
+        precision, recall, density, coverage = m["clatr_prdc"].compute()
+        m["clatr_prdc"].reset()
 
-        fcd = metrics_dict["clatr_fd"].compute()
-        metrics_dict["clatr_fd"].reset()
+        fcd = m["clatr_fd"].compute()
+        m["clatr_fd"].reset()
 
-        caption_top1_metrics = {}
-        if "caption_top1" in metrics_dict and self.clip_embeddings is not None:
-            caption_top1_metrics = metrics_dict["caption_top1"].compute()
-            metrics_dict["caption_top1"].reset()
+        caption_top1_metrics: Dict[str, float] = {}
+        if "caption_top1" in m and self.clip_embeddings is not None:
+            caption_top1_metrics = m["caption_top1"].compute()
+            m["caption_top1"].reset()
 
         self.active_metrics.remove(run_type)
 
         with torch.no_grad():
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        result = {
+        result: Dict[str, float] = {
             f"{run_type}/clatr_score": float(clatr_score.item()),
-            f"{run_type}/precision": float(clatr_p.item()),
-            f"{run_type}/recall": float(clatr_r.item()),
-            f"{run_type}/density": float(clatr_d.item()),
-            f"{run_type}/coverage": float(clatr_c.item()),
+            f"{run_type}/precision": float(precision.item()),
+            f"{run_type}/recall": float(recall.item()),
+            f"{run_type}/density": float(density.item()),
+            f"{run_type}/coverage": float(coverage.item()),
             f"{run_type}/fcd": float(fcd.item()),
         }
-        
-        if caption_top1_metrics:
-            for key, value in caption_top1_metrics.items():
-                result[f"{run_type}/caption_{key}_top1"] = float(value)
-        
+        for key, value in caption_top1_metrics.items():
+            result[f"{run_type}/caption_{key}_top1"] = float(value)
         return result

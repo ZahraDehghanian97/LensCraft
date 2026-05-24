@@ -39,7 +39,7 @@ class ETConvertor(BaseConvertor):
 
         return matrix_trajectory
 
-    @handle_single_or_batch(arg_specs=[(1, 3), (2, 3)])
+    @handle_single_or_batch(arg_specs=[(1, 2), (2, 2)])
     def to_standard(
         self,
         trajectory: torch.Tensor,

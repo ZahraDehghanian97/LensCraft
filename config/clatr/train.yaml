@@ -1,0 +1,51 @@
+defaults:
+  - _self_
+  - /clip: default
+  - /data: default
+  - /hydra: default
+
+seed: 42
+output_dir: ${oc.env:CLATR_OUTPUT_DIR,./clatr_runs/${now:%Y-%m-%d}/${now:%H-%M-%S}}
+resume_checkpoint: None
+
+clatr_model:
+  traj_num_feats: 6           # 3 position + 3 euler-rotation
+  text_num_feats: ${clip.latent_dim}
+  latent_dim: 256
+  ff_size: 1024
+  num_layers: 6
+  num_heads: 4
+  dropout: 0.1
+  vae: true
+  max_text_tokens: 77
+
+loss:
+  lmd_recons: 1.0
+  lmd_latent: 1.0e-5
+  lmd_kl: 1.0e-5
+  lmd_nce: 0.1
+  temperature: 0.1
+  threshold_selfsim: 0.995
+
+optimizer:
+  lr: 1.0e-4
+  weight_decay: 0.0
+
+trainer:
+  max_epochs: 250
+  accelerator: auto
+  devices: [0]
+  precision: 32
+  gradient_clip_val: 1.0
+  log_every_n_steps: 50
+
+checkpoint:
+  every_n_epochs: 25
+
+early_stopping:
+  enable: false
+  patience: 30
+
+hydra:
+  run:
+    dir: ${output_dir}

@@ -1,35 +1,124 @@
+from __future__ import annotations
+
 import logging
 import os
 from typing import Literal
 
 import hydra
 import torch
+from dotenv import load_dotenv
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from data.datamodule import CameraTrajectoryDataModule
-from utils.load_lens_craft import load_lens_craft_model
-from testing.process import test_batch
-from testing.metrics.callback import MetricCallback
-from visualization.utils import tSNE_visualize_embeddings, tSNE_visualize_embeddings_by_class_type
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
+from testing.metrics.callback import MetricCallback
+from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
+from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
+from testing.process import test_batch
+from utils.load_lens_craft import load_lens_craft_model
+from visualization.utils import (
+    tSNE_visualize_embeddings,
+    tSNE_visualize_embeddings_by_class_type,
+)
 
-from dotenv import load_dotenv
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 DatasetType = Literal["ccdm", "et", "simulation"]
 
+def _build_native_clatr_extractor(
+    cfg: DictConfig, device: torch.device
+) -> NativeCLaTrFeatureExtractor:
+    """Native CLaTr trained on LensCraft data (default)."""
+    checkpoint_path = (
+        cfg.get("clatr_native_checkpoint_path", None)
+        or os.environ.get("CLATR_NATIVE_CHECKPOINT_PATH")
+    )
+    if checkpoint_path in (None, "None", ""):
+        raise EnvironmentError(
+            "Native CLaTr is the default evaluation backend but no checkpoint "
+            "was provided. Train one with `python src/train_clatr.py` and "
+            "either point `clatr_native_checkpoint_path` at it in your test "
+            "config, set the CLATR_NATIVE_CHECKPOINT_PATH environment "
+            "variable, or fall back to the legacy E.T. CLaTr by passing "
+            "`clatr_backend=et` to the test script."
+        )
+
+    logger.info("Using native CLaTr backend (checkpoint: %s)", checkpoint_path)
+    return NativeCLaTrFeatureExtractor(
+        checkpoint_path=checkpoint_path,
+        device=device,
+        clip_model_name=cfg.clip.model_name
+        if cfg.clip.model_name.startswith("openai/")
+        else f"openai/{cfg.clip.model_name}",
+    )
+
+
+def _build_et_clatr_extractor(
+    cfg: DictConfig, device: torch.device
+) -> CLaTrFeatureExtractor:
+    """Legacy E.T.-trained CLaTr backend (kept for parity with prior runs)."""
+    director_project_dir = os.environ.get("DIRECTOR_PROJECT_DIR")
+    if director_project_dir is None:
+        raise EnvironmentError(
+            "DIRECTOR_PROJECT_DIR must be set to point at "
+            "third_parties/DIRECTOR so the legacy E.T. CLaTr can be loaded."
+        )
+
+    project_config = os.path.join(director_project_dir, "configs", "config.yaml")
+    et_data_dir = os.environ.get("ET_DATA_DIR")
+    if et_data_dir is None:
+        raise EnvironmentError(
+            "ET_DATA_DIR must be set so Hydra can instantiate the E.T. CLaTr "
+            "config (no ET data is actually read)."
+        )
+
+    default_ckpt = os.path.join(
+        os.path.dirname(director_project_dir), "checkpoints", "clatr-e100.ckpt"
+    )
+    checkpoint_path = (
+        cfg.get("clatr_checkpoint_path", None)
+        or os.environ.get("CLATR_CHECKPOINT_PATH")
+        or default_ckpt
+    )
+
+    logger.info("Using E.T. CLaTr backend (checkpoint: %s)", checkpoint_path)
+    return CLaTrFeatureExtractor(
+        project_config_dir=project_config,
+        dataset_dir=et_data_dir,
+        checkpoint_path=checkpoint_path,
+        device=device,
+    )
+
+
+def _build_clatr_extractor(cfg: DictConfig, device: torch.device):
+    backend = str(cfg.get("clatr_backend", "native")).lower()
+    if backend == "native":
+        return _build_native_clatr_extractor(cfg, device)
+    if backend == "et":
+        return _build_et_clatr_extractor(cfg, device)
+    raise ValueError(
+        f"Unknown clatr_backend '{backend}'. Expected 'native' or 'et'."
+    )
+
+
+def _resolve_dataset_type(target: str) -> DatasetType:
+    if "CCDMDataset" in target:
+        return "ccdm"
+    if "ETDataset" in target:
+        return "et"
+    return "simulation"
 
 @hydra.main(version_base=None, config_path="../config", config_name="test")
 def main(cfg: DictConfig) -> None:
-    if cfg.get("device"):
-        device = torch.device(cfg.device)
-    else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        torch.device(cfg.device)
+        if cfg.get("device")
+        else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
     GlobalHydra.instance().clear()
     if not OmegaConf.has_resolver("eval"):
@@ -46,25 +135,34 @@ def main(cfg: DictConfig) -> None:
         test_size=cfg.data.test_size,
     )
     data_module.setup()
-    
-    target = cfg.data.dataset.config["_target_"]
-    dataset_type = "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
+    dataset_type: DatasetType = _resolve_dataset_type(cfg.data.dataset.config["_target_"])
 
     trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
     if model_type == "et":
-        trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}_{cfg.training.model.inference.et_type}.pth")
+        trajectory_save_path = os.path.join(
+            trajectories_dir,
+            f"dataset_{dataset_type}_model_{model_type}_{cfg.training.model.inference.et_type}.pth",
+        )
     else:
-        trajectory_save_path = os.path.join(trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth")        
+        trajectory_save_path = os.path.join(
+            trajectories_dir, f"dataset_{dataset_type}_model_{model_type}.pth"
+        )
 
     model = None
-    ref_model = None
-    
     if model_type == "lens_craft":
-        model = load_lens_craft_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
+        model = load_lens_craft_model(
+            model_module=cfg.training.model.module,
+            model_inference=cfg.training.model.inference,
+            device=device,
+        )
         ref_model = model
     else:
-        ref_model = load_lens_craft_model(model_module=cfg.ref_model.module, model_inference=cfg.ref_model.inference, device=device)
+        ref_model = load_lens_craft_model(
+            model_module=cfg.ref_model.module,
+            model_inference=cfg.ref_model.inference,
+            device=device,
+        )
         if not os.path.exists(trajectory_save_path):
             if model_type == "ccdm":
                 model = CCDMAdapter(cfg.training.model.inference, device)
@@ -73,119 +171,143 @@ def main(cfg: DictConfig) -> None:
             else:
                 raise ValueError(f"Unsupported model type: {model_type}")
 
-
     clip_embeddings = None
     if model_type == "lens_craft" and cfg.get("caption_top1_metric", False):
         from data.simulation.init_embeddings import initialize_all_clip_embeddings
-        clip_embeddings = initialize_all_clip_embeddings(cache_file=cfg.training.model.inference.get("clip_embeddings_cache", "clip_embeddings_cache.pkl"))
+
+        clip_embeddings = initialize_all_clip_embeddings(
+            cache_file=cfg.training.model.inference.get(
+                "clip_embeddings_cache", "clip_embeddings_cache.pkl"
+            )
+        )
+
     metric_callback = MetricCallback(num_cams=1, device=device, clip_embeddings=clip_embeddings)
+    clatr_extractor = _build_clatr_extractor(cfg, device)
 
     test_dataloader = data_module.test_dataloader()
 
-    if model_type in ["ccdm", "et"]:
+    if model_type in ("ccdm", "et"):
         metric_items = ["prompt_generation"]
     else:
         metric_items = (
-            ["reconstruction", "key_framing", "prompt_generation", "key_framing+prompt", "hybrid_generation"]
-            if dataset_type in ["simulation", "et"]
+            [
+                "reconstruction",
+                "key_framing",
+                "prompt_generation",
+                "key_framing+prompt",
+                "hybrid_generation",
+            ]
+            if dataset_type in ("simulation", "et")
             else ["reconstruction", "key_framing"]
         )
 
-    if os.path.exists(trajectory_save_path) and model_type in ["ccdm", "et"]:
-        logger.info(f"Loading pre-generated trajectories from {trajectory_save_path}")
+    if os.path.exists(trajectory_save_path) and model_type in ("ccdm", "et"):
+        logger.info("Loading pre-generated trajectories from %s", trajectory_save_path)
         generated_trajectories = torch.load(trajectory_save_path)
-        logger.info(f"Loaded {len(generated_trajectories)} pre-generated trajectories")
+        logger.info("Loaded %d pre-generated trajectories", len(generated_trajectories))
 
         with torch.no_grad():
-            for batch, generated_trajectory in tqdm(zip(test_dataloader, generated_trajectories)):
+            for batch, generated_trajectory in tqdm(
+                zip(test_dataloader, generated_trajectories),
+                total=min(len(test_dataloader), len(generated_trajectories)),
+            ):
                 test_batch(
-                    ref_model, model, batch, metric_callback, device, metric_items, 
-                    dataset_type=dataset_type, model_type=model_type, 
+                    ref_model,
+                    model,
+                    batch,
+                    metric_callback,
+                    device,
+                    metric_items,
+                    dataset_type=dataset_type,
+                    model_type=model_type,
                     seq_length=cfg.training.model.data_format.seq_length,
-                    pre_generated_trajectory=generated_trajectory.to(device)
+                    pre_generated_trajectory=generated_trajectory.to(device),
+                    clatr_extractor=clatr_extractor,
                 )
     else:
         all_generated_trajectories = []
         with torch.no_grad():
             for batch in tqdm(test_dataloader):
                 generated_trajectory_data = test_batch(
-                    ref_model, model, batch, metric_callback, device, metric_items, 
-                    dataset_type=dataset_type, model_type=model_type, 
-                    seq_length=cfg.training.model.data_format.seq_length
+                    ref_model,
+                    model,
+                    batch,
+                    metric_callback,
+                    device,
+                    metric_items,
+                    dataset_type=dataset_type,
+                    model_type=model_type,
+                    seq_length=cfg.training.model.data_format.seq_length,
+                    clatr_extractor=clatr_extractor,
                 )
-                
                 if generated_trajectory_data is not None:
                     all_generated_trajectories.append(generated_trajectory_data)
-
-        # if all_generated_trajectories and model_type in ["ccdm", "et"]:
-        #     torch.save(all_generated_trajectories, trajectory_save_path)
-        #     logger.info(f"Saved {len(all_generated_trajectories)} generated trajectories to {trajectory_save_path}")
 
     metrics = {
         item: metric_callback.compute_clatr_metrics(item)
         for item in metric_items
         if item in metric_callback.active_metrics
     }
-
-    logger.info(f"Final Metrics: {metrics}")
+    logger.info("Final Metrics (CLaTr backend: %s): %s", cfg.get("clatr_backend", "native"), metrics)
 
     if cfg.tsne:
-        metric_features = {metric_item: {"GT": None, "GEN": None} for metric_item in metric_items}
+        metric_features = {item: {"GT": None, "GEN": None} for item in metric_items}
         for metric_item in metric_items:
-            if metric_item in metric_callback.active_metrics:
-                if metric_item in metric_callback.metrics and "clatr_prdc" in metric_callback.metrics[metric_item]:
-                    prdc = metric_callback.metrics[metric_item]["clatr_prdc"]
-                    if hasattr(prdc, "real_features") and prdc.real_features is not None:
+            if metric_item in metric_callback.metrics:
+                prdc = metric_callback.metrics[metric_item].get("clatr_prdc")
+                if prdc is not None:
+                    if getattr(prdc, "real_features", None) is not None:
                         metric_features[metric_item]["GT"] = prdc.real_features
-                    if hasattr(prdc, "fake_features") and prdc.fake_features is not None:
+                    if getattr(prdc, "fake_features", None) is not None:
                         metric_features[metric_item]["GEN"] = prdc.fake_features
 
-        
         save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
         features_save_dir = os.path.join(save_dir, "features")
         os.makedirs(features_save_dir, exist_ok=True)
-        features_save_path = os.path.join(features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth")
-        
+        features_save_path = os.path.join(
+            features_save_dir, f"dataset_{dataset_type}_model_{model_type}.pth"
+        )
         torch.save(metric_features, features_save_path)
+
         os.makedirs(cfg.output_dir, exist_ok=True)
         for metric_item, features in metric_features.items():
             if features["GT"] is not None and features["GEN"] is not None:
-                logger.info(f"Creating t-SNE visualization for {metric_item}")
-                save_path = os.path.join(cfg.output_dir, f"embeddings_tSNE_{metric_item}.png")
+                logger.info("Creating t-SNE visualization for %s", metric_item)
+                save_path = os.path.join(
+                    cfg.output_dir, f"embeddings_tSNE_{metric_item}.png"
+                )
                 tSNE_visualize_embeddings(
                     features,
                     title=f"Embedding Visualization using t-SNE ({metric_item})",
                     save_path=save_path,
                 )
 
-        if model_type == "lens_craft" and dataset_type == "simulation" and "prompt_generation" in metric_items:
-            movement_types = []
-            
+        if (
+            model_type == "lens_craft"
+            and dataset_type == "simulation"
+            and "prompt_generation" in metric_items
+        ):
+            movement_types: list[str] = []
             if dataset_type == "simulation":
                 for batch in test_dataloader:
-                    batch_movement_types = []
                     for prompt_params in batch["cinematography_prompt_parameters"]:
-                        movement_type = prompt_params[4][1]
-                        batch_movement_types.append(movement_type)
-                    movement_types.extend(batch_movement_types)
-                
-                logger.info(f"Extracted {len(movement_types)} movement types from the test dataset")
+                        movement_types.append(prompt_params[4][1])
+            logger.info("Extracted %d movement types from the test set", len(movement_types))
 
-            if (metric_features["prompt_generation"]["GT"] is not None and 
-                metric_features["prompt_generation"]["GEN"] is not None and 
-                len(movement_types) > 0):
-                
-                logger.info("Creating t-SNE visualization colored by movement type")
-                
+            if (
+                metric_features["prompt_generation"]["GT"] is not None
+                and metric_features["prompt_generation"]["GEN"] is not None
+                and movement_types
+            ):
                 tSNE_visualize_embeddings_by_class_type(
                     caption_embeddings=metric_features["prompt_generation"]["GT"],
                     encoder_embeddings=metric_features["prompt_generation"]["GEN"],
                     class_types=movement_types,
-                    title=f"Embedding Visualization using t-SNE (Colored by Movement Type)",
-                    save_path=os.path.join(cfg.output_dir, "embeddings_tSNE_by_movement_type.png"),
+                    title="Embedding Visualization using t-SNE (Coloured by Movement Type)",
+                    save_path=os.path.join(
+                        cfg.output_dir, "embeddings_tSNE_by_movement_type.png"
+                    ),
                 )
-
-                logger.info(f"Movement type t-SNE visualization saved to {cfg.output_dir}/embeddings_tSNE_by_movement_type.png")
 
 
 if __name__ == "__main__":

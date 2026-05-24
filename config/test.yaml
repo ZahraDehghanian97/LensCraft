@@ -12,3 +12,7 @@ device: cuda
 tsne: false
 
 caption_top1_metric: false
+
+clatr_backend: native
+clatr_native_checkpoint_path: ${oc.env:CLATR_NATIVE_CHECKPOINT_PATH,null}
+clatr_checkpoint_path: ${oc.env:CLATR_CHECKPOINT_PATH,null}
