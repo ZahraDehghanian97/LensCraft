@@ -1,11 +1,27 @@
+import os
 from typing import Any, Dict, List, Optional
 
 import torch
 
 from testing.metrics.modules.caption_top1 import CaptionTop1
-from testing.metrics.modules.clatr_score import CLaTrScore
-from testing.metrics.modules.fcd import FrechetCLaTrDistance
-from testing.metrics.modules.prdc import ManifoldMetrics
+from utils.importing import ModuleImporter
+
+_ET_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "third_parties", "DIRECTOR")
+)
+
+with ModuleImporter.temporary_module(_ET_ROOT, replace_modules=["utils.rotation_utils"]):
+    from src.metrics.modules.prdc import ManifoldMetrics
+with ModuleImporter.temporary_module(_ET_ROOT):
+    from src.metrics.modules.fcd import FrechetCLaTrDistance
+    from src.metrics.modules.clatr_score import CLaTrScore as _CLaTrScoreBase
+
+
+class CLaTrScore(_CLaTrScoreBase):
+    def compute(self):
+        if len(self.traj_feat) == 0 or len(self.text_feats) == 0:
+            return torch.tensor(0.0)
+        return super().compute()
 
 
 class MetricCallback:

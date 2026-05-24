@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import lightning as L
@@ -9,9 +10,15 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from models.clip_embeddings import CLIPEmbedder
+from utils.importing import ModuleImporter
 
 from .clatr_model import NativeCLaTr
-from .losses import InfoNCEWithFiltering, KLLoss
+
+_ET_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "third_parties", "DIRECTOR")
+)
+with ModuleImporter.temporary_module(_ET_ROOT):
+    from clatr.src.training.losses import KLLoss, InfoNCE_with_filtering as InfoNCEWithFiltering
 
 
 class LightningCLaTr(L.LightningModule):
