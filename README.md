@@ -271,7 +271,8 @@ Other entry points:
 - `python src/inference.py` — run inference (add `training/model=ccdm|et|gendop`
   to use a baseline model instead of LensCraft)
 - `python src/train_clatr.py` — train the CLaTr evaluation backend
-- `bash run_optuna_search.sh` — hyperparameter search (Optuna sweeper + joblib launcher)
+- `bash scripts/run_optuna_search.sh` — hyperparameter search (Optuna sweeper + joblib launcher)
+- `bash scripts/run_train_and_test.sh` — train LensCraft + CLaTr, then evaluate all 4 models
 
 Long training jobs are best run inside `tmux`/`screen` so they survive disconnects.
 
