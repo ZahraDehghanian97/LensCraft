@@ -4,3 +4,6 @@
 [submodule "third_parties/Camera-control"]
 	path = third_parties/Camera-control
 	url = https://github.com/jianghd1996/Camera-control
+[submodule "third_parties/GenDoP"]
+	path = third_parties/GenDoP
+	url = https://github.com/3DTopia/GenDoP.git
