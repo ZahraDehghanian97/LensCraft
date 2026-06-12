@@ -106,49 +106,174 @@ graph TD
 
 ## Installation
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/ZahraDehghanian97/LensCraft.git
+1. Clone the repository **with submodules** (DIRECTOR, Camera-control and GenDoP live in `third_parties/`):
+   ```bash
+   git clone --recurse-submodules https://github.com/ZahraDehghanian97/LensCraft.git
    cd LensCraft
+   # or, if already cloned:
+   git submodule update --init --recursive
    ```
 
 2. Create a virtual environment (optional but recommended):
-   ```
+   ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
    ```
 
 3. Install the required packages:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
+   > **Note:** `requirements.txt` pins `optuna==4.3.0`, which conflicts with the
+   > dependency metadata of `hydra-optuna-sweeper==1.2.0` (it declares `optuna<3.0.0`).
+   > If pip reports `ResolutionImpossible`, install the sweeper separately:
+   > ```bash
+   > grep -v '^hydra-optuna-sweeper' requirements.txt | pip install -r /dev/stdin
+   > pip install --no-deps hydra-optuna-sweeper==1.2.0
+   > ```
 
-## Dataset
+## Datasets
 
-The model expects a JSON file containing simulation data. Each simulation should include:
-- Camera frames (30 frames per simulation)
-- Subject information (position, size, rotation)
-- Instructions (camera movement, easing, initial camera angle, initial shot type)
+The project supports three datasets, selected at runtime via Hydra
+(`config/data/dataset/{default,et,ccdm,multi}.yaml`). Paths are resolved from
+environment variables (see [Configuration](#configuration)).
 
-The `SimulationDataset` class in `data/simulation/dataset.py` handles data loading and preprocessing.
+### Simulation (default)
 
-To download the dataset, use the following link:
+Synthetic camera-trajectory simulations stored as msgpack files. Each simulation
+includes camera frames, subject information (position, size, rotation), and
+instructions (camera movement, easing, initial camera angle, initial shot type).
+`data/simulation/dataset.py` handles loading and preprocessing.
+
+Download:
 ```
 https://drive.google.com/uc?id=1VT2XfBj9LFWLUBjv65dzC4bVzH0zdNDU
 ```
-Make sure to place the downloaded dataset file in the appropriate location within your project structure.
+Extract it and point `SIMULATION_DATA_PATH` at the resulting directory.
+
+### E.T. (Exceptional Trajectories)
+
+Pulled from HuggingFace (~31 GB, requires `git-lfs`):
+```bash
+git clone https://huggingface.co/datasets/robin-courant/et-data /path/to/data/et-data
+cd /path/to/data/et-data && sh untar_and_move.sh
+```
+Set `ET_DATA_DIR` to the clone and `DIRECTOR_PROJECT_DIR` to
+`third_parties/DIRECTOR`. If you extract as root (e.g. in a container) and tar
+fails with `Cannot change ownership`, extraction still succeeds — or pass
+`--no-same-owner` to tar.
+
+### CCDM
+
+Extract the CCDM data archive and set `CCDM_DATA_DIR` (the loader expects
+`$CCDM_DATA_DIR/data.npy`). For evaluation against the pretrained CCDM model,
+place its checkpoint under `third_parties/Camera-control/[2024][EG]Text+keyframe/`
+and set `CCDM_CHECKPOINT_PATH`.
+
+## GenDoP baseline
+
+To run inference/evaluation against the pretrained
+[GenDoP](https://github.com/3DTopia/GenDoP) model (`training/model=gendop`):
+
+1. Install its extra dependencies (kept out of `requirements.txt` since they
+   are only needed for this baseline):
+   ```bash
+   pip install diffusers==0.34.0 accelerate kiui tyro trimesh megfile
+   ```
+   > `diffusers>=0.35` is incompatible with the pinned `torch==2.4.1`
+   > (its attention-op registration fails at import). `flash-attn` is
+   > optional — GenDoP falls back to a naive attention implementation
+   > (you will see a `[WARN] flash_attn not available` print, which is fine
+   > for inference).
+
+2. Download the released `text_motion` checkpoint (~2.1 GB) and set
+   `GENDOP_CHECKPOINT_PATH`:
+   ```bash
+   mkdir -p third_parties/GenDoP/checkpoints
+   wget "https://huggingface.co/Dubhe-zmc/GenDoP/resolve/main/checkpoints/text_motion.safetensors" \
+     -O third_parties/GenDoP/checkpoints/text_motion.safetensors
+   ```
+
+3. Build the local Stable Diffusion cache. GenDoP hardcodes
+   `StableDiffusionPipeline.from_pretrained('stabilityai/stable-diffusion-2-1-base')`
+   for its text encoder, but the official Stability AI repos are no longer
+   publicly downloadable from the HuggingFace Hub (they return 401). Run once:
+   ```bash
+   python scripts/setup_gendop_sd_cache.py
+   ```
+   This assembles an equivalent cache entry (respecting `HF_HOME`): configs,
+   tokenizer, scheduler and VAE come from the `sd2-community` mirror
+   (~340 MB), the text-encoder weights are extracted from the GenDoP
+   checkpoint itself, and the UNet — which GenDoP discards — is replaced by a
+   tiny stand-in, avoiding its ~3.5 GB download.
+
+Then run, e.g.:
+```bash
+python src/inference.py training/model=gendop data.batch_size=4
+```
+
+Notes:
+- A CUDA GPU is required (the adapter loads the model in fp16 and generates
+  under `torch.autocast`).
+- GenDoP generates one prompt at a time, so keep `data.batch_size` small —
+  expect it to be much slower than the LensCraft path.
+- Metric evaluation via `src/test.py` additionally needs `ref_model` pointing
+  at a trained LensCraft checkpoint and a CLaTr backend; generations are
+  cached under `$CACHE_DIR/generated_trajectory/` and reused across runs.
+
+## Configuration
+
+Runtime configuration is managed by [Hydra](https://hydra.cc/) (`config/`), and
+dataset/output paths are read from a `.env` file in the project root:
+
+```bash
+HYDRA_FULL_ERROR=1
+
+SIMULATION_DATA_PATH=/path/to/data/simulation-data
+DIRECTOR_PROJECT_DIR=/path/to/LensCraft/third_parties/DIRECTOR
+ET_DATA_DIR=/path/to/data/et-data
+CCDM_DATA_DIR=/path/to/data/ccdm
+CCDM_CHECKPOINT_PATH=/path/to/LensCraft/third_parties/Camera-control/[2024][EG]Text+keyframe/weight/latest.pth
+GENDOP_CHECKPOINT_PATH=/path/to/LensCraft/third_parties/GenDoP/checkpoints/text_motion.safetensors
+
+CLIP_EMBEDDINGS_CACHE_DIR=/path/to/LensCraft/cache
+OUTPUT_DIR=/path/to/outputs
+LOG_DIR=./logs
+
+ET_CIN_LANG_PATH=/path/to/data/et_cinematography_instructions.json
+CACHE_DIR=/path/to/LensCraft/cache
+HF_HOME=/path/to/hf_cache
+
+# Only needed for the cinematography annotation pipeline (src/data-annotator.py)
+OPENAI_API_KEY=
+```
 
 ## Usage
 
-To train the model, run the `main.py` script with the desired arguments:
-```
-python main.py --data path/to/your/dataset.json --batch_size 32 --epochs 20 --lr 0.0001
+Train with the default (simulation) dataset:
+```bash
+python src/train.py
 ```
 
-For a full list of available arguments, run:
+Train on E.T. or CCDM:
+```bash
+python src/train.py data/dataset=et
+python src/train.py data/dataset=ccdm
 ```
-python main.py --help
+
+Any Hydra config value can be overridden from the command line, e.g.:
+```bash
+python src/train.py data.batch_size=64 training.optimizer.lr=1e-4
 ```
+
+Other entry points:
+- `python src/test.py` — evaluate a checkpoint (`TEST_CHECKPOINT_PATH`)
+- `python src/inference.py` — run inference (add `training/model=ccdm|et|gendop`
+  to use a baseline model instead of LensCraft)
+- `python src/train_clatr.py` — train the CLaTr evaluation backend
+- `bash run_optuna_search.sh` — hyperparameter search (Optuna sweeper + joblib launcher)
+
+Long training jobs are best run inside `tmux`/`screen` so they survive disconnects.
 
 ## Training
 

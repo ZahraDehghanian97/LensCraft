@@ -21,6 +21,7 @@ class GenDoPAdapter:
         self.num_cond_tokens = int(config.get("num_cond_tokens", 77))
         self.target_height = int(config.get("target_height", 512))
         self.target_width = int(config.get("target_width", 512))
+        self.max_seq_length = config.get("max_seq_length", None)
         self.test_max_seq_length = config.get("test_max_seq_length", None)
 
         self._gendop_root = self._resolve_gendop_root()
@@ -55,6 +56,8 @@ class GenDoPAdapter:
         opt.num_cond_tokens = self.num_cond_tokens
         opt.target_height = self.target_height
         opt.target_width = self.target_width
+        if self.max_seq_length is not None:
+            opt.max_seq_length = int(self.max_seq_length)
         if self.test_max_seq_length is not None:
             opt.test_max_seq_length = int(self.test_max_seq_length)
 
@@ -108,7 +111,8 @@ class GenDoPAdapter:
         temp_instri = coords_instri / (self.discrete_bins / 10.0)
         scale = torch.exp(coords_scale / self.discrete_bins * 4.0 - 2.0)
 
-        camera_tokens = torch.cat([temp_traj, temp_instri], dim=1).unsqueeze(0)
+        # token_to_camera allocates helper tensors on CPU, so decode there.
+        camera_tokens = torch.cat([temp_traj, temp_instri], dim=1).unsqueeze(0).cpu()
         camera_pose = self._token_to_camera(
             camera_tokens, self.target_width, self.target_height
         )

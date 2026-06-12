@@ -8,6 +8,7 @@ inference:
   discrete_bins: 256
   cond_mode: text
   num_cond_tokens: 77
+  max_seq_length: 40960
   target_height: 512
   target_width: 512
   test_max_seq_length: 301
