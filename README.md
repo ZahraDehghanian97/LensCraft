@@ -145,11 +145,16 @@ includes camera frames, subject information (position, size, rotation), and
 instructions (camera movement, easing, initial camera angle, initial shot type).
 `data/simulation/dataset.py` handles loading and preprocessing.
 
-Download:
+Download (full dataset, or the smaller `-mini` variant for quick experiments):
+```bash
+pip install gdown
+# full dataset
+gdown 1VT2XfBj9LFWLUBjv65dzC4bVzH0zdNDU
+# mini variant (sim-data.tar.zst, extracts to simulation-data-4-mini/)
+gdown 1xxIPzvjTUuUOoVEZjhNeRDRluhbHNUq8
+zstd -dc sim-data.tar.zst | tar -xf -
 ```
-https://drive.google.com/uc?id=1VT2XfBj9LFWLUBjv65dzC4bVzH0zdNDU
-```
-Extract it and point `SIMULATION_DATA_PATH` at the resulting directory.
+Point `SIMULATION_DATA_PATH` at the extracted directory.
 
 ### E.T. (Exceptional Trajectories)
 
@@ -163,12 +168,25 @@ Set `ET_DATA_DIR` to the clone and `DIRECTOR_PROJECT_DIR` to
 fails with `Cannot change ownership`, extraction still succeeds — or pass
 `--no-same-owner` to tar.
 
+The cinematography instruction annotations for E.T. prompts are a separate
+download:
+```bash
+gdown 1ZmC6EAcIcvdni6O1X8xpy1g1n_NRFtoR  # et_cinematography_instructions.json
+```
+Set `ET_CIN_LANG_PATH` to the downloaded JSON file.
+
 ### CCDM
 
-Extract the CCDM data archive and set `CCDM_DATA_DIR` (the loader expects
-`$CCDM_DATA_DIR/data.npy`). For evaluation against the pretrained CCDM model,
-place its checkpoint under `third_parties/Camera-control/[2024][EG]Text+keyframe/`
-and set `CCDM_CHECKPOINT_PATH`.
+Download and extract the CCDM data archive:
+```bash
+gdown 1Dazg2XMMmMmHl-dTe_7cf6RlDGHNqlN-  # ccdm-data.tar.zst
+zstd -dc ccdm-data.tar.zst | tar -xf -
+```
+This produces a `ccdm/` directory containing `data.npy` and `Mean_Std.npy`;
+set `CCDM_DATA_DIR` to it (the loader expects `$CCDM_DATA_DIR/data.npy`).
+For evaluation against the pretrained CCDM model, place its checkpoint under
+`third_parties/Camera-control/[2024][EG]Text+keyframe/` and set
+`CCDM_CHECKPOINT_PATH`.
 
 ## GenDoP baseline
 
@@ -224,7 +242,8 @@ Notes:
 ## Configuration
 
 Runtime configuration is managed by [Hydra](https://hydra.cc/) (`config/`), and
-dataset/output paths are read from a `.env` file in the project root:
+dataset/output paths are read from a `.env` file in the project root
+(`.env-sample` is a template you can copy):
 
 ```bash
 HYDRA_FULL_ERROR=1
