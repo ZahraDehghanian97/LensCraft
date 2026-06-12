@@ -8,21 +8,21 @@ from data.convertor.constant import default_normalizers
 
 def to_cuda(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
     prepared_data = {}
-    
+
     for key in batch.keys():
         prepared_data[key] = batch[key]
         if prepared_data[key] is not None and torch.is_tensor(prepared_data[key]):
                 prepared_data[key] = prepared_data[key].to(device)
-    
+
     return prepared_data
 
 
 def inference_batch(model, batch, device, dataset_type='simulation', model_type='lens_craft', seq_length=30):
     batch = to_cuda(batch, device)
     batch_size = len(batch["text_prompts"])
-        
+
     caption_embedding = batch.get("cinematography_prompt", None) if dataset_type in ["simulation", "et"] else None
-    
+
     if dataset_type != "simulation":
         sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = convert_to_target(
             dataset_type,
@@ -36,7 +36,7 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
     else:
         sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = \
             batch["camera_trajectory"], batch["subject_trajectory"], batch["subject_volume"], batch["padding_mask"]
-        
+
     trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
         dataset_type,
         model_type,
@@ -47,15 +47,15 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
         seq_length,
         torch.full((batch_size,), 30, device=device) # fix me for other datasets
     )
-    
-    if model_type in ["ccdm", "et"]:
+
+    if model_type in ["ccdm", "et", "gendop"]:
         generated_trajecotry = model.generate_using_text(
             batch["text_prompts"],
             subject_trajectory,
             trajectory,
-            padding_mask
+            padding_mask,
         )
-                
+
         sim_generated_trajectory, _, _, _ = convert_to_target(
             model_type,
             "simulation",
@@ -64,17 +64,24 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
             batch["subject_volume"],
             padding_mask,
             30,
-            need_normal=False
+            need_normal=False,
         )
-        return {'prompt_generation': sim_generated_trajectory}, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, None
-        
+        return (
+            {"prompt_generation": sim_generated_trajectory},
+            sim_camera_trajectory,
+            sim_subject_trajectory,
+            sim_subject_volume,
+            sim_padding_mask,
+            None,
+        )
+
     results = {}
     template = torch.cat([torch.ones(26, dtype=torch.bool), torch.zeros(4, dtype=torch.bool)])
     key_framing_padding_mask = torch.zeros((batch_size, 30), dtype=torch.bool, device=device)
     for i in range(batch_size):
         shuffled = template[torch.randperm(30)]
         key_framing_padding_mask[i] = shuffled
-            
+
     for mode in ['prompt_generation', 'reconstruction', 'key_framing+prompt', 'key_framing', 'source_trajectory']:
         current_caption_embedding = caption_embedding
         current_padding_mask = sim_padding_mask
@@ -96,7 +103,7 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
             for idx in random_indices:
                 current_caption_embedding.append(batch["cinematography_prompt"][:, idx, :])
             current_caption_embedding = torch.stack(current_caption_embedding, dim=1).to(device)
-        
+
         output = model.generate_camera_trajectory(
             subject_trajectory=sim_subject_trajectory,
             subject_volume=sim_subject_volume,
@@ -106,5 +113,5 @@ def inference_batch(model, batch, device, dataset_type='simulation', model_type=
             caption_embedding=current_caption_embedding
         )
         results[mode] = output["reconstructed"]
-    
+
     return results, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, key_framing_padding_mask

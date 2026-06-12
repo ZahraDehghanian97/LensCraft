@@ -62,7 +62,7 @@ class CLIPEmbedder:
         num_texts = len(texts)
         chunks = [texts[i:i + self.chunk_size]
                  for i in range(0, num_texts, self.chunk_size)]
-        
+
         all_sequence_features = []
         all_pooled_features = []
         all_attention_masks = []
@@ -99,11 +99,30 @@ class CLIPEmbedder:
                 )
 
             all_sequence_features.append(sequence_features)
+            all_pooled_features.append(pooled_features)
             all_attention_masks.append(attention_mask)
             all_valid_lengths.append(valid_lengths)
 
         if not return_seq:
             return torch.cat(all_pooled_features, dim=0)
+
+        max_seq_len = max(feat.size(1) for feat in all_sequence_features)
+        for i in range(len(all_sequence_features)):
+            seq_len = all_sequence_features[i].size(1)
+            if seq_len < max_seq_len:
+                pad_size = max_seq_len - seq_len
+                all_sequence_features[i] = F.pad(
+                    all_sequence_features[i],
+                    (0, 0, 0, pad_size),
+                    mode='constant',
+                    value=0
+                )
+                all_attention_masks[i] = F.pad(
+                    all_attention_masks[i],
+                    (0, pad_size),
+                    mode='constant',
+                    value=0
+                )
 
         return CLIPFeatures(
             sequence_features=torch.cat(all_sequence_features, dim=0),
@@ -111,7 +130,7 @@ class CLIPEmbedder:
             attention_mask=torch.cat(all_attention_masks, dim=0),
             valid_lengths=torch.cat(all_valid_lengths, dim=0)
         )
-        
+
     def get_caption_feat(
         self,
         prompts: List[str],
@@ -120,26 +139,26 @@ class CLIPEmbedder:
     ) -> torch.Tensor:
         if seq_feat:
             clip_features = self.extract_clip_embeddings(
-                prompts, 
-                return_seq=True, 
+                prompts,
+                return_seq=True,
                 pad_seq=False
             )
-            
+
             padded_seqs = []
             for i in range(len(prompts)):
                 seq = clip_features.sequence_features[i]
                 valid_length = clip_features.valid_lengths[i].item()
                 valid_seq = seq[:valid_length]
-                
+
                 if valid_seq.shape[0] > context_length:
                     valid_seq = valid_seq[:context_length]
-                
+
                 padded_seq = F.pad(valid_seq, (0, 0, 0, context_length - valid_seq.shape[0]))
                 padded_seqs.append(padded_seq)
-            
+
             caption_feat = torch.stack(padded_seqs, dim=0)
             caption_feat = caption_feat.permute(0, 2, 1)  # [B, D, L]
         else:
             caption_feat = self.extract_clip_embeddings(prompts, return_seq=False)
-        
+
         return caption_feat

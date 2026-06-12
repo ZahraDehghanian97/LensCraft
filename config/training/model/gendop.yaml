@@ -1,0 +1,13 @@
+data_format:
+  type: gendop
+  seq_length: 30
+
+inference:
+  checkpoint_path: ${oc.env:GENDOP_CHECKPOINT_PATH}
+  pose_length: 30
+  discrete_bins: 256
+  cond_mode: text
+  num_cond_tokens: 77
+  target_height: 512
+  target_width: 512
+  test_max_seq_length: 301

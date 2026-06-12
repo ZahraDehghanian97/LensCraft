@@ -92,7 +92,8 @@ def main(cfg: DictConfig) -> Optional[float]:
             monitor="val/loss",
             mode="min",
             save_top_k=1,
-            filename="clatr-best-{epoch:03d}-{val_loss:.4f}",
+            filename="clatr-best-epoch={epoch:03d}-val_loss={val/loss:.4f}",
+            auto_insert_metric_name=False,
             save_last=True,
         ),
         ModelCheckpoint(

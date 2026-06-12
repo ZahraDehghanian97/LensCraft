@@ -14,6 +14,7 @@ from utils.load_lens_craft import load_lens_craft_model
 from inferencing.process import inference_batch
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
+from models.gendop_adapter import GenDoPAdapter
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -81,7 +82,7 @@ def main(cfg: DictConfig) -> None:
 
     data_format_type = cfg.training.model.data_format.get("type", "simulation")
     model_type = "lens_craft" if data_format_type == "simulation" else data_format_type
-    
+
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
@@ -90,12 +91,12 @@ def main(cfg: DictConfig) -> None:
         test_size=cfg.data.test_size,
     )
     data_module.setup()
-    
+
     target = cfg.data.dataset.config["_target_"]
     dataset_type = "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
-    
+
     model = None
-    
+
     if model_type == "lens_craft":
         model = load_lens_craft_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
     else:
@@ -103,6 +104,8 @@ def main(cfg: DictConfig) -> None:
             model = CCDMAdapter(cfg.training.model.inference, device)
         elif model_type == "et":
             model = ETAdapter(cfg.training.model.inference, device)
+        elif model_type == "gendop":
+            model = GenDoPAdapter(cfg.training.model.inference, device)
 
     test_dataloader = data_module.test_dataloader()
 
@@ -110,14 +113,14 @@ def main(cfg: DictConfig) -> None:
         try:
             first_batch = next(iter(test_dataloader))
             batch_size = len(first_batch['text_prompts'])
-            
+
             first_batch['random_prompt_index'] = np.random.randint(0, batch_size, size=batch_size).tolist()
-            
+
             trajectories, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, key_framing_padding_mask =\
                 inference_batch(model, first_batch, device, dataset_type, model_type, seq_length=cfg.training.model.data_format.seq_length)
-            
+
             trajectories['GT'] = sim_camera_trajectory
-            
+
             result = {
                 "trajectories": trajectories,
                 "batch_data": {
@@ -133,16 +136,16 @@ def main(cfg: DictConfig) -> None:
                 "dataset_type": dataset_type,
                 "model_type": model_type,
             }
-            
+
             json_serializable_result = tensor_to_serializable(result)
-            
+
             output_file = os.path.join(os.getcwd(), "inference_result.json")
             with open(output_file, 'w') as f:
                 json.dump(json_serializable_result, f, cls=TensorEncoder, indent=2)
-            
+
             logger.info(f"Inference result saved to {output_file}")
             print(f"Inference result saved to {output_file}")
-            
+
         except StopIteration:
             logger.error("No batches available in the test dataloader")
             print("No batches available in the test dataloader")

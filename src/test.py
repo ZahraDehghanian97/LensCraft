@@ -14,6 +14,8 @@ from tqdm import tqdm
 from data.datamodule import CameraTrajectoryDataModule
 from models.ccdm_adapter import CCDMAdapter
 from models.et_adapter import ETAdapter
+from models.gendop_adapter import GenDoPAdapter
+
 from testing.metrics.callback import MetricCallback
 from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
 from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
@@ -168,6 +170,8 @@ def main(cfg: DictConfig) -> None:
                 model = CCDMAdapter(cfg.training.model.inference, device)
             elif model_type == "et":
                 model = ETAdapter(cfg.training.model.inference, device)
+            elif model_type == "gendop":
+                model = GenDoPAdapter(cfg.training.model.inference, device)
             else:
                 raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -186,7 +190,7 @@ def main(cfg: DictConfig) -> None:
 
     test_dataloader = data_module.test_dataloader()
 
-    if model_type in ("ccdm", "et"):
+    if model_type in ("ccdm", "et", "gendop"):
         metric_items = ["prompt_generation"]
     else:
         metric_items = (
@@ -201,7 +205,7 @@ def main(cfg: DictConfig) -> None:
             else ["reconstruction", "key_framing"]
         )
 
-    if os.path.exists(trajectory_save_path) and model_type in ("ccdm", "et"):
+    if os.path.exists(trajectory_save_path) and model_type in ("ccdm", "et", "gendop"):
         logger.info("Loading pre-generated trajectories from %s", trajectory_save_path)
         generated_trajectories = torch.load(trajectory_save_path)
         logger.info("Loaded %d pre-generated trajectories", len(generated_trajectories))

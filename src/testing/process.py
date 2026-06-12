@@ -118,7 +118,7 @@ def test_batch(
             caption_embedding=caption_embedding,
         )
 
-        if model_type in ("ccdm", "et"):
+        if model_type in ("ccdm", "et", "gendop"):
             if pre_generated_trajectory is not None:
                 generated_trajectory = pre_generated_trajectory
             else:
