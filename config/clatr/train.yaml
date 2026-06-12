@@ -36,7 +36,7 @@ trainer:
   max_epochs: 60
   accelerator: auto
   devices: [0]
-  precision: 32
+  precision: bf16-mixed
   gradient_clip_val: 1.0
   log_every_n_steps: 50
 

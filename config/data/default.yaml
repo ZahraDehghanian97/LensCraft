@@ -3,7 +3,7 @@ defaults:
   # - dataset: ccdm
   # - dataset: et
 
-num_workers: 0
+num_workers: 8
 val_size: 0.2
 test_size: 0.2
 batch_size: 128

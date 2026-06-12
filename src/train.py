@@ -16,6 +16,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+torch.set_float32_matmul_precision("high")
+
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(cfg: DictConfig):
