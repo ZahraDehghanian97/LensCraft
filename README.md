@@ -132,6 +132,19 @@ graph TD
    > pip install --no-deps hydra-optuna-sweeper==1.2.0
    > ```
 
+   Alternatively, to reproduce the exact known-good environment for
+   pre-Blackwell GPUs (`torch==2.4.1+cu124`), install the full
+   `pip freeze` snapshot of the RTX 4000 machine:
+   ```bash
+   pip install --no-deps -r pip-freeze-rtx4000.txt
+   ```
+   > **Note:** the `--no-deps` flag is required. The snapshot contains the
+   > same `optuna` / `hydra-optuna-sweeper` pair as above, so a plain
+   > `pip install -r pip-freeze-rtx4000.txt` fails with `ResolutionImpossible`
+   > even though the combination works in practice. Skipping resolution is
+   > safe here because a freeze file already pins every transitive dependency.
+   > This snapshot also includes the GenDoP extras listed below.
+
 ## Datasets
 
 The project supports three datasets, selected at runtime via Hydra
@@ -194,11 +207,13 @@ To run inference/evaluation against the pretrained
 [GenDoP](https://github.com/3DTopia/GenDoP) model (`training/model=gendop`):
 
 1. Install its extra dependencies (kept out of `requirements.txt` since they
-   are only needed for this baseline):
+   are only needed for this baseline; already present if you installed
+   `pip-freeze-rtx4000.txt`):
    ```bash
    pip install diffusers==0.34.0 accelerate kiui tyro trimesh megfile
    ```
-   > `diffusers>=0.35` is incompatible with the pinned `torch==2.4.1`
+   > `diffusers>=0.35` is incompatible with `torch==2.4.1` (the version
+   > pinned in `pip-freeze-rtx4000.txt`)
    > (its attention-op registration fails at import). `flash-attn` is
    > optional — GenDoP falls back to a naive attention implementation
    > (you will see a `[WARN] flash_attn not available` print, which is fine
