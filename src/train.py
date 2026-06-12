@@ -94,7 +94,7 @@ def main(cfg: DictConfig):
     except KeyboardInterrupt:
         logger.info("Training was interrupted by user. Proceeding to testing with current model state...")
     except Exception as e:
-        logger.info("Error: ", e)
+        logger.exception("Error during training: %s", e)
 
     if use_multi_dataset:
         dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
