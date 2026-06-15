@@ -153,3 +153,4 @@ test_results
 *.db
 
 cache
+table_results

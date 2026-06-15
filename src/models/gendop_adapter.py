@@ -140,16 +140,24 @@ class GenDoPAdapter:
 
         generations = []
         for prompt in text_prompts:
-            with torch.autocast(device_type=self.device.type, dtype=torch.float16):
-                tokens = self.model.generate(
-                    [prompt],
-                    max_new_tokens=self.opt.test_max_seq_length,
-                    clean=True,
-                )
+            try:
+                with torch.autocast(device_type=self.device.type, dtype=torch.float16):
+                    tokens = self.model.generate(
+                        [prompt],
+                        max_new_tokens=self.opt.test_max_seq_length,
+                        clean=True,
+                    )
 
-            token_seq = torch.as_tensor(tokens[0], device=self.device)
-            if token_seq.numel() > 0:
-                token_seq = token_seq[:-1]
+                token_seq = torch.as_tensor(tokens[0], device=self.device)
+                if token_seq.numel() > 0:
+                    token_seq = token_seq[:-1]
+            except AssertionError:
+                logger.warning(
+                    "GenDoP produced an out-of-range token sequence for prompt "
+                    "%r; falling back to a default trajectory.",
+                    prompt,
+                )
+                token_seq = torch.empty(0, dtype=torch.long, device=self.device)
 
             c2ws = self._tokens_to_c2ws(token_seq).to(self.device)
             generations.append(c2ws)

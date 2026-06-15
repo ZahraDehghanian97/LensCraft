@@ -9,7 +9,7 @@ from data.convertor.convertor import convert_to_target
 
 class CCDMDataset(Dataset):
     _normalization_parameters = None
-    
+
     def __init__(
         self,
         data_path: str,
@@ -27,7 +27,7 @@ class CCDMDataset(Dataset):
         self.clip_model_name = clip_model_name
         self.normalize = normalize
         self.original_seq_len = original_seq_len
-        
+
         self.hfov_deg = hfov_deg
         self.aspect = aspect
 
@@ -36,8 +36,9 @@ class CCDMDataset(Dataset):
         self.padding_masks = []
 
         self._load_camera_trajectory_data()
-        
-        
+        self._precompute_text_embeddings()
+
+
     @staticmethod
     def get_normalization_parameters(data_path: str | Path=os.environ.get('CCDM_DATA_DIR', '/media/disk1/arash/abolghasemi/ccdm')) -> dict[str, torch.Tensor]:
         if CCDMDataset._normalization_parameters is not None:
@@ -52,7 +53,7 @@ class CCDMDataset(Dataset):
             "std":  torch.tensor(stats["Std"],  dtype=torch.float32),
         }
         return CCDMDataset._normalization_parameters
-        
+
     @staticmethod
     def normalize_item(
         camera_trajectory: torch.Tensor,
@@ -79,8 +80,8 @@ class CCDMDataset(Dataset):
         raw_data = np.load(self.data_path, allow_pickle=True)[()]
         self.camera_trajectories = [torch.tensor(camera_trajectory, dtype=torch.float32) for camera_trajectory in raw_data["cam"]]
         self.text_descriptions = raw_data["info"]
-        
-        
+
+
         for index, camera_trajectory in enumerate(self.camera_trajectories):
             current_len = camera_trajectory.shape[0]
             padding_mask = torch.zeros(current_len, dtype=torch.bool)
@@ -93,10 +94,16 @@ class CCDMDataset(Dataset):
             elif current_len > self.original_seq_len:
                 camera_trajectory = camera_trajectory[:self.original_seq_len]
                 padding_mask = padding_mask[:self.original_seq_len]
-            
+
             self.padding_masks.append(padding_mask)
             self.camera_trajectories[index] = camera_trajectory
 
+    def _precompute_text_embeddings(self) -> None:
+        self.texts = [" ".join(text_description) for text_description in self.text_descriptions]
+        with torch.no_grad():
+            embeddings = self.clip_embedder.extract_clip_embeddings(self.texts)
+        self.text_embeddings = embeddings.cpu()
+        self.clip_embedder = None
 
     def __len__(self) -> int:
         return len(self.camera_trajectories)
@@ -104,18 +111,15 @@ class CCDMDataset(Dataset):
     def __getitem__(self, index: int) -> Dict[str, Any]:
         camera_trajectory = self.camera_trajectories[index].clone()
         padding_mask = self.padding_masks[index]
-        text_description = self.text_descriptions[index]
-        
+
         subject_trajectory = None
         subject_volume = None
-        
+
         if self.normalize:
             camera_trajectory, _, _ = CCDMDataset.normalize_item(camera_trajectory, None, None, True)
 
-        text = " ".join(text_description)
-        with torch.no_grad():
-            text_embedding = self.clip_embedder.extract_clip_embeddings([text])[0].cpu()
-
+        text = self.texts[index]
+        text_embedding = self.text_embeddings[index]
 
         return {
             "camera_trajectory": camera_trajectory,
@@ -131,12 +135,12 @@ def collate_fn(batch):
         subject_volume = None
     else:
         subject_volume = torch.stack([item["subject_volume"] for item in batch])
-        
+
     if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
         subject_trajectory = None
     else:
         subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
-        
+
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": subject_trajectory,

@@ -22,11 +22,11 @@ from .caption import extract_text_prompt
 
 class SimulationDataset(Dataset):
     _normalization_parameters = None
-    
-    def __init__(self, 
-                 data_path: str, 
-                 embedding_dim: int, 
-                 fill_none_with_mean: bool, 
+
+    def __init__(self,
+                 data_path: str,
+                 embedding_dim: int,
+                 fill_none_with_mean: bool,
                  clip_embeddings: Dict,
                  allowed_movement_types: List[str] = None,
                  normalize: bool = True):
@@ -41,13 +41,13 @@ class SimulationDataset(Dataset):
             self.embedding_means = load_clip_means()
         else:
             self.embedding_means = None
-        
+
         validate_dataset_directory(self.data_path)
         self.parameter_dictionary = load_parameter_dictionary(self.data_path)
         self.simulation_files = find_simulation_files(self.data_path)
-        
+
         generate_movement_types_file(self.data_path, self.simulation_files, self.parameter_dictionary)
-        
+
         if self.allowed_movement_types:
             self.simulation_files = filter_files_by_movement_types(
                 self.simulation_files,
@@ -55,27 +55,33 @@ class SimulationDataset(Dataset):
                 self.data_path
             )
             print(f"Filtered to {len(self.simulation_files)} files with movement types: {self.allowed_movement_types}")
-        
+
         self.get_normalization_parameters(self.data_path)
         print("Normalization enabled. Using normalization parameters.")
-    
+
     @staticmethod
-    def get_normalization_parameters(data_path: str=os.environ.get('SIMULATION_DATA_PATH', '/media/disk1/arash/abolghasemi/simulation-data-4-mini')) -> Dict:
+    def get_normalization_parameters(data_path: str = None) -> Dict:
         if SimulationDataset._normalization_parameters is not None:
             return SimulationDataset._normalization_parameters
-            
+
+        if data_path is None:
+            data_path = os.environ.get(
+                'SIMULATION_DATA_PATH',
+                '/media/disk1/arash/abolghasemi/simulation-data-4-mini',
+            )
+
         SimulationDataset._normalization_parameters = load_or_calculate_normalization_parameters(data_path)
         return SimulationDataset._normalization_parameters
 
     def __len__(self) -> int:
         # return len(self.simulation_files)
         return min(100000, len(self.simulation_files))
-    
+
     @staticmethod
     def _normalize_tensor(tensor: torch.Tensor, param_key: str, position_indices: Optional[List[int]] = None) -> torch.Tensor:
         mean =  SimulationDataset._normalization_parameters[param_key]['mean'].to(tensor.device)
         std =  SimulationDataset._normalization_parameters[param_key]['std'].to(tensor.device)
-        
+
         if position_indices is None:
             return (tensor - mean) / std
         else:
@@ -84,17 +90,17 @@ class SimulationDataset(Dataset):
             return result
 
     @staticmethod
-    def _denormalize_tensor(tensor: torch.Tensor, param_key: str, position_indices: Optional[List[int]] = None) -> torch.Tensor:        
+    def _denormalize_tensor(tensor: torch.Tensor, param_key: str, position_indices: Optional[List[int]] = None) -> torch.Tensor:
         mean = SimulationDataset._normalization_parameters[param_key]['mean'].to(tensor.device)
         std = SimulationDataset._normalization_parameters[param_key]['std'].to(tensor.device)
-        
+
         if position_indices is None:
             return tensor * std + mean
         else:
             result = tensor.clone()
             result[..., position_indices] = tensor[..., position_indices] * std + mean
             return result
-    
+
     @staticmethod
     def normalize_item(camera_trajectory, subject_trajectory, subject_volume, normalize:bool= True):
         SimulationDataset.get_normalization_parameters()
@@ -104,32 +110,32 @@ class SimulationDataset(Dataset):
             'camera_position',
             position_indices=[0, 1, 2]
         )
-        
+
         if subject_trajectory is not None:
             subject_trajectory = func(
                 subject_trajectory,
                 'subject_position',
                 position_indices=[0, 1, 2]
             )
-        
+
         if subject_volume is not None:
             subject_volume = func(
                 subject_volume,
                 'subject_dimensions'
             )
-        
+
         return camera_trajectory, subject_trajectory, subject_volume
 
     def __getitem__(self, index: int) -> Dict:
         file_path = self.simulation_files[index]
         data = parse_simulation_file_to_dict(file_path, self.parameter_dictionary)
-        
+
         camera_trajectory = extract_camera_trajectory(data["cameraFrames"])
         subject_trajectory, subject_volume = extract_subject_components(data["subjectsInfo"])
         movement_type = data["subjectsInfo"][0]["movementType"]
         instruction = data["simulationInstructions"][0]
         prompt = data["cinematographyPrompts"][0]
-        
+
         simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask, simulation_instruction_parameters, cinematography_prompt_parameters = \
             fix_prompts_and_instructions(instruction, prompt, self.clip_embeddings, self.fill_none_with_mean, self.embedding_means)
 
@@ -137,9 +143,9 @@ class SimulationDataset(Dataset):
             camera_trajectory, subject_trajectory, subject_volume = \
                 SimulationDataset.normalize_item(camera_trajectory, subject_trajectory, subject_volume)
 
-        
+
         padding_mask = torch.zeros(30, dtype=torch.bool)
-        
+
         return {
             "camera_trajectory": camera_trajectory,
             "subject_trajectory": subject_trajectory,
@@ -161,12 +167,12 @@ def collate_fn(batch):
         subject_volume = None
     else:
         subject_volume = torch.stack([item["subject_volume"] for item in batch])
-        
+
     if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
         subject_trajectory = None
     else:
         subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
-    
+
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": subject_trajectory,

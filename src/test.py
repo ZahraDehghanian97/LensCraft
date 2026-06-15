@@ -129,6 +129,9 @@ def main(cfg: DictConfig) -> None:
     data_format_type = cfg.training.model.data_format.get("type", "simulation")
     model_type = "lens_craft" if data_format_type == "simulation" else data_format_type
 
+    import lightning as L
+    L.seed_everything(cfg.get("seed", 42), workers=True)
+
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
         batch_size=cfg.data.batch_size,
@@ -189,6 +192,7 @@ def main(cfg: DictConfig) -> None:
     clatr_extractor = _build_clatr_extractor(cfg, device)
 
     test_dataloader = data_module.test_dataloader()
+    limit_test_batches = int(cfg.get("limit_test_batches", 0))  # 0 = no limit (smoke-test knob)
 
     if model_type in ("ccdm", "et", "gendop"):
         metric_items = ["prompt_generation"]
@@ -211,10 +215,12 @@ def main(cfg: DictConfig) -> None:
         logger.info("Loaded %d pre-generated trajectories", len(generated_trajectories))
 
         with torch.no_grad():
-            for batch, generated_trajectory in tqdm(
+            for bi, (batch, generated_trajectory) in enumerate(tqdm(
                 zip(test_dataloader, generated_trajectories),
                 total=min(len(test_dataloader), len(generated_trajectories)),
-            ):
+            )):
+                if limit_test_batches and bi >= limit_test_batches:
+                    break
                 test_batch(
                     ref_model,
                     model,
@@ -231,7 +237,9 @@ def main(cfg: DictConfig) -> None:
     else:
         all_generated_trajectories = []
         with torch.no_grad():
-            for batch in tqdm(test_dataloader):
+            for bi, batch in enumerate(tqdm(test_dataloader)):
+                if limit_test_batches and bi >= limit_test_batches:
+                    break
                 generated_trajectory_data = test_batch(
                     ref_model,
                     model,
@@ -247,24 +255,94 @@ def main(cfg: DictConfig) -> None:
                 if generated_trajectory_data is not None:
                     all_generated_trajectories.append(generated_trajectory_data)
 
+        if model_type in ("ccdm", "et", "gendop") and all_generated_trajectories:
+            torch.save(all_generated_trajectories, trajectory_save_path)
+            logger.info("Saved %d generated trajectories to %s",
+                        len(all_generated_trajectories), trajectory_save_path)
+
+    n_boot = int(cfg.get("n_boot", 500))
+    boot_max_cfg = cfg.get("boot_max_samples", None)
+    boot_max = (
+        None if boot_max_cfg in (None, "None", "", 0, "0") else int(boot_max_cfg)
+    )
+
+    boot_std = {
+        item: metric_callback.bootstrap_metrics(item, n_boot=n_boot, max_samples=boot_max)
+        for item in metric_items
+        if item in metric_callback.active_metrics
+    }
+
+    def _snapshot_features(x):
+        if x is None:
+            return None
+        if isinstance(x, (list, tuple)):
+            if len(x) == 0:
+                return None
+            x = torch.cat(list(x), dim=0)
+        return x.detach().cpu()
+
+    metric_features = {item: {"GT": None, "GEN": None} for item in metric_items}
+    if cfg.tsne:
+        for metric_item in metric_items:
+            prdc = metric_callback.metrics.get(metric_item, {}).get("clatr_prdc")
+            if prdc is None:
+                continue
+            metric_features[metric_item]["GT"] = _snapshot_features(
+                getattr(prdc, "real_features", None)
+            )
+            metric_features[metric_item]["GEN"] = _snapshot_features(
+                getattr(prdc, "fake_features", None)
+            )
+
     metrics = {
         item: metric_callback.compute_clatr_metrics(item)
         for item in metric_items
         if item in metric_callback.active_metrics
     }
     logger.info("Final Metrics (CLaTr backend: %s): %s", cfg.get("clatr_backend", "native"), metrics)
+    for item, center in metrics.items():
+        boot = boot_std.get(item, {})
+        line = ", ".join(
+            (
+                f"{full_key.split('/')[-1]}={mu:.4f}±{boot[full_key][1]:.4f}"
+                if full_key in boot
+                else f"{full_key.split('/')[-1]}={mu:.4f}"
+            )
+            for full_key, mu in center.items()
+        )
+        logger.info("Final Metrics (%s): %s", item, line)
+
+    try:
+        import json
+        cfgd = cfg.data.dataset.config
+        amt = (OmegaConf.to_container(cfgd.allowed_movement_types, resolve=True)
+               if "allowed_movement_types" in cfgd and cfgd.allowed_movement_types is not None
+               else None)
+        et_type = cfg.training.model.inference.get("et_type", None) if model_type == "et" else None
+        payload = {
+            "model_type": model_type,
+            "dataset_type": dataset_type,
+            "et_type": et_type,
+            "clatr_backend": cfg.get("clatr_backend", "native"),
+            "set": cfg.get("eval_set", None),
+            "variant": cfg.get("variant", None),
+            "allowed_movement_types": amt,
+            "metrics": metrics,
+            "bootstrap_std": boot_std,
+        }
+        tag = model_type
+        if et_type: tag += f"_{et_type}"
+        if payload["variant"]: tag += f"_{payload['variant']}"
+        if payload["set"]: tag += f"_{payload['set']}"
+        os.makedirs(cfg.output_dir, exist_ok=True)
+        out_json = os.path.join(cfg.output_dir, f"metrics_{tag}.json")
+        with open(out_json, "w") as fh:
+            json.dump(payload, fh, indent=2)
+        logger.info("Wrote metrics JSON to %s", out_json)
+    except Exception as exc:
+        logger.warning("Failed to write metrics JSON: %s", exc)
 
     if cfg.tsne:
-        metric_features = {item: {"GT": None, "GEN": None} for item in metric_items}
-        for metric_item in metric_items:
-            if metric_item in metric_callback.metrics:
-                prdc = metric_callback.metrics[metric_item].get("clatr_prdc")
-                if prdc is not None:
-                    if getattr(prdc, "real_features", None) is not None:
-                        metric_features[metric_item]["GT"] = prdc.real_features
-                    if getattr(prdc, "fake_features", None) is not None:
-                        metric_features[metric_item]["GEN"] = prdc.fake_features
-
         save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
         features_save_dir = os.path.join(save_dir, "features")
         os.makedirs(features_save_dir, exist_ok=True)

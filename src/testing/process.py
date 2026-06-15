@@ -98,6 +98,14 @@ def test_batch(
         if batch.get("text_prompts") is not None:
             text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
 
+    key_framing_padding_mask = torch.zeros((batch_size, 30), dtype=torch.bool, device=device)
+    kf_template = torch.cat([
+        torch.ones(26, dtype=torch.bool, device=device),
+        torch.zeros(4, dtype=torch.bool, device=device),
+    ])
+    for i in range(batch_size):
+        key_framing_padding_mask[i] = kf_template[torch.randperm(30, device=device)]
+
     for metric_item in metric_items:
         caption_embedding = (
             batch.get("cinematography_prompt", None)
@@ -106,14 +114,15 @@ def test_batch(
         )
         memory_teacher_forcing_ratio = _memory_teacher_forcing_for(metric_item)
 
+        current_padding_mask = sim_padding_mask
         if metric_item in ("key_framing", "key_framing+prompt"):
-            batch["padding_mask"] = torch.rand((batch_size, 30), device=device) > 1.0 / 6.0
+            current_padding_mask = key_framing_padding_mask
 
         ref_output = ref_model.generate_camera_trajectory(
             subject_trajectory=sim_subject_trajectory,
             subject_volume=sim_subject_volume,
             camera_trajectory=sim_camera_trajectory,
-            padding_mask=sim_padding_mask,
+            padding_mask=current_padding_mask,
             memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
             caption_embedding=caption_embedding,
         )

@@ -171,15 +171,22 @@ Point `SIMULATION_DATA_PATH` at the extracted directory.
 
 ### E.T. (Exceptional Trajectories)
 
-Pulled from HuggingFace (~31 GB, requires `git-lfs`):
+Download the pre-processed archive from Google Drive (`et-data.tar.zst`). In
+this version the inner tar files are already extracted, so you only need to
+unpack the archive once — no `untar_and_move.sh` step required:
 ```bash
-git clone https://huggingface.co/datasets/robin-courant/et-data /path/to/data/et-data
-cd /path/to/data/et-data && sh untar_and_move.sh
+gdown 1hX3ecFC1R9dFplDkjn1B_apS_f9llt7E
+zstd -dc et-data.tar.zst | tar -xf -
 ```
-Set `ET_DATA_DIR` to the clone and `DIRECTOR_PROJECT_DIR` to
-`third_parties/DIRECTOR`. If you extract as root (e.g. in a container) and tar
-fails with `Cannot change ownership`, extraction still succeeds — or pass
-`--no-same-owner` to tar.
+This produces an `et-data/` directory. Set `ET_DATA_DIR` to it and
+`DIRECTOR_PROJECT_DIR` to `third_parties/DIRECTOR`. If you extract as root
+(e.g. in a container) and tar fails with `Cannot change ownership`, extraction
+still succeeds — or pass `--no-same-owner` to tar.
+
+> The archive was created with:
+> ```bash
+> tar -I 'zstd -3 -T0' -cf et-data.tar.zst -C /path/to/parent et-data
+> ```
 
 The cinematography instruction annotations for E.T. prompts are a separate
 download:

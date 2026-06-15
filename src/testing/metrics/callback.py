@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -5,6 +6,8 @@ import torch
 
 from testing.metrics.modules.caption_top1 import CaptionTop1
 from utils.importing import ModuleImporter
+
+logger = logging.getLogger(__name__)
 
 _ET_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "third_parties", "DIRECTOR")
@@ -92,6 +95,80 @@ class MetricCallback:
         m = self._get_or_create_metric(run_type)
         if "caption_top1" in m:
             m["caption_top1"].update(encoder_features.to(self._device), params)
+
+    def bootstrap_metrics(self, run_type, n_boot=500, seed=0, max_samples=None):
+        import numpy as np
+        m = self.metrics[run_type]
+
+        def _cat(x):
+            return (torch.cat(x) if isinstance(x, (list, tuple)) else x).detach().float()
+
+        ref = _cat(m["clatr_prdc"].real_features)     # (N, d) reference traj feats
+        gen = _cat(m["clatr_prdc"].fake_features)      # (N, d) generated traj feats
+        tg = _cat(m["clatr_score"].traj_feat)          # generated feats paired with text
+        tx = _cat(m["clatr_score"].text_feats)         # text feats
+
+        device, n, d = ref.device, ref.shape[0], ref.shape[-1]
+        boot_n = n if max_samples is None else min(n, max_samples)
+        if boot_n <= d:
+            logger.warning(
+                "FCD covariance is %d-d but only %d samples are resampled for "
+                "'%s'; its +/- will be unstable (needs well over %d samples for "
+                "a non-singular covariance).",
+                d, boot_n, run_type, d,
+            )
+        rng = np.random.default_rng(seed)
+        keys = ("fcd", "precision", "recall", "density", "coverage",
+                "clatr_score", "caption_overall_top1")
+        acc = {k: [] for k in keys}
+        has_text = tg.shape[0] > 0 and tx.shape[0] > 0
+
+        # Pre-compute per-sample caption-top1 outcomes once (the cosine-similarity
+        # matching is expensive); the loop below only resamples the cached booleans.
+        caption = m.get("caption_top1")
+        cs_correct = cs_total = cs_n = None
+        if caption is not None and self.clip_embeddings is not None:
+            outcomes = caption.per_sample_outcomes()
+            cs_correct = np.array(
+                [sum(1 for _, ok in s if ok) for s in outcomes], dtype=np.float64
+            )
+            cs_total = np.array([len(s) for s in outcomes], dtype=np.float64)
+            cs_n = cs_correct.shape[0]
+
+        for _ in range(n_boot):
+            idx = torch.as_tensor(rng.integers(0, n, boot_n), device=device, dtype=torch.long)
+
+            fcd = FrechetCLaTrDistance(num_features=d).to(device)
+            fcd.update(ref[idx], gen[idx])
+            acc["fcd"].append(float(fcd.compute()))
+
+            prdc = ManifoldMetrics(distance="euclidean").to(device)
+            prdc.update(ref[idx], gen[idx])
+            p, r, dn, c = prdc.compute()
+            acc["precision"].append(float(p)); acc["recall"].append(float(r))
+            acc["density"].append(float(dn)); acc["coverage"].append(float(c))
+
+            if has_text:
+                tn = tg.shape[0] if max_samples is None else min(tg.shape[0], max_samples)
+                tidx = torch.as_tensor(
+                    rng.integers(0, tg.shape[0], tn),
+                    device=device, dtype=torch.long,
+                )
+                cs = CLaTrScore().to(device)
+                cs.update(tg[tidx], tx[tidx])
+                acc["clatr_score"].append(float(cs.compute()))
+
+            if cs_n:
+                cidx = rng.integers(0, cs_n, cs_n)
+                tot = cs_total[cidx].sum()
+                acc["caption_overall_top1"].append(
+                    float(cs_correct[cidx].sum() / tot) if tot else 0.0
+                )
+
+        return {
+            f"{run_type}/{k}": (float(np.mean(v)), float(np.std(v, ddof=1)))
+            for k, v in acc.items() if v
+        }
 
     def compute_clatr_metrics(self, run_type: str) -> Dict[str, float]:
         if run_type not in self.active_metrics:
