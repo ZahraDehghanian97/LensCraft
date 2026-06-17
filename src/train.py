@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 import lightning as L
 import torch
 from data.datamodule import CameraTrajectoryDataModule
+from data.dataset_type import resolve_dataset_type
 from data.multi_dataset_module import MultiDatasetModule
 from testing.metrics.callback import MetricCallback
 from testing.process import test_batch
@@ -101,10 +102,7 @@ def main(cfg: DictConfig):
     if use_multi_dataset:
         dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
     else:
-        target = cfg.data.dataset.config["_target_"]
-        dataset_type = (
-            "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
-        )
+        dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
 
     prdc_sum = 0
     clatr_sum = 0

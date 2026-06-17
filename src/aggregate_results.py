@@ -13,7 +13,7 @@ METRIC_SUFFIX = {
     "R": "recall",
     "D": "density",
     "C": "coverage",
-    "CS": "caption_overall_top1",
+    "CS": "clip_score",
     "Clatr": "clatr_score",
 }
 METRIC_COLS = ["FID", "P", "R", "D", "C", "CS", "Clatr"]

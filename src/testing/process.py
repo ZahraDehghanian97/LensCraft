@@ -3,32 +3,13 @@ from typing import Any, Dict, List, Optional
 import torch
 
 from data.convertor.convertor import convert_to_target
-
-
-def to_cuda(
-    batch: Dict[str, torch.Tensor], device: torch.device
-) -> Dict[str, torch.Tensor]:
-    prepared_data: Dict[str, torch.Tensor] = {}
-    for key, value in batch.items():
-        if value is not None and torch.is_tensor(value):
-            prepared_data[key] = value.to(device)
-        else:
-            prepared_data[key] = value
-    return prepared_data
-
-
-def _memory_teacher_forcing_for(metric_item: str) -> float:
-    if metric_item == "reconstruction":
-        return 0.0
-    if metric_item == "key_framing":
-        return 0.0
-    if metric_item == "prompt_generation":
-        return 1.0
-    if metric_item == "key_framing+prompt":
-        return 0.5
-    if metric_item == "hybrid_generation":
-        return 0.5
-    raise ValueError(f"Unknown metric item: {metric_item}")
+from data.sim_format import (
+    SIM_SEQ_LENGTH,
+    MEMORY_TEACHER_FORCING_BY_MODE,
+    build_keyframing_mask,
+    to_simulation_format,
+)
+from utils.device import move_batch_to_device
 
 
 def test_batch(
@@ -44,31 +25,17 @@ def test_batch(
     pre_generated_trajectory: Optional[torch.Tensor] = None,
     clatr_extractor=None,
 ) -> Optional[torch.Tensor]:
-    batch = to_cuda(batch, device)
+    batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
 
     generated_trajectory_data: Optional[torch.Tensor] = None
 
-    if dataset_type != "simulation":
-        (
-            sim_camera_trajectory,
-            sim_subject_trajectory,
-            sim_subject_volume,
-            sim_padding_mask,
-        ) = convert_to_target(
-            dataset_type,
-            "simulation",
-            batch["camera_trajectory"],
-            batch["subject_trajectory"],
-            batch["subject_volume"],
-            batch["padding_mask"],
-            30,
-        )
-    else:
-        sim_camera_trajectory = batch["camera_trajectory"]
-        sim_subject_trajectory = batch["subject_trajectory"]
-        sim_subject_volume = batch["subject_volume"]
-        sim_padding_mask = batch["padding_mask"]
+    (
+        sim_camera_trajectory,
+        sim_subject_trajectory,
+        sim_subject_volume,
+        sim_padding_mask,
+    ) = to_simulation_format(batch, dataset_type)
 
     (
         camera_trajectory,
@@ -83,7 +50,7 @@ def test_batch(
         batch["subject_volume"],
         batch["padding_mask"],
         seq_length,
-        torch.full((batch_size,), 30, device=device), # fix me for other datasets
+        torch.full((batch_size,), SIM_SEQ_LENGTH, device=device), # fix me for other datasets
     )
 
     ref_clatr: Optional[torch.Tensor] = None
@@ -98,13 +65,7 @@ def test_batch(
         if batch.get("text_prompts") is not None:
             text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
 
-    key_framing_padding_mask = torch.zeros((batch_size, 30), dtype=torch.bool, device=device)
-    kf_template = torch.cat([
-        torch.ones(26, dtype=torch.bool, device=device),
-        torch.zeros(4, dtype=torch.bool, device=device),
-    ])
-    for i in range(batch_size):
-        key_framing_padding_mask[i] = kf_template[torch.randperm(30, device=device)]
+    key_framing_padding_mask = build_keyframing_mask(batch_size, device)
 
     for metric_item in metric_items:
         caption_embedding = (
@@ -112,7 +73,7 @@ def test_batch(
             if dataset_type in ("simulation", "et")
             else None
         )
-        memory_teacher_forcing_ratio = _memory_teacher_forcing_for(metric_item)
+        memory_teacher_forcing_ratio = MEMORY_TEACHER_FORCING_BY_MODE[metric_item]
 
         current_padding_mask = sim_padding_mask
         if metric_item in ("key_framing", "key_framing+prompt"):
@@ -151,7 +112,7 @@ def test_batch(
                 subject_trajectory,
                 batch["subject_volume"],
                 padding_mask,
-                30,
+                SIM_SEQ_LENGTH,
             )
         elif model_type == "lens_craft":
             sim_generated_trajectory = ref_output["reconstructed"]
@@ -185,6 +146,24 @@ def test_batch(
                 metric_item,
                 encoder_features,
                 batch["cinematography_prompt_parameters"],
+            )
+
+        if batch.get("cinematography_prompt") is not None:
+            n_high = ref_model.memory_tokens_count
+            gen_embedding = ref_model.embed_trajectory(
+                sim_generated_trajectory,
+                sim_subject_trajectory,
+                sim_subject_volume,
+            )
+            prompt_embedding = batch["cinematography_prompt"][:n_high]
+            prompt_none_mask = batch.get("prompt_none_mask")
+            if prompt_none_mask is not None:
+                prompt_none_mask = prompt_none_mask[:, :n_high]
+            metric_callback.update_clip_score(
+                metric_item,
+                gen_embedding,
+                prompt_embedding,
+                prompt_none_mask,
             )
 
     return generated_trajectory_data

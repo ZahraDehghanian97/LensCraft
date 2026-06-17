@@ -3,6 +3,7 @@ from torch.nn.functional import cosine_similarity
 import random
 import numpy as np
 from data.simulation.utils import CLIP_PARAMETERS_DICT
+from utils.naming import clip_embedding_name
 
 
 class ContrastiveLoss:
@@ -10,17 +11,7 @@ class ContrastiveLoss:
         self.clip_embeddings = clip_embeddings
         self.device = device
         self.embedding_means = embedding_means
-        self.get_embedding_name = get_embedding_name_func
-        
-        if self.get_embedding_name is None:
-            self.get_embedding_name = self._default_get_embedding_name
-    
-    @staticmethod
-    def _default_get_embedding_name(name: str) -> str:
-        embedding_name = str(name).split(".")[-1].lower()
-        embedding_name = embedding_name.split("_")
-        embedding_name = embedding_name[0] + "".join([item.capitalize() for item in embedding_name[1:]])
-        return embedding_name
+        self.get_embedding_name = get_embedding_name_func or clip_embedding_name
     
     def _modify_sample(self,
                       clip_embedding_parameters: list[torch.tensor],

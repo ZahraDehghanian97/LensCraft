@@ -1,7 +1,7 @@
 import logging
 import json
 from pathlib import Path
-from typing import Literal, List, Tuple
+from typing import List, Tuple
 import math
 
 import hydra
@@ -11,12 +11,11 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 
 from data.datamodule import CameraTrajectoryDataModule
+from data.dataset_type import resolve_dataset_type
 from annotator.constants import system_prompt, CINEMATOGRAPHY_JSON_SCHEMA
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-
-DatasetType = Literal["ccdm", "et", "simulation"]
 
 
 def create_openai_batch_file(prompt_id_pairs: List[Tuple[str, str]], output_file: str) -> None:
@@ -88,11 +87,8 @@ def main(cfg: DictConfig) -> None:
 
     prompt_id_pairs: List[Tuple[str, str]] = []
     
-    target = cfg.data.dataset.config["_target_"]
-    dataset_type = (
-        "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
-    )
-    
+    dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
+
     for batch in tqdm(test_dl, desc="Collecting text prompts and IDs"):
         ids = [f"{dataset_type}-{id}" for id in
                (batch["item_ids"] if dataset_type == "et" else range(len(batch["text_prompts"])))]

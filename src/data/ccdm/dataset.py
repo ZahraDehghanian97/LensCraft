@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
 from data.convertor.convertor import convert_to_target
+from data.collate_utils import stack_optional
 
 class CCDMDataset(Dataset):
     _normalization_parameters = None
@@ -40,9 +41,14 @@ class CCDMDataset(Dataset):
 
 
     @staticmethod
-    def get_normalization_parameters(data_path: str | Path=os.environ.get('CCDM_DATA_DIR', '/media/disk1/arash/abolghasemi/ccdm')) -> dict[str, torch.Tensor]:
+    def get_normalization_parameters(data_path: str | Path = None) -> dict[str, torch.Tensor]:
         if CCDMDataset._normalization_parameters is not None:
             return CCDMDataset._normalization_parameters
+
+        if data_path is None:
+            data_path = os.environ.get('CCDM_DATA_DIR')
+            if data_path is None:
+                raise ValueError("CCDM_DATA_DIR environment variable must be set")
 
         data_path = Path(data_path)
         stats_file = data_path / "Mean_Std.npy"
@@ -131,15 +137,8 @@ class CCDMDataset(Dataset):
         }
 
 def collate_fn(batch):
-    if len(batch) > 0 and batch[0]['subject_volume'] is None:
-        subject_volume = None
-    else:
-        subject_volume = torch.stack([item["subject_volume"] for item in batch])
-
-    if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
-        subject_trajectory = None
-    else:
-        subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
+    subject_volume = stack_optional(batch, "subject_volume")
+    subject_trajectory = stack_optional(batch, "subject_trajectory")
 
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),

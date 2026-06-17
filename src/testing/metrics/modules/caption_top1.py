@@ -12,12 +12,6 @@ class CaptionTop1(Metric):
         self.add_state("encoder_features", default=[], dist_reduce_fx="cat")
         self.add_state("param_data", default=[], dist_reduce_fx=None)
 
-    def get_embedding_name(self, name: str) -> str:
-        embedding_name = str(name).split(".")[-1].lower()
-        embedding_name = embedding_name.split("_")
-        embedding_name = embedding_name[0] + "".join([item.capitalize() for item in embedding_name[1:]])
-        return embedding_name
-
     def update(self, encoder_features, batch_params):
         self.encoder_features.append(encoder_features)
         self.param_data.append(batch_params)

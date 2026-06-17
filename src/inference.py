@@ -1,87 +1,118 @@
 import logging
 import os
 import json
-import numpy as np
-from typing import Literal, Any
+from typing import Any
 
 import hydra
+import numpy as np
 import torch
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 
 from data.datamodule import CameraTrajectoryDataModule
+from data.dataset_type import resolve_dataset_type
 from utils.load_lens_craft import load_lens_craft_model
 from inferencing.process import inference_batch
-from models.ccdm_adapter import CCDMAdapter
-from models.et_adapter import ETAdapter
-from models.gendop_adapter import GenDoPAdapter
+from models.baselines.ccdm_adapter import CCDMAdapter
+from models.baselines.et_adapter import ETAdapter
+from models.baselines.gendop_adapter import GenDoPAdapter
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-DatasetType = Literal["ccdm", "et", "simulation"]
-
-class TensorEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle tensors and other non-serializable types."""
-    def default(self, obj):
-        if isinstance(obj, torch.Tensor):
-            return obj.cpu().numpy().tolist()
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64,
-                              np.uint8, np.uint16, np.uint32, np.uint64)):
-            return int(obj)
-        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
-            return float(obj)
-        elif isinstance(obj, (np.bool_)):
-            return bool(obj)
-        try:
-            return super().default(obj)
-        except:
-            return str(obj)
 
 def tensor_to_serializable(obj: Any) -> Any:
-    """Recursively convert tensors and other objects to JSON-serializable types."""
+    """Recursively convert tensors and numpy types into JSON-serializable values."""
     if isinstance(obj, torch.Tensor):
         return obj.cpu().numpy().tolist()
-    elif isinstance(obj, np.ndarray):
+    if isinstance(obj, np.ndarray):
         return obj.tolist()
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {k: tensor_to_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
+    if isinstance(obj, (list, tuple)):
         return [tensor_to_serializable(i) for i in obj]
-    elif isinstance(obj, tuple):
-        return [tensor_to_serializable(i) for i in obj]
-    elif hasattr(obj, '__dict__'):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if hasattr(obj, "__dict__"):
         try:
             return tensor_to_serializable(obj.__dict__)
-        except:
+        except Exception:
             return str(obj)
-    elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64,
-                         np.uint8, np.uint16, np.uint32, np.uint64)):
-        return int(obj)
-    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
-        return float(obj)
-    elif isinstance(obj, (np.bool_)):
-        return bool(obj)
-    else:
-        return obj
+    return obj
+
+
+def _resolve_device(cfg: DictConfig) -> torch.device:
+    if cfg.get("device"):
+        return torch.device(cfg.device)
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _model_type_from_cfg(cfg: DictConfig) -> str:
+    data_format_type = cfg.training.model.data_format.get("type", "simulation")
+    return "lens_craft" if data_format_type == "simulation" else data_format_type
+
+
+def _load_model(cfg: DictConfig, model_type: str, device: torch.device):
+    if model_type == "lens_craft":
+        return load_lens_craft_model(
+            model_module=cfg.training.model.module,
+            model_inference=cfg.training.model.inference,
+            device=device,
+        )
+    if model_type == "ccdm":
+        return CCDMAdapter(cfg.training.model.inference, device)
+    if model_type == "et":
+        return ETAdapter(cfg.training.model.inference, device)
+    if model_type == "gendop":
+        return GenDoPAdapter(cfg.training.model.inference, device)
+    raise ValueError(f"Unsupported model type: {model_type}")
+
+
+def _build_inference_result(
+    first_batch,
+    trajectories,
+    sim_camera_trajectory,
+    sim_subject_trajectory,
+    sim_subject_volume,
+    sim_padding_mask,
+    key_framing_padding_mask,
+    dataset_type,
+    model_type,
+):
+    trajectories["GT"] = sim_camera_trajectory
+    return {
+        "trajectories": trajectories,
+        "batch_data": {
+            "subject_trajectory": sim_subject_trajectory,
+            "subject_volume": sim_subject_volume,
+            "padding_mask": sim_padding_mask,
+            "text_prompts": first_batch.get("text_prompts"),
+            "raw_prompt": first_batch.get("raw_prompt"),
+            "raw_instruction": first_batch.get("raw_instruction"),
+            "random_prompt_index": first_batch.get("random_prompt_index"),
+            "key_framing_padding_mask": key_framing_padding_mask,
+        },
+        "dataset_type": dataset_type,
+        "model_type": model_type,
+    }
+
 
 @hydra.main(version_base=None, config_path="../config", config_name="inference")
 def main(cfg: DictConfig) -> None:
-    if cfg.get("device"):
-        device = torch.device(cfg.device)
-    else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _resolve_device(cfg)
 
     GlobalHydra.instance().clear()
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
 
-    data_format_type = cfg.training.model.data_format.get("type", "simulation")
-    model_type = "lens_craft" if data_format_type == "simulation" else data_format_type
+    model_type = _model_type_from_cfg(cfg)
 
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -91,64 +122,59 @@ def main(cfg: DictConfig) -> None:
         test_size=cfg.data.test_size,
     )
     data_module.setup()
+    dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
 
-    target = cfg.data.dataset.config["_target_"]
-    dataset_type = "ccdm" if "CCDMDataset" in target else "et" if "ETDataset" in target else "simulation"
-
-    model = None
-
-    if model_type == "lens_craft":
-        model = load_lens_craft_model(model_module=cfg.training.model.module, model_inference=cfg.training.model.inference, device=device)
-    else:
-        if model_type == "ccdm":
-            model = CCDMAdapter(cfg.training.model.inference, device)
-        elif model_type == "et":
-            model = ETAdapter(cfg.training.model.inference, device)
-        elif model_type == "gendop":
-            model = GenDoPAdapter(cfg.training.model.inference, device)
-
+    model = _load_model(cfg, model_type, device)
     test_dataloader = data_module.test_dataloader()
 
+    try:
+        first_batch = next(iter(test_dataloader))
+    except StopIteration:
+        logger.error("No batches available in the test dataloader")
+        print("No batches available in the test dataloader")
+        return
+
+    batch_size = len(first_batch["text_prompts"])
+    first_batch["random_prompt_index"] = (
+        np.random.randint(0, batch_size, size=batch_size).tolist()
+    )
+
     with torch.no_grad():
-        try:
-            first_batch = next(iter(test_dataloader))
-            batch_size = len(first_batch['text_prompts'])
+        (
+            trajectories,
+            sim_camera_trajectory,
+            sim_subject_trajectory,
+            sim_subject_volume,
+            sim_padding_mask,
+            key_framing_padding_mask,
+        ) = inference_batch(
+            model,
+            first_batch,
+            device,
+            dataset_type,
+            model_type,
+            seq_length=cfg.training.model.data_format.seq_length,
+        )
 
-            first_batch['random_prompt_index'] = np.random.randint(0, batch_size, size=batch_size).tolist()
+    result = _build_inference_result(
+        first_batch,
+        trajectories,
+        sim_camera_trajectory,
+        sim_subject_trajectory,
+        sim_subject_volume,
+        sim_padding_mask,
+        key_framing_padding_mask,
+        dataset_type,
+        model_type,
+    )
 
-            trajectories, sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume, sim_padding_mask, key_framing_padding_mask =\
-                inference_batch(model, first_batch, device, dataset_type, model_type, seq_length=cfg.training.model.data_format.seq_length)
+    output_file = os.path.join(os.getcwd(), "inference_result.json")
+    with open(output_file, "w") as f:
+        json.dump(tensor_to_serializable(result), f, indent=2)
 
-            trajectories['GT'] = sim_camera_trajectory
+    logger.info("Inference result saved to %s", output_file)
+    print(f"Inference result saved to {output_file}")
 
-            result = {
-                "trajectories": trajectories,
-                "batch_data": {
-                    "subject_trajectory": sim_subject_trajectory,
-                    "subject_volume": sim_subject_volume,
-                    "padding_mask": sim_padding_mask,
-                    "text_prompts": first_batch.get("text_prompts"),
-                    "raw_prompt": first_batch.get("raw_prompt"),
-                    "raw_instruction": first_batch.get("raw_instruction"),
-                    "random_prompt_index": first_batch.get("random_prompt_index"),
-                    "key_framing_padding_mask": key_framing_padding_mask
-                },
-                "dataset_type": dataset_type,
-                "model_type": model_type,
-            }
-
-            json_serializable_result = tensor_to_serializable(result)
-
-            output_file = os.path.join(os.getcwd(), "inference_result.json")
-            with open(output_file, 'w') as f:
-                json.dump(json_serializable_result, f, cls=TensorEncoder, indent=2)
-
-            logger.info(f"Inference result saved to {output_file}")
-            print(f"Inference result saved to {output_file}")
-
-        except StopIteration:
-            logger.error("No batches available in the test dataloader")
-            print("No batches available in the test dataloader")
 
 if __name__ == "__main__":
     main()

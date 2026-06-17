@@ -18,6 +18,7 @@ from .loader import (
 
 from .utils import fix_prompts_and_instructions, load_clip_means
 from .caption import extract_text_prompt
+from data.collate_utils import stack_optional
 
 
 class SimulationDataset(Dataset):
@@ -65,17 +66,15 @@ class SimulationDataset(Dataset):
             return SimulationDataset._normalization_parameters
 
         if data_path is None:
-            data_path = os.environ.get(
-                'SIMULATION_DATA_PATH',
-                '/media/disk1/arash/abolghasemi/simulation-data-4-mini',
-            )
+            data_path = os.environ.get('SIMULATION_DATA_PATH')
+            if data_path is None:
+                raise ValueError("SIMULATION_DATA_PATH environment variable must be set")
 
         SimulationDataset._normalization_parameters = load_or_calculate_normalization_parameters(data_path)
         return SimulationDataset._normalization_parameters
 
     def __len__(self) -> int:
-        # return len(self.simulation_files)
-        return min(100000, len(self.simulation_files))
+        return len(self.simulation_files)
 
     @staticmethod
     def _normalize_tensor(tensor: torch.Tensor, param_key: str, position_indices: Optional[List[int]] = None) -> torch.Tensor:
@@ -163,15 +162,8 @@ class SimulationDataset(Dataset):
 
 
 def collate_fn(batch):
-    if len(batch) > 0 and batch[0]['subject_volume'] is None:
-        subject_volume = None
-    else:
-        subject_volume = torch.stack([item["subject_volume"] for item in batch])
-
-    if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
-        subject_trajectory = None
-    else:
-        subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
+    subject_volume = stack_optional(batch, "subject_volume")
+    subject_trajectory = stack_optional(batch, "subject_trajectory")
 
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),

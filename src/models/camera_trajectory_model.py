@@ -25,7 +25,7 @@ class LensCraft(nn.Module):
         denormalize_memory: bool = False
     ):
         super(LensCraft, self).__init__()
-        
+
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
         self.memory_tokens_count = cinematography_struct_size
 
@@ -41,7 +41,7 @@ class LensCraft(nn.Module):
             dropout_rate,
             self.num_query_tokens
         )
-        
+
         self.decoder = Decoder(
             input_dim,
             latent_dim,
@@ -51,7 +51,7 @@ class LensCraft(nn.Module):
             dropout_rate,
             30
         )
-        
+
         self.embedding_merger = nn.Sequential(
             nn.Linear(self.num_query_tokens * latent_dim, latent_dim),
             nn.ReLU(),
@@ -85,50 +85,46 @@ class LensCraft(nn.Module):
     ) -> torch.Tensor:
         if camera_embedding is None:
             if caption_embedding is None:
-                raise ValueError("Both memory and caption_embedding cannot be None")
-            merged_memory = caption_embedding
+                raise ValueError("camera_embedding and caption_embedding cannot both be None")
+            memory = caption_embedding
             if self.denormalize_memory:
-                for i in range(merged_memory.shape[0]):
-                    feature = self.cinematography_features[i]
-                    mean, std = self.get_mean_and_std(feature)
-                    merged_memory[i, :, :] = merged_memory[i, :, :] * std + mean
-        else:
-            if self.use_merged_memory:
-                _, batch_size, _ = camera_embedding.shape
-                merged_memory = self.embedding_merger(
-                    camera_embedding.transpose(0, 1).reshape(batch_size, -1)
-                ).unsqueeze(0)
-            else:
-                merged_memory = camera_embedding[:self.memory_tokens_count]
-            
-            if teacher_forcing_ratio > 0 and caption_embedding is not None:
-                if self.denormalize_memory:
-                    for i in range(merged_memory.shape[0]):
-                        feature = self.cinematography_features[i]
-                        mean, std = self.get_mean_and_std(feature)
-                        merged_memory[i, :, :] = (
-                            (1 - teacher_forcing_ratio) * (merged_memory[i, :, :] * std + mean) +
-                            teacher_forcing_ratio * (caption_embedding[i, :, :] * std + mean)
-                        )
-                else:
-                    # merged_memory = (
-                    #     (1 - teacher_forcing_ratio) * merged_memory +
-                    #     teacher_forcing_ratio * caption_embedding
-                    # )
-                    merge_memory_mask = torch.rand_like(merged_memory) > teacher_forcing_ratio
-                    merged_memory = merge_memory_mask * merged_memory + (~merge_memory_mask) * caption_embedding
+                memory = self._denormalize_features(memory)
+            return self._apply_memory_mask(memory, mask_memory_prob)
 
-        
-        if mask_memory_prob > 0.0:
-            memory_mask = (
-                torch.rand(
-                    merged_memory.shape[0],
-                    device=merged_memory.device
-                ) > mask_memory_prob
-            ).float().unsqueeze(1).unsqueeze(2)
-            merged_memory = merged_memory * memory_mask
-            
-        return merged_memory
+        if self.use_merged_memory:
+            batch_size = camera_embedding.shape[1]
+            flat = camera_embedding.transpose(0, 1).reshape(batch_size, -1)
+            memory = self.embedding_merger(flat).unsqueeze(0)
+        else:
+            memory = camera_embedding[:self.memory_tokens_count]
+
+        if teacher_forcing_ratio > 0 and caption_embedding is not None:
+            memory = self._blend_caption(memory, caption_embedding, teacher_forcing_ratio)
+
+        return self._apply_memory_mask(memory, mask_memory_prob)
+
+    def _denormalize_features(self, memory):
+        for i in range(memory.shape[0]):
+            mean, std = self.get_mean_and_std(self.cinematography_features[i])
+            memory[i] = memory[i] * std + mean
+        return memory
+
+    def _blend_caption(self, memory, caption_embedding, ratio):
+        if self.denormalize_memory:
+            for i in range(memory.shape[0]):
+                mean, std = self.get_mean_and_std(self.cinematography_features[i])
+                memory[i] = ((1 - ratio) * (memory[i] * std + mean)
+                             + ratio * (caption_embedding[i] * std + mean))
+            return memory
+
+        merge_mask = torch.rand_like(memory) > ratio
+        return merge_mask * memory + (~merge_mask) * caption_embedding
+
+    def _apply_memory_mask(self, memory, mask_memory_prob):
+        if mask_memory_prob <= 0.0:
+            return memory
+        keep = torch.rand(memory.shape[0], device=memory.device) > mask_memory_prob
+        return memory * keep.float().unsqueeze(1).unsqueeze(2)
 
     def forward(
         self,
@@ -149,12 +145,12 @@ class LensCraft(nn.Module):
         )
         subject_volume_embedding = self.subject_volume_projection(subject_volume)
         subject_embedding = torch.cat([subject_trajectory_embedding, subject_volume_embedding], 1)
-        
+
         camera_embedding = self.encoder(
             src,
             subject_embedding,
             src_key_mask
-        )     
+        )
 
         memory = self.prepare_embedding_memory_for_decoder(
             camera_embedding=camera_embedding.clone(),
@@ -177,12 +173,12 @@ class LensCraft(nn.Module):
             'embeddings': camera_embedding,
             'reconstructed': reconstructed,
         }
-        
+
         if self.use_merged_memory:
             output['cls_embedding'] = memory[0]
 
         return output
-    
+
     def generate_camera_trajectory(
         self,
         caption_embedding: Optional[torch.Tensor] = None,
@@ -199,27 +195,27 @@ class LensCraft(nn.Module):
             raise ValueError("subject_trajectory and subject_volume cannot be None")
 
         with torch.no_grad():
-            device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
-            
+            device = next(self.parameters()).device
+
             subject_trajectory = subject_trajectory.to(device)
             subject_volume = subject_volume.to(device)
-            
+
             if caption_embedding is not None:
                 caption_embedding = caption_embedding.to(device)
             elif camera_trajectory is None:
                 raise ValueError(
                     "Both camera_trajectory and caption_embedding cannot be None"
                 )
-            
+
             if padding_mask is not None:
                 padding_mask = padding_mask.to(device)
-            
+
             # If camera trajectory is provided, use the full model
             if camera_trajectory is not None:
                 camera_trajectory = camera_trajectory.to(device)
                 if src_key_mask is not None:
                     src_key_mask = src_key_mask.to(device)
-                
+
                 return self.forward(
                     src=camera_trajectory,
                     subject_trajectory=subject_trajectory,
@@ -231,7 +227,7 @@ class LensCraft(nn.Module):
                     tgt_key_padding_mask=padding_mask,
                     decode_mode=decode_mode
                 )
-            
+
             # If there is no camera trajectory, use only the decoder
             else:
                 subject_trajectory_embedding = self.subject_trajectory_projection(
@@ -243,12 +239,12 @@ class LensCraft(nn.Module):
                 subject_embedding = torch.cat(
                     [subject_trajectory_embedding, subject_volume_embedding], 1
                 )
-                
+
                 memory = self.prepare_embedding_memory_for_decoder(
                     caption_embedding=caption_embedding,
                     teacher_forcing_ratio=0.0
                 )
-                
+
                 reconstructed = self.decoder(
                     memory=memory,
                     subject_embedding=subject_embedding,
@@ -256,26 +252,44 @@ class LensCraft(nn.Module):
                     tgt_key_padding_mask=padding_mask,
                     teacher_forcing_ratio=0.0
                 )
-                
+
                 return {'reconstructed': reconstructed}
-    
-    
+
+
+    def embed_trajectory(
+        self,
+        camera_trajectory: torch.Tensor,
+        subject_trajectory: torch.Tensor,
+        subject_volume: torch.Tensor,
+        src_key_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            device = next(self.parameters()).device
+            subject_embedding = torch.cat([
+                self.subject_trajectory_projection(subject_trajectory.to(device)),
+                self.subject_volume_projection(subject_volume.to(device)),
+            ], 1)
+            camera_embedding = self.encoder(
+                camera_trajectory.to(device), subject_embedding, src_key_mask
+            )
+            return camera_embedding[:self.memory_tokens_count]
+
     def load_means_and_stds(self):
         with open("embedding_means.pkl", 'rb') as f:
             embedding_means_raw = pickle.load(f)
         with open("embedding_stds.pkl", "rb") as f:
             embedding_stds_raw = pickle.load(f)
-            
+
         embedding_means = {}
         embedding_stds = {}
         for feature, value in embedding_means_raw.items():
             embedding_means[feature] = torch.tensor(value, device=self.device)
-        
+
         for feature, value in embedding_stds_raw.items():
             embedding_stds[feature] = torch.tensor(value, device=self.device)
-            
+
         return embedding_means, embedding_stds
-    
-    
+
+
     def get_mean_and_std(self, feature):
         return self.embedding_means[feature], self.embedding_stds[feature]

@@ -33,16 +33,14 @@ graph TD
         K[Merged Latent<br>latent_dim]
     end
 
-    subgraph AutoregressiveDecoding
+    subgraph SingleStepDecoding
         subgraph Decoder["Decoder (TransformerDecoder)"]
             L[Embedding Layer<br>Linear: input_dim → latent_dim]
             M[Positional Encoding]
             N[Transformer Decoder Layers<br>num_decoder_layers, nhead]
             O[Output Projection<br>Linear: latent_dim → input_dim]
         end
-        P[Initial Zero Input]
-        Q[Teacher Forcing]
-        R1[Output t]
+        P[Zero Input<br>full sequence]
         M2[Decoder Memory<br>latent_dim, seq_length]
     end
 
@@ -70,10 +68,7 @@ graph TD
     M2 --> N
     P --> L
     L --> M --> N
-    N --> O --> R1
-    R1 --> L
-    Q -.-> L
-    R1 --> R
+    N --> O --> R
     R --> S1
     I1 --> S2
     I2 --> S3
@@ -93,7 +88,7 @@ graph TD
     style O fill:#9b59b6
     style M1 fill:#f39c12
     style M2 fill:#f39c12
-    style R1 fill:#1abc9c
+    style R fill:#1abc9c
     style S1 fill:#e74c3c
     style S2 fill:#e74c3c
     style S3 fill:#e74c3c
@@ -285,7 +280,7 @@ ET_CIN_LANG_PATH=/path/to/data/et_cinematography_instructions.json
 CACHE_DIR=/path/to/LensCraft/cache
 HF_HOME=/path/to/hf_cache
 
-# Only needed for the cinematography annotation pipeline (src/data-annotator.py)
+# Only needed for the cinematography annotation pipeline (src/annotate_data.py)
 OPENAI_API_KEY=
 ```
 
@@ -321,7 +316,9 @@ Long training jobs are best run inside `tmux`/`screen` so they survive disconnec
 
 The training process includes:
 1. Data augmentation (masking and adding noise to input trajectories)
-2. Teacher forcing for the autoregressive decoder
+2. Single-pass (single-step) decoding: the decoder reconstructs the full
+   trajectory in one forward pass from the encoder memory (the default
+   `decode_mode: single_step`)
 3. Gradual increase in task difficulty (noise reduction and mask ratio increase)
 4. Multi-task learning (trajectory reconstruction and CLIP embedding prediction)
 

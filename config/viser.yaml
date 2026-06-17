@@ -1,0 +1,33 @@
+defaults:
+  - _self_
+  - clip: default
+  - data: default
+  - training: default
+  - hydra: test
+  - ref_model: default
+
+device: cuda
+
+viser:
+  host: 0.0.0.0
+  port: 8080
+
+mode: dataset
+
+n_samples: 6
+
+convert_target: et
+
+relative_to_subject: false
+
+cam_convention: opencv
+
+frustum_scale: 0.0
+
+frustum_stride: 2
+
+fov_deg: 60.0
+aspect: 1.7777
+show_grid: true
+
+up_axis: y

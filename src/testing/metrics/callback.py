@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import torch
 
 from testing.metrics.modules.caption_top1 import CaptionTop1
+from testing.metrics.modules.clip_score import ClipScore
 from utils.importing import ModuleImporter
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class MetricCallback:
                 ).to(self._device),
                 "clatr_prdc": ManifoldMetrics(distance="euclidean").to(self._device),
                 "clatr_score": CLaTrScore().to(self._device),
+                "clip_score": ClipScore().to(self._device),
             }
             if self.clip_embeddings is not None:
                 self.metrics[run_type]["caption_top1"] = CaptionTop1(
@@ -96,6 +98,20 @@ class MetricCallback:
         if "caption_top1" in m:
             m["caption_top1"].update(encoder_features.to(self._device), params)
 
+    def update_clip_score(
+        self,
+        run_type: str,
+        gen_embedding: torch.Tensor,
+        prompt_embedding: torch.Tensor,
+        prompt_none_mask: Optional[torch.Tensor] = None,
+    ) -> None:
+        m = self._get_or_create_metric(run_type)
+        m["clip_score"].update(
+            gen_embedding.to(self._device),
+            prompt_embedding.to(self._device),
+            prompt_none_mask,
+        )
+
     def bootstrap_metrics(self, run_type, n_boot=500, seed=0, max_samples=None):
         import numpy as np
         m = self.metrics[run_type]
@@ -119,12 +135,10 @@ class MetricCallback:
             )
         rng = np.random.default_rng(seed)
         keys = ("fcd", "precision", "recall", "density", "coverage",
-                "clatr_score", "caption_overall_top1")
+                "clatr_score", "caption_overall_top1", "clip_score")
         acc = {k: [] for k in keys}
         has_text = tg.shape[0] > 0 and tx.shape[0] > 0
 
-        # Pre-compute per-sample caption-top1 outcomes once (the cosine-similarity
-        # matching is expensive); the loop below only resamples the cached booleans.
         caption = m.get("caption_top1")
         cs_correct = cs_total = cs_n = None
         if caption is not None and self.clip_embeddings is not None:
@@ -134,6 +148,12 @@ class MetricCallback:
             )
             cs_total = np.array([len(s) for s in outcomes], dtype=np.float64)
             cs_n = cs_correct.shape[0]
+
+        clip_metric = m.get("clip_score")
+        clip_scores = clip_n = None
+        if clip_metric is not None and clip_metric.per_sample:
+            clip_scores = clip_metric.per_sample_scores().detach().cpu().numpy()
+            clip_n = clip_scores.shape[0]
 
         for _ in range(n_boot):
             idx = torch.as_tensor(rng.integers(0, n, boot_n), device=device, dtype=torch.long)
@@ -164,6 +184,10 @@ class MetricCallback:
                 acc["caption_overall_top1"].append(
                     float(cs_correct[cidx].sum() / tot) if tot else 0.0
                 )
+
+            if clip_n:
+                clidx = rng.integers(0, clip_n, clip_n)
+                acc["clip_score"].append(float(clip_scores[clidx].mean()))
 
         return {
             f"{run_type}/{k}": (float(np.mean(v)), float(np.std(v, ddof=1)))
@@ -197,6 +221,12 @@ class MetricCallback:
             caption_top1_metrics = m["caption_top1"].compute()
             m["caption_top1"].reset()
 
+        clip_score: Optional[float] = None
+        if "clip_score" in m:
+            if m["clip_score"].per_sample:
+                clip_score = float(m["clip_score"].compute().item())
+            m["clip_score"].reset()
+
         self.active_metrics.remove(run_type)
 
         with torch.no_grad():
@@ -213,4 +243,6 @@ class MetricCallback:
         }
         for key, value in caption_top1_metrics.items():
             result[f"{run_type}/caption_{key}_top1"] = float(value)
+        if clip_score is not None:
+            result[f"{run_type}/clip_score"] = clip_score
         return result

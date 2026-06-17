@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import gc
 
 from .positional_encoding import PositionalEncoding
 

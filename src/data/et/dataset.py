@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 
 from data.et.config import STANDARDIZATION_CONFIG_TORCH
 from data.simulation.utils import fix_prompts_and_instructions, load_clip_means
+from data.collate_utils import stack_optional
 
 from .load import load_et_dataset
 
@@ -159,15 +160,8 @@ class ETDataset(Dataset):
 
 
 def collate_fn(batch):
-    if len(batch) > 0 and batch[0]['subject_volume'] is None:
-        subject_volume = None
-    else:
-        subject_volume = torch.stack([item["subject_volume"] for item in batch])
-
-    if len(batch) > 0 and batch[0]['subject_trajectory'] is None:
-        subject_trajectory = None
-    else:
-        subject_trajectory = torch.stack([item["subject_trajectory"] for item in batch])
+    subject_volume = stack_optional(batch, "subject_volume")
+    subject_trajectory = stack_optional(batch, "subject_trajectory")
 
     return {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
