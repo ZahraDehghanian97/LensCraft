@@ -47,44 +47,48 @@ class Decoder(nn.Module):
 
         return output
 
-    def autoregressive_decode(self, memory, subject_embedding, target=None, teacher_forcing_ratio=0.5, tgt_key_padding_mask=None):
+    def autoregressive_decode(self, memory, subject_embedding, target=None, teacher_forcing_ratio=0.5, tgt_key_padding_mask=None, feedback_transform=None):
         batch_size = memory.shape[1]
         device = memory.device
-        
+
         output_trajectory = torch.zeros(batch_size, self.seq_length, self.output_dim, device=device)
         decoder_input = torch.zeros(batch_size, self.seq_length, self.output_dim, device=device)
-        
+
         subj_len = subject_embedding.shape[1]
-        
+
         causal_mask = torch.triu(torch.ones(2 * self.seq_length + 1, 2 * self.seq_length + 1, device=device) * float('-inf'), diagonal=1)
-        
+
         for t in range(self.seq_length):
             embedded, padded_mask = self.prepare_decoder_inputs_with_positioning(
                 decoder_input, subject_embedding, tgt_key_padding_mask)
-                        
+
             decoder_output = self.transformer_decoder(
                 tgt=embedded,
                 memory=memory,
                 tgt_mask=causal_mask[:embedded.size(0), :embedded.size(0)],
                 tgt_key_padding_mask=padded_mask
             )
-            
+
             decoder_output = decoder_output.transpose(0, 1)
             current_pred = self.output_projection(decoder_output[:, subj_len + t, :])
-            
+
             output_trajectory[:, t, :] = current_pred
-            
+
             if t < self.seq_length - 1:
                 new_decoder_input = decoder_input.clone()
                 use_target = (target is not None and torch.rand(1).item() < teacher_forcing_ratio)
-                new_decoder_input[:, t, :] = target[:, t, :] if use_target else current_pred
+                if use_target:
+                    feedback = target[:, t, :]
+                else:
+                    feedback = feedback_transform(current_pred) if feedback_transform is not None else current_pred
+                new_decoder_input[:, t, :] = feedback
                 decoder_input = new_decoder_input
-        
+
         return output_trajectory
 
-    def forward(self, memory, subject_embedding, decode_mode='single_step', target=None, teacher_forcing_ratio=0.0, tgt_key_padding_mask=None):
+    def forward(self, memory, subject_embedding, decode_mode='single_step', target=None, teacher_forcing_ratio=0.0, tgt_key_padding_mask=None, feedback_transform=None):
         if decode_mode == 'autoregressive':
-            return self.autoregressive_decode(memory, subject_embedding, target, teacher_forcing_ratio, tgt_key_padding_mask)
+            return self.autoregressive_decode(memory, subject_embedding, target, teacher_forcing_ratio, tgt_key_padding_mask, feedback_transform)
         elif decode_mode == 'single_step':
             return self.single_step_decode(memory, subject_embedding, tgt_key_padding_mask)
         else:

@@ -3,6 +3,7 @@ max_epochs: 20
 accelerator: "auto"
 devices: [0]
 precision: bf16-mixed
+gradient_clip_val: 1.0   # guards against NaN/exploding grads, incl. the svd9d SO(3) head
 # profiler:
 #   _target_: lightning.pytorch.profilers.PyTorchProfiler
 #   dirpath: ${hydra.run.dir}/profile_results

@@ -42,7 +42,7 @@ class BaseTrainer(L.LightningModule):
         moving_avg_window: int = 10
     ):
         super().__init__()
-        
+
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
@@ -53,7 +53,7 @@ class BaseTrainer(L.LightningModule):
         self.compiled = not compile_enabled
         self.loss_module = loss_module
         self.use_merged_memory = use_merged_memory
-        
+
         self.moving_avg_window = moving_avg_window
         self.metric_history = {"ff": [], "sp": [], "re": [], "cl": [], "cy": [], "co": []}
 
@@ -118,12 +118,12 @@ class BaseTrainer(L.LightningModule):
             )
 
         ratios = self._calculate_schedule_parameters()
-        
+
         valid_len = (
             (~tgt_key_padding_mask).sum(dim=1)
             if tgt_key_padding_mask is not None else None
         )
-        
+
         noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
             camera_trajectory,
             valid_len,
@@ -145,7 +145,7 @@ class BaseTrainer(L.LightningModule):
             ratios['memory_mask_ratio'],
             decode_mode
         )
-            
+
         if compute_cycle_embeddings:
             noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
                 output["reconstructed"],
@@ -160,31 +160,31 @@ class BaseTrainer(L.LightningModule):
                 src_key_mask
             )
             output['cycle_embeddings'] = cycle_embeddings
-        
+
         return output
-    
+
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:
         self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, logger=True, batch_size=batch_size)
-        
+
         progress_metrics = {}
         progress_metrics["ts" if stage == "train" else "ve"] = loss
-        
+
         metric_keys = {"first_frame": "ff", "speed": "sp", "relative": "re", "clip": "cl", "cycle": "cy", "contrastive": "co"}
         for key, p_key in metric_keys.items():
             if key in loss_dict:
                 current_value = loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item()
 
                 self.metric_history[p_key].append(current_value)
-                
+
                 if len(self.metric_history[p_key]) > self.moving_avg_window:
                     self.metric_history[p_key] = self.metric_history[p_key][-self.moving_avg_window:]
-                
+
                 if self.metric_history[p_key]:
                     moving_avg = sum(self.metric_history[p_key]) / len(self.metric_history[p_key])
                     progress_metrics[p_key] = moving_avg
-        
+
         self.log_dict(progress_metrics, prog_bar=True, logger=True, batch_size=batch_size)
-        
+
         for key, value in loss_dict.items():
             if isinstance(value, dict):
                 for subkey, subvalue in value.items():
@@ -194,22 +194,22 @@ class BaseTrainer(L.LightningModule):
 
     def configure_optimizers(self) -> Union[torch.optim.Optimizer, Tuple[List, List]]:
         optimizer = self.optimizer(self.parameters())
-        
+
         if self.lr_scheduler is not None:
             total_steps = self._get_total_steps()
-            
+
             scheduler = self.lr_scheduler(
                 optimizer=optimizer,
                 total_steps=total_steps
             )
             return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
-        
+
         return optimizer
-    
+
     def _get_total_steps(self) -> int:
         """Should be implemented by child classes to return total training steps."""
         raise NotImplementedError
-    
+
     def lr_scheduler_step(
         self,
         scheduler: torch.optim.lr_scheduler._LRScheduler,
@@ -217,12 +217,19 @@ class BaseTrainer(L.LightningModule):
     ) -> None:
         scheduler.step(self.global_step)
 
+    def on_before_optimizer_step(self, optimizer) -> None:
+        checks = [torch.isfinite(p.grad).all()
+                  for p in self.parameters() if p.grad is not None]
+        if checks and not torch.stack(checks).all():
+            for p in self.parameters():
+                p.grad = None
+
     def on_train_epoch_end(self) -> None:
         optimizer = self.trainer.optimizers[0]
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
             self.log('learning_rate', lr, on_step=False, on_epoch=True)
-        
+
         train_loss = self.trainer.callback_metrics.get('train_loss_epoch')
         if train_loss is not None:
             self.log('te', train_loss, on_step=False, on_epoch=True, prog_bar=True)

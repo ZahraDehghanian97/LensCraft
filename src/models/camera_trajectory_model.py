@@ -7,6 +7,11 @@ import torch.nn as nn
 from .encoder import Encoder
 from .decoder import Decoder
 from data.simulation.utils import cinematography_struct_size, simulation_struct_size
+from utils.pytorch3d_transform import (
+    euler_angles_to_matrix,
+    matrix_to_euler_angles,
+    symmetric_orthogonalization,
+)
 
 
 class LensCraft(nn.Module):
@@ -22,9 +27,12 @@ class LensCraft(nn.Module):
         seq_length: int = 30,
         latent_dim: int = 512,
         use_merged_memory: bool = False,
-        denormalize_memory: bool = False
+        denormalize_memory: bool = False,
     ):
         super(LensCraft, self).__init__()
+
+        self.pos_dim = 3
+        self.decoder_output_dim = self.pos_dim + 9   # 3 pos + 9D (svd9d) rotation matrix
 
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
         self.memory_tokens_count = cinematography_struct_size
@@ -43,7 +51,7 @@ class LensCraft(nn.Module):
         )
 
         self.decoder = Decoder(
-            input_dim,
+            self.decoder_output_dim,
             latent_dim,
             nhead,
             num_decoder_layers,
@@ -75,6 +83,32 @@ class LensCraft(nn.Module):
             "SubjectView",
             "SubjectInFramePosition"
         ]
+
+    def _euler6_to_mat12(self, traj6: torch.Tensor) -> torch.Tensor:
+        pos = traj6[..., :3]
+        rot = euler_angles_to_matrix(traj6[..., 3:6], "XYZ")
+        return torch.cat([pos, rot.reshape(*traj6.shape[:-1], 9)], dim=-1)
+
+    def _project_svd9d(self, raw12: torch.Tensor) -> torch.Tensor:
+        pos = raw12[..., :3]
+        mat = raw12[..., 3:].reshape(*raw12.shape[:-1], 3, 3)
+        rot = symmetric_orthogonalization(mat)
+        return torch.cat([pos, rot.reshape(*raw12.shape[:-1], 9)], dim=-1)
+
+    def _mat12_to_euler6(self, mat12: torch.Tensor) -> torch.Tensor:
+        pos = mat12[..., :3]
+        rot = mat12[..., 3:].reshape(*mat12.shape[:-1], 3, 3)
+        return torch.cat([pos, matrix_to_euler_angles(rot, "XYZ")], dim=-1)
+
+    def _encode_target_for_decoder(self, target):
+        if target is None:
+            return None
+        return self._euler6_to_mat12(target)
+
+    def _finalize_trajectory(self, raw):
+        recon_matrix = self._project_svd9d(raw)        # valid SO(3), flattened
+        reconstructed = self._mat12_to_euler6(recon_matrix)
+        return reconstructed, recon_matrix
 
     def prepare_embedding_memory_for_decoder(
         self,
@@ -159,19 +193,22 @@ class LensCraft(nn.Module):
             mask_memory_prob=mask_memory_prob
         )
 
-        reconstructed = self.decoder(
+        reconstructed_raw = self.decoder(
             memory=memory,
             subject_embedding=subject_embedding,
             decode_mode=decode_mode,
-            target=target,
+            target=self._encode_target_for_decoder(target),
             teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
-            tgt_key_padding_mask=tgt_key_padding_mask
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            feedback_transform=self._project_svd9d,
         )
+        reconstructed, recon_matrix = self._finalize_trajectory(reconstructed_raw)
 
         output = {
             'subject_embedding': subject_embedding,
             'embeddings': camera_embedding,
             'reconstructed': reconstructed,
+            'reconstructed_rot_matrix': recon_matrix,
         }
 
         if self.use_merged_memory:
@@ -245,15 +282,20 @@ class LensCraft(nn.Module):
                     teacher_forcing_ratio=0.0
                 )
 
-                reconstructed = self.decoder(
+                reconstructed_raw = self.decoder(
                     memory=memory,
                     subject_embedding=subject_embedding,
                     decode_mode=decode_mode,
                     tgt_key_padding_mask=padding_mask,
-                    teacher_forcing_ratio=0.0
+                    teacher_forcing_ratio=0.0,
+                    feedback_transform=self._project_svd9d,
                 )
+                reconstructed, recon_matrix = self._finalize_trajectory(reconstructed_raw)
 
-                return {'reconstructed': reconstructed}
+                return {
+                    'reconstructed': reconstructed,
+                    'reconstructed_rot_matrix': recon_matrix,
+                }
 
 
     def embed_trajectory(

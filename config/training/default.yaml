@@ -16,6 +16,7 @@ loss_module:
     speed:            20     # τ  (L_speed)
     cycle:            5      # ς  (L_cycle)
     # contrastive:      5
+  rotation_weight: 1.0       # global position:rotation balance (svd9d matrix loss); calibrate via report_traj_term_scales
   weighted_clip_loss: false
   weight_power: 1
   contrastive_loss_version: 3         # Select between versions [1, 2, 3]

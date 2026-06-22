@@ -360,6 +360,33 @@ def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
     return torch.stack((b1, b2, b3), dim=-2)
 
 
+def symmetric_orthogonalization(m: torch.Tensor) -> torch.Tensor:
+    """Project (..., 3, 3) matrices onto SO(3) via SVD.
+
+    Implements the 9D rotation representation / special-orthogonal Procrustes
+    of Levinson et al., "An Analysis of SVD for Deep Rotation Estimation" (2020):
+    R = U diag(1, 1, det(U V^T)) V^T, the closest proper rotation in Frobenius norm.
+
+    The SVD and its backward run in fp32. ``torch.linalg.svd`` is only reliable
+    in single precision (and unsupported in bf16/fp16), and PyTorch's generic
+    SVD backward contains 1/(sigma_i^2 - sigma_j^2) terms that blow up when
+    singular values coincide. Running in fp32 widens the margin before that
+    overflows; it does not remove the singularity (only a custom analytic
+    backward would). A non-finite-grad guard in BaseTrainer skips any step where
+    it still blows up.
+    """
+    orig_dtype = m.dtype
+    with torch.autocast(device_type=m.device.type, enabled=False):
+        if m.dtype not in (torch.float32, torch.float64):
+            m = m.float()
+        u, _, vh = torch.linalg.svd(m)
+        det = torch.det(torch.matmul(u, vh))                   # (...,)
+        ones = torch.ones(m.shape[:-2] + (2,), dtype=m.dtype, device=m.device)
+        diag = torch.cat([ones, det.unsqueeze(-1)], dim=-1)    # (..., 3) = (1, 1, det)
+        rot = torch.matmul(u * diag.unsqueeze(-2), vh)         # scale U's last column by det
+    return rot.to(orig_dtype)
+
+
 def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
     """
     Converts rotation matrices to 6D rotation representation by Zhou et al. [1]
