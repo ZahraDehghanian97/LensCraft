@@ -178,6 +178,7 @@ def _write_efficiency_json(
             "inference_time_batch_s": mean_s,
             "inference_time_batch_std_s": std_s,
             "inference_time_per_traj_s": per_traj_mean,
+            "inference_time_per_traj_std_s": std_s / batch_size,
             "gflops_per_traj": gflops,
             "batch_size": batch_size,
             "n_warmup": n_warmup,

@@ -10,11 +10,11 @@ loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
   contrastive_loss_margin: 5
   losses_list:
-    clip:             50     # η  (L_clip)
-    first_frame:      1      #    (L_init — coefficient 1 in Eq. 7)
-    relative:         8      # φ  (L_rel)
-    speed:            20     # τ  (L_speed)
-    cycle:            5      # ς  (L_cycle)
+    clip:             1000     # η  (L_clip)
+    first_frame:      2      #    (L_init — coefficient 1 in Eq. 7)
+    relative:         16      # φ  (L_rel)
+    speed:            80     # τ  (L_speed)
+    cycle:            100      # ς  (L_cycle)
     # contrastive:      5
   rotation_weight: 1.0       # global position:rotation balance (svd9d matrix loss); calibrate via report_traj_term_scales
   weighted_clip_loss: false

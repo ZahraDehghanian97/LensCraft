@@ -19,7 +19,7 @@ class ETConvertor(BaseConvertor):
             raw_trans = torch.cat([raw_trans[:, 0:1], velocity], dim=1)
 
         rot_matrices = matrix_trajectory[..., :3, :3]
-        rot6d = matrix_to_rotation_6d(rot_matrices)
+        rot6d = matrix_to_rotation_6d(rot_matrices.transpose(-1, -2))
 
         return torch.cat([rot6d, raw_trans], dim=-1)
 
@@ -35,7 +35,7 @@ class ETConvertor(BaseConvertor):
         if self.velocity:
             raw_trans = torch.cumsum(raw_trans, dim=1)
         matrix_trajectory[..., :3, 3] = raw_trans
-        matrix_trajectory[..., :3, :3] = rotation_6d_to_matrix(rot6d_trajectory[..., :6])
+        matrix_trajectory[..., :3, :3] = rotation_6d_to_matrix(rot6d_trajectory[..., :6]).transpose(-1, -2)
 
         return matrix_trajectory
 
@@ -57,6 +57,10 @@ class ETConvertor(BaseConvertor):
 
         if subject_trajectory is not None:
             subject_positions = subject_trajectory[..., :3]
+            if self.velocity:
+                # normalize_item received velocities (frame0 absolute, rest deltas);
+                # cumsum reconstructs absolute positions exactly.
+                subject_positions = torch.cumsum(subject_positions, dim=1)
         else:
             subject_positions = torch.zeros((batch_size, seq_len, 3), dtype=dtype, device=device)
 
@@ -75,7 +79,15 @@ class ETConvertor(BaseConvertor):
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         processed_subject_trajectory = None
         if subject_trajectory is not None:
-            processed_subject_trajectory = subject_trajectory[..., :3, 3]
+            positions = subject_trajectory[..., :3, 3]
+            if self.velocity:
+                # Velocity-encode the subject like the camera (get_feature) so
+                # normalize_item's per-frame velocity std (norm_std_h) applies to
+                # deltas, matching DIRECTOR's CharacterDataset.
+                velocity = positions[:, 1:] - positions[:, :-1]
+                processed_subject_trajectory = torch.cat([positions[:, :1], velocity], dim=1)
+            else:
+                processed_subject_trajectory = positions
 
         trajectory = self.get_feature(transform)
         subject_volume = None

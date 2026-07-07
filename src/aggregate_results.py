@@ -37,6 +37,14 @@ def _fmt(v: Optional[float], nd: int = 3) -> str:
     return "-" if v is None else f"{v:.{nd}f}"
 
 
+def _fmt_pm(mean: Optional[float], std: Optional[float], nd: int = 3) -> str:
+    if mean is None:
+        return "-"
+    if std is None:
+        return f"{mean:.{nd}f}"
+    return f"{mean:.{nd}f} ± {std:.{nd}f}"
+
+
 def _get(metrics: Dict[str, Dict[str, float]], mode: str, suffix: str) -> Optional[float]:
     block = metrics.get(mode)
     if not block:
@@ -44,8 +52,29 @@ def _get(metrics: Dict[str, Dict[str, float]], mode: str, suffix: str) -> Option
     return block.get(f"{mode}/{suffix}")
 
 
-def _row_cells(metrics: Dict[str, Any], mode: str) -> List[str]:
-    return [_fmt(_get(metrics, mode, METRIC_SUFFIX[c])) for c in METRIC_COLS]
+def _get_std(boot: Dict[str, Any], mode: str, suffix: str) -> Optional[float]:
+    if not boot:
+        return None
+    block = boot.get(mode)
+    if not block:
+        return None
+    entry = block.get(f"{mode}/{suffix}")
+    if entry is None:
+        return None
+    try:
+        return float(entry[1])
+    except (TypeError, IndexError, ValueError):
+        return None
+
+
+def _row_cells(run: Dict[str, Any], mode: str) -> List[str]:
+    metrics = run.get("metrics", {})
+    boot = run.get("bootstrap_std", {})
+    return [
+        _fmt_pm(_get(metrics, mode, METRIC_SUFFIX[c]),
+                _get_std(boot, mode, METRIC_SUFFIX[c]))
+        for c in METRIC_COLS
+    ]
 
 
 def _load(results_dir: str, prefix: str) -> List[Dict[str, Any]]:
@@ -67,31 +96,32 @@ def md_table(header: List[str], rows: List[List[str]]) -> str:
 
 
 def build_table1(metric_runs) -> str:
-    idx = {(r.get("set"), r.get("model_type")): r.get("metrics", {})
+    idx = {(r.get("set"), r.get("model_type")): r
            for r in metric_runs if not r.get("variant")}
     rows = []
     for s in SET_ORDER:
         for m in MODEL_ORDER:
-            metrics = idx.get((s, m))
-            if metrics is None:
+            run = idx.get((s, m))
+            if run is None:
                 continue
             rows.append([s.capitalize(), MODEL_LABEL.get(m, m)]
-                        + _row_cells(metrics, "prompt_generation"))
+                        + _row_cells(run, "prompt_generation"))
     return md_table(["Set", "Methods"] + METRIC_COLS, rows)
 
 
 def build_table2(metric_runs) -> str:
-    idx = {r.get("set"): r.get("metrics", {}) for r in metric_runs
+    idx = {r.get("set"): r for r in metric_runs
            if r.get("model_type") == "lens_craft" and not r.get("variant")}
     rows = []
     for s in SET_ORDER:
-        metrics = idx.get(s)
-        if metrics is None:
+        run = idx.get(s)
+        if run is None:
             continue
+        metrics = run.get("metrics", {})
         for mode in MODE_ORDER:
             if mode in metrics:
                 rows.append([s.capitalize(), MODE_TO_INPUT[mode]]
-                            + _row_cells(metrics, mode))
+                            + _row_cells(run, mode))
     return md_table(["Set", "Input(s)"] + METRIC_COLS, rows)
 
 
@@ -99,7 +129,7 @@ def build_table3(metric_runs, mode: str) -> str:
     rows = []
     for r in metric_runs:
         if r.get("variant") and r.get("model_type") == "lens_craft":
-            rows.append([str(r.get("variant"))] + _row_cells(r.get("metrics", {}), mode))
+            rows.append([str(r.get("variant"))] + _row_cells(r, mode))
     return md_table(["Variant"] + METRIC_COLS, rows)
 
 
@@ -110,20 +140,36 @@ def build_table4(eff_runs) -> str:
         r = by_model.get(m)
         if r is None:
             continue
+        per_traj = r.get("inference_time_per_traj_s")
+        per_traj_std = r.get("inference_time_per_traj_std_s")
+        if per_traj_std is None:
+            batch_std = r.get("inference_time_batch_std_s")
+            bs = r.get("batch_size")
+            if batch_std is not None and bs:
+                per_traj_std = batch_std / bs
         rows.append([MODEL_LABEL.get(m, m),
-                     _fmt(r.get("inference_time_per_traj_s"), 4),
+                     _fmt_pm(per_traj, per_traj_std, 4),
                      _fmt(r.get("gflops_per_traj"), 2)])
     return md_table(["Model", "Inference Time (s)", "FLOPs (G)"], rows)
 
 
 def write_flat_csv(metric_runs, path: str) -> None:
+    header = ["model", "set", "variant", "mode"]
+    for c in METRIC_COLS:
+        header += [c, f"{c}_std"]
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["model", "set", "variant", "mode"] + METRIC_COLS)
+        w.writerow(header)
         for r in metric_runs:
-            for mode in r.get("metrics", {}):
-                w.writerow([r.get("model_type"), r.get("set"), r.get("variant"), mode]
-                           + _row_cells(r.get("metrics", {}), mode))
+            metrics = r.get("metrics", {})
+            boot = r.get("bootstrap_std", {})
+            for mode in metrics:
+                row = [r.get("model_type"), r.get("set"), r.get("variant"), mode]
+                for c in METRIC_COLS:
+                    suffix = METRIC_SUFFIX[c]
+                    row.append(_fmt(_get(metrics, mode, suffix)))
+                    row.append(_fmt(_get_std(boot, mode, suffix)))
+                w.writerow(row)
 
 
 def main() -> None:

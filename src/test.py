@@ -37,7 +37,6 @@ CAPTIONED_DATASETS = ("simulation", "et")
 def _build_native_clatr_extractor(
     cfg: DictConfig, device: torch.device
 ) -> NativeCLaTrFeatureExtractor:
-    """Native CLaTr trained on LensCraft data (default)."""
     checkpoint_path = (
         cfg.get("clatr_native_checkpoint_path", None)
         or os.environ.get("CLATR_NATIVE_CHECKPOINT_PATH")
@@ -65,7 +64,6 @@ def _build_native_clatr_extractor(
 def _build_et_clatr_extractor(
     cfg: DictConfig, device: torch.device
 ) -> CLaTrFeatureExtractor:
-    """Legacy E.T.-trained CLaTr backend (kept for parity with prior runs)."""
     director_project_dir = os.environ.get("DIRECTOR_PROJECT_DIR")
     if director_project_dir is None:
         raise EnvironmentError(
@@ -110,10 +108,27 @@ def _build_clatr_extractor(cfg: DictConfig, device: torch.device):
     )
 
 
+def _pick_freest_cuda_device() -> torch.device:
+    free_by_index = []
+    for index in range(torch.cuda.device_count()):
+        free_bytes, _total_bytes = torch.cuda.mem_get_info(index)
+        free_by_index.append((free_bytes, index))
+    best_free, best_index = max(free_by_index)
+    logger.info(
+        "Auto-selected GPU %d with %.2f GiB free",
+        best_index,
+        best_free / (1024 ** 3),
+    )
+    return torch.device(f"cuda:{best_index}")
+
+
 def _resolve_device(cfg: DictConfig) -> torch.device:
-    if cfg.get("device"):
-        return torch.device(cfg.device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    requested = cfg.get("device")
+    if not torch.cuda.is_available():
+        return torch.device("cpu")
+    if requested in (None, "cuda", "auto"):
+        return _pick_freest_cuda_device()
+    return torch.device(requested)
 
 
 def _model_type_from_cfg(cfg: DictConfig) -> str:
@@ -121,15 +136,30 @@ def _model_type_from_cfg(cfg: DictConfig) -> str:
     return "lens_craft" if data_format_type == "simulation" else data_format_type
 
 
+def _eval_set_tag(cfg: DictConfig) -> str | None:
+    set_label = cfg.get("eval_set", None)
+    if set_label:
+        return str(set_label)
+    cfgd = cfg.data.dataset.config
+    if "allowed_movement_types" in cfgd and cfgd.allowed_movement_types is not None:
+        amt = OmegaConf.to_container(cfgd.allowed_movement_types, resolve=True)
+        if amt:
+            import hashlib
+            key = "-".join(sorted(str(m) for m in amt))
+            return "mt" + hashlib.md5(key.encode()).hexdigest()[:8]
+    return None
+
+
 def _trajectory_cache_path(cfg: DictConfig, dataset_type: str, model_type: str) -> str:
-    """Where generated baseline trajectories are cached / reused across runs."""
     trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
+    parts = ["dataset", dataset_type, "model", model_type]
     if model_type == "et":
-        et_type = cfg.training.model.inference.et_type
-        name = f"dataset_{dataset_type}_model_{model_type}_{et_type}.pth"
-    else:
-        name = f"dataset_{dataset_type}_model_{model_type}.pth"
+        parts.append(str(cfg.training.model.inference.et_type))
+    set_tag = _eval_set_tag(cfg)
+    if set_tag:
+        parts.append(set_tag)
+    name = "_".join(parts) + ".pth"
     return os.path.join(trajectories_dir, name)
 
 
@@ -139,12 +169,6 @@ def _load_eval_models(
     device: torch.device,
     trajectory_cache_path: str,
 ):
-    """Return (model, ref_model).
-
-    For lens_craft, model and ref_model are the same network. For baselines the
-    reference is always a trained LensCraft checkpoint; the baseline adapter
-    itself is only constructed when there is no cached trajectory to reuse.
-    """
     if model_type == "lens_craft":
         model = load_lens_craft_model(
             model_module=cfg.training.model.module,
@@ -173,7 +197,6 @@ def _load_eval_models(
 
 
 def _load_clip_embeddings(cfg: DictConfig, model_type: str):
-    """CLIP embeddings are only needed for the lens_craft caption-top1 metric."""
     if model_type == "lens_craft" and cfg.get("caption_top1_metric", False):
         from data.simulation.init_embeddings import initialize_all_clip_embeddings
 
@@ -186,7 +209,6 @@ def _load_clip_embeddings(cfg: DictConfig, model_type: str):
 
 
 def _select_metric_items(model_type: str, dataset_type: str) -> list[str]:
-    """Which generation modes to evaluate for this model/dataset combination."""
     if model_type in BASELINE_MODELS:
         return ["prompt_generation"]
     if dataset_type in CAPTIONED_DATASETS:
@@ -281,7 +303,6 @@ def _bootstrap_std(
 
 
 def _snapshot_features(x):
-    """Detach a (possibly list-of-tensors) feature buffer to CPU, or None."""
     if x is None:
         return None
     if isinstance(x, (list, tuple)):
@@ -294,11 +315,6 @@ def _snapshot_features(x):
 def _collect_metric_features(
     cfg: DictConfig, metric_callback: MetricCallback, metric_items: list[str]
 ) -> dict:
-    """Snapshot GT/GEN CLaTr features per mode for t-SNE.
-
-    Must run before compute_clatr_metrics(), which resets the underlying
-    metric state.
-    """
     features = {item: {"GT": None, "GEN": None} for item in metric_items}
     if not cfg.tsne:
         return features

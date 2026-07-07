@@ -219,8 +219,9 @@ class BaseTrainer(L.LightningModule):
 
     def on_before_optimizer_step(self, optimizer) -> None:
         checks = [torch.isfinite(p.grad).all()
-                  for p in self.parameters() if p.grad is not None]
+                for p in self.parameters() if p.grad is not None]
         if checks and not torch.stack(checks).all():
+            self.log("grad_nan_skip", 1.0, on_step=True, prog_bar=True)
             for p in self.parameters():
                 p.grad = None
 

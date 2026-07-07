@@ -9,7 +9,6 @@ from data.sim_format import (
 )
 from utils.device import move_batch_to_device
 
-# Modes that overlay a key-framing mask instead of using the real padding mask.
 _KEYFRAMING_MODES = {"key_framing", "key_framing+prompt"}
 
 
@@ -34,14 +33,14 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         torch.full((batch_size,), SIM_SEQ_LENGTH, device=device),  # TODO: other datasets
     )
 
-    # Baselines only support text-to-trajectory generation.
     if model_type in ("ccdm", "et", "gendop"):
         generated = model.generate_using_text(
             batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
         )
         sim_generated, *_ = convert_to_target(
             model_type, "simulation", generated, subject_trajectory,
-            batch["subject_volume"], padding_mask, SIM_SEQ_LENGTH, need_normal=False,
+            batch["subject_volume"], padding_mask, SIM_SEQ_LENGTH,
+            need_denormal=False, need_normal=False,
         )
         return ({"prompt_generation": sim_generated},
                 sim_camera, sim_subject, sim_volume, sim_padding, None)

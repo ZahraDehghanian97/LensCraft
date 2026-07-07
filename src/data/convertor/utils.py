@@ -70,112 +70,95 @@ def torch_interp(x, xp, fp):
 _SLERP_NLERP_THRESHOLD = 0.9995
 
 
-def _slerp(q1, q2, alpha):
-    dot = torch.sum(q1 * q2)
-    if dot < 0:
-        q2 = -q2
-        dot = -dot
+def _batched_slerp(q0, q1, alpha):
+    """Spherical-linear interpolation between quaternion fields ``q0``/``q1``.
 
-    if dot > _SLERP_NLERP_THRESHOLD:
-        q = q1 + alpha * (q2 - q1)
-        return q / torch.norm(q)
+    ``q0``/``q1`` are ``[..., 4]`` and ``alpha`` is broadcastable to ``[...]``.
+    Returns ``[..., 4]``. Numerically equivalent (per element) to the previous
+    scalar ``_slerp``, but fully vectorised — no Python loop, no host syncs.
+    """
+    dot = torch.sum(q0 * q1, dim=-1, keepdim=True)
+    # Take the shortest path: flip q1 where the dot product is negative.
+    q1 = torch.where(dot < 0, -q1, q1)
+    dot = dot.abs()
+
+    alpha = alpha.unsqueeze(-1)
+
+    # Near-parallel quaternions: fall back to normalised linear interpolation.
+    nlerp = q0 + alpha * (q1 - q0)
+    nlerp = nlerp / (torch.norm(nlerp, dim=-1, keepdim=True) + 1e-8)
 
     theta = torch.acos(torch.clamp(dot, -1.0, 1.0))
-    sin_theta = torch.sin(theta)
-    return (
-        torch.sin((1.0 - alpha) * theta) / sin_theta * q1
-        + torch.sin(alpha * theta) / sin_theta * q2
+    sin_theta = torch.sin(theta) + 1e-8
+    slerp = (
+        torch.sin((1.0 - alpha) * theta) / sin_theta * q0
+        + torch.sin(alpha * theta) / sin_theta * q1
     )
 
-
-def _interpolate_rotations(rotations, src_times, tgt_times):
-    quats = matrix_to_quaternion(rotations)
-    out = torch.zeros((len(tgt_times), 4), device=quats.device, dtype=quats.dtype)
-
-    for t_idx, t in enumerate(tgt_times):
-        if t <= src_times[0]:
-            out[t_idx] = quats[0]
-        elif t >= src_times[-1]:
-            out[t_idx] = quats[-1]
-        else:
-            next_idx = torch.searchsorted(src_times, t)
-            prev_idx = next_idx - 1
-            span = src_times[next_idx] - src_times[prev_idx]
-            alpha = (t - src_times[prev_idx]) / span
-            out[t_idx] = _slerp(quats[prev_idx], quats[next_idx], alpha)
-
-    return quaternion_to_matrix(out)
-
-
-def _interpolate_translations(translations, src_times, tgt_times):
-    """Linearly resample each xyz channel of [src_len, 3] onto `tgt_times`."""
-    out = torch.zeros(
-        (len(tgt_times), 3), device=translations.device, dtype=translations.dtype
-    )
-    for dim in range(3):
-        out[:, dim] = torch_interp(tgt_times, src_times, translations[:, dim])
-    return out
-
-
-def _resample_one_trajectory(valid_trajectory, num_target):
-    valid_len = valid_trajectory.shape[0]
-    device, dtype = valid_trajectory.device, valid_trajectory.dtype
-
-    out = torch.zeros((num_target, 4, 4), device=device, dtype=dtype)
-    out[:, 3, 3] = 1.0
-
-    if valid_len == 1:
-        out[:] = valid_trajectory.repeat(num_target, 1, 1)
-        return out
-
-    src_times = torch.linspace(0, 1, valid_len, device=device)
-    tgt_times = torch.linspace(0, 1, num_target, device=device)
-
-    out[:, :3, :3] = _interpolate_rotations(
-        valid_trajectory[:, :3, :3], src_times, tgt_times
-    )
-    out[:, :3, 3] = _interpolate_translations(
-        valid_trajectory[:, :3, 3], src_times, tgt_times
-    )
-    return out
+    return torch.where(dot > _SLERP_NLERP_THRESHOLD, nlerp, slerp)
 
 
 @handle_single_or_batch(arg_specs=[(0, 3), (1, 0), (3, 0)])
 def resample_batch_trajectories(
     batch_trajectory, current_valid_len, target_len, valid_target_len=None
 ):
+    """Resample each ``[valid_len, 4, 4]`` trajectory in the batch onto a regular
+    ``num_target``-length grid (slerp on rotations, linear on translations).
+
+    Fully vectorised across both the batch and the time axis. Because the source
+    grid is ``linspace(0, 1, valid_len)`` (uniform), the bracketing source frames
+    and interpolation weight are closed-form, so no per-sample ``searchsorted`` /
+    Python loop is needed.
+    """
     batch_size, max_seq_len = batch_trajectory.shape[:2]
     device = batch_trajectory.device
 
+    if current_valid_len is None:
+        valid_len = torch.full((batch_size,), max_seq_len, device=device, dtype=torch.long)
+    else:
+        valid_len = current_valid_len.to(device=device, dtype=torch.long)
+    valid_len = valid_len.clamp(min=1, max=max_seq_len)
+
     if valid_target_len is None:
-        valid_target_len = torch.full(
-            (batch_size,), target_len, device=device, dtype=torch.long
-        )
+        num_target = torch.full((batch_size,), target_len, device=device, dtype=torch.long)
+    else:
+        num_target = valid_target_len.to(device=device, dtype=torch.long)
+    num_target = num_target.clamp(min=1, max=target_len)
+
+    # Per (sample, target step) bracketing indices into the source frames.
+    steps = torch.arange(target_len, device=device).unsqueeze(0)            # [1, T]
+    valid_mask = steps < num_target.unsqueeze(1)                            # [B, T]
+
+    # Normalised target time in [0, 1]; guard the single-target-frame case.
+    denom = (num_target - 1).clamp(min=1).float().unsqueeze(1)             # [B, 1]
+    t = (steps.float() / denom).clamp(max=1.0)                             # [B, T]
+
+    pos = t * (valid_len - 1).float().unsqueeze(1)                         # [B, T]
+    prev_idx = pos.floor().long()
+    next_idx = prev_idx + 1
+    max_idx = (valid_len - 1).unsqueeze(1)
+    prev_idx = prev_idx.clamp(min=0).minimum(max_idx)
+    next_idx = next_idx.clamp(min=0).minimum(max_idx)
+    alpha = pos - prev_idx.float()                                         # [B, T]
+
+    translations = batch_trajectory[..., :3, 3]                           # [B, S, 3]
+    quats = matrix_to_quaternion(batch_trajectory[..., :3, :3])           # [B, S, 4]
+
+    trans_prev = torch.gather(translations, 1, prev_idx.unsqueeze(-1).expand(-1, -1, 3))
+    trans_next = torch.gather(translations, 1, next_idx.unsqueeze(-1).expand(-1, -1, 3))
+    trans_out = trans_prev + alpha.unsqueeze(-1) * (trans_next - trans_prev)
+
+    q_prev = torch.gather(quats, 1, prev_idx.unsqueeze(-1).expand(-1, -1, 4))
+    q_next = torch.gather(quats, 1, next_idx.unsqueeze(-1).expand(-1, -1, 4))
+    rot_out = quaternion_to_matrix(_batched_slerp(q_prev, q_next, alpha))  # [B, T, 3, 3]
 
     resampled_batch = torch.zeros(
         (batch_size, target_len, 4, 4), device=device, dtype=batch_trajectory.dtype
     )
-    resampled_batch[:, :, 3, 3] = 1.0
-    padding_mask = torch.zeros((batch_size, target_len), dtype=torch.bool, device=device)
+    resampled_batch[..., :3, :3] = rot_out
+    resampled_batch[..., :3, 3] = trans_out
+    # Zero out padded steps, then restore the homogeneous 1 on every row.
+    resampled_batch = resampled_batch * valid_mask[..., None, None].to(resampled_batch.dtype)
+    resampled_batch[..., 3, 3] = 1.0
 
-    for i in range(batch_size):
-        valid_len = (
-            current_valid_len[i].item() if current_valid_len is not None else max_seq_len
-        )
-        valid_len = min(valid_len, max_seq_len)
-
-        num_target = (
-            valid_target_len[i].item()
-            if valid_target_len.dim() > 0
-            else valid_target_len.item()
-        )
-        num_target = min(num_target, target_len)
-        if num_target < target_len:
-            padding_mask[i, num_target:] = True
-
-        valid_trajectory = batch_trajectory[i, :valid_len]
-        resampled_batch[i, :num_target] = _resample_one_trajectory(
-            valid_trajectory, num_target
-        )
-
-    return resampled_batch, padding_mask
+    return resampled_batch, ~valid_mask

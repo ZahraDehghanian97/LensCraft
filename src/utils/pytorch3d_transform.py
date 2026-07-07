@@ -240,13 +240,21 @@ def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tenso
     i0 = _index_from_letter(convention[0])
     i2 = _index_from_letter(convention[2])
     tait_bryan = i0 != i2
+    # asin/acos have infinite gradient at +/-1 (gimbal lock); combined with the
+    # zero-gradient region of torch.clamp this yields inf*0 = NaN grads whenever a
+    # matrix entry sits at/past +/-1. Compute in fp32 (the bf16 grid rounds 1-eps
+    # back to 1.0) and clamp strictly inside the domain so the gradient stays
+    # large-but-finite (then tamed by gradient_clip_val).
+    eps = 1e-7
     if tait_bryan:
+        sin_central = matrix[..., i0, i2].float() * (-1.0 if i0 - i2 in [-1, 2] else 1.0)
         central_angle = torch.asin(
-            torch.clamp(matrix[..., i0, i2], -1.0, 1.0)
-            * (-1.0 if i0 - i2 in [-1, 2] else 1.0)
-        )
+            torch.clamp(sin_central, -1.0 + eps, 1.0 - eps)
+        ).to(matrix.dtype)
     else:
-        central_angle = torch.acos(torch.clamp(matrix[..., i0, i0], -1.0, 1.0))
+        central_angle = torch.acos(
+            torch.clamp(matrix[..., i0, i0].float(), -1.0 + eps, 1.0 - eps)
+        ).to(matrix.dtype)
 
     o = (
         _angle_from_tan(
@@ -361,29 +369,28 @@ def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
 
 
 def symmetric_orthogonalization(m: torch.Tensor) -> torch.Tensor:
-    """Project (..., 3, 3) matrices onto SO(3) via SVD.
+    """Project (..., 3, 3) matrices onto SO(3) via SVD (inference / non-differentiable).
 
-    Implements the 9D rotation representation / special-orthogonal Procrustes
-    of Levinson et al., "An Analysis of SVD for Deep Rotation Estimation" (2020):
+    Implements the special-orthogonal Procrustes of Levinson et al., "An Analysis of
+    SVD for Deep Rotation Estimation" (2020):
     R = U diag(1, 1, det(U V^T)) V^T, the closest proper rotation in Frobenius norm.
 
-    The SVD and its backward run in fp32. ``torch.linalg.svd`` is only reliable
-    in single precision (and unsupported in bf16/fp16), and PyTorch's generic
-    SVD backward contains 1/(sigma_i^2 - sigma_j^2) terms that blow up when
-    singular values coincide. Running in fp32 widens the margin before that
-    overflows; it does not remove the singularity (only a custom analytic
-    backward would). A non-finite-grad guard in BaseTrainer skips any step where
-    it still blows up.
+    Runs entirely under ``no_grad`` and returns a detached rotation. ``torch.linalg.svd``'s
+    backward has 1/(sigma_i^2 - sigma_j^2) terms that blow up to NaN when singular values
+    coincide, so we never differentiate through it. Training regresses the raw 3x3 head
+    directly against the target rotation matrix (Frobenius); this projection is applied
+    only to produce a valid rotation for the euler output, autoregressive feedback, and
+    generation.
     """
     orig_dtype = m.dtype
-    with torch.autocast(device_type=m.device.type, enabled=False):
-        if m.dtype not in (torch.float32, torch.float64):
-            m = m.float()
-        u, _, vh = torch.linalg.svd(m)
-        det = torch.det(torch.matmul(u, vh))                   # (...,)
-        ones = torch.ones(m.shape[:-2] + (2,), dtype=m.dtype, device=m.device)
-        diag = torch.cat([ones, det.unsqueeze(-1)], dim=-1)    # (..., 3) = (1, 1, det)
-        rot = torch.matmul(u * diag.unsqueeze(-2), vh)         # scale U's last column by det
+    with torch.no_grad():
+        mm = m.float() if m.dtype not in (torch.float32, torch.float64) else m
+        with torch.autocast(device_type=m.device.type, enabled=False):
+            u, _, vh = torch.linalg.svd(mm)
+            det = torch.det(torch.matmul(u, vh))                   # (...,)
+            ones = torch.ones(mm.shape[:-2] + (2,), dtype=mm.dtype, device=mm.device)
+            diag = torch.cat([ones, det.unsqueeze(-1)], dim=-1)    # (..., 3) = (1, 1, det)
+            rot = torch.matmul(u * diag.unsqueeze(-2), vh)         # scale U's last column by det
     return rot.to(orig_dtype)
 
 

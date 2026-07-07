@@ -207,8 +207,9 @@ class LensCraft(nn.Module):
         output = {
             'subject_embedding': subject_embedding,
             'embeddings': camera_embedding,
-            'reconstructed': reconstructed,
-            'reconstructed_rot_matrix': recon_matrix,
+            'reconstructed': reconstructed,                 # euler from valid SO(3): cycle / inference
+            'reconstructed_raw_matrix': reconstructed_raw,  # 3 pos + 9 RAW entries -> the training target
+            'reconstructed_rot_matrix': recon_matrix,       # 3 pos + 9 projected (valid SO(3)); informational
         }
 
         if self.use_merged_memory:
@@ -294,6 +295,7 @@ class LensCraft(nn.Module):
 
                 return {
                     'reconstructed': reconstructed,
+                    'reconstructed_raw_matrix': reconstructed_raw,
                     'reconstructed_rot_matrix': recon_matrix,
                 }
 

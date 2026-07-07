@@ -11,6 +11,8 @@ mkdir -p "$TEST_OUTPUT_DIR"
 STATIC_TYPES='[static]'
 DYNAMIC_TYPES='[circular,zigzag,linear,spiral,figureEight,wave,pendulum,orbital,bounce]'
 
+EVAL_BS="${EVAL_BS:-128}"
+
 run_eval() {
     local name="$1" eset="$2" amt="$3"; shift 3
     echo ""
@@ -18,7 +20,8 @@ run_eval() {
     python src/test.py \
         "+eval_set=$eset" \
         "+data.dataset.config.allowed_movement_types=$amt" \
-        caption_top1_metric=true \
+        caption_top1_metric=false \
+        "data.batch_size=$EVAL_BS" \
         "$@" 2>&1 | tee "$LOG_DIR_RUN/test_${name}_${eset}.log"
 }
 

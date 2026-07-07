@@ -113,6 +113,7 @@ def test_batch(
                 batch["subject_volume"],
                 padding_mask,
                 SIM_SEQ_LENGTH,
+                need_denormal=False,
             )
         elif model_type == "lens_craft":
             sim_generated_trajectory = ref_output["reconstructed"]

@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -7,12 +6,11 @@ import torch
 from testing.metrics.modules.caption_top1 import CaptionTop1
 from testing.metrics.modules.clip_score import ClipScore
 from utils.importing import ModuleImporter
+from utils.paths import third_party
 
 logger = logging.getLogger(__name__)
 
-_ET_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "third_parties", "DIRECTOR")
-)
+_ET_ROOT = third_party("DIRECTOR")
 
 with ModuleImporter.temporary_module(_ET_ROOT, replace_modules=["utils.rotation_utils"]):
     from src.metrics.modules.prdc import ManifoldMetrics
@@ -207,13 +205,20 @@ class MetricCallback:
 
         m = self.metrics[run_type]
 
-        clatr_score = m["clatr_score"].compute()
+        has_clatr_samples = len(m["clatr_prdc"].real_features) > 0
+
+        if has_clatr_samples:
+            clatr_score = m["clatr_score"].compute()
+            precision, recall, density, coverage = m["clatr_prdc"].compute()
+            fcd = m["clatr_fd"].compute()
+        else:
+            zero = torch.tensor(0.0)
+            clatr_score = zero
+            precision = recall = density = coverage = zero
+            fcd = zero
+
         m["clatr_score"].reset()
-
-        precision, recall, density, coverage = m["clatr_prdc"].compute()
         m["clatr_prdc"].reset()
-
-        fcd = m["clatr_fd"].compute()
         m["clatr_fd"].reset()
 
         caption_top1_metrics: Dict[str, float] = {}

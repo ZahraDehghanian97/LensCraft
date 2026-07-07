@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import lightning as L
@@ -11,13 +10,11 @@ from torch import Tensor
 
 from models.clip_embeddings import CLIPEmbedder
 from utils.importing import ModuleImporter
+from utils.paths import third_party
 
 from .clatr_model import NativeCLaTr
 
-_ET_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "third_parties", "DIRECTOR")
-)
-with ModuleImporter.temporary_module(_ET_ROOT):
+with ModuleImporter.temporary_module(third_party("DIRECTOR")):
     from clatr.src.training.losses import KLLoss, InfoNCE_with_filtering as InfoNCEWithFiltering
 
 

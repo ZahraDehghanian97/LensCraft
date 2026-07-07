@@ -1,0 +1,40 @@
+defaults:
+  - _self_
+  - clip: default
+  - data: default
+  - training: default
+  - hydra: test
+
+seed: 42
+device: cuda
+
+viser:
+  host: 0.0.0.0
+  port: 8080
+
+models:
+  - lens_craft
+  - ccdm
+  - et
+  - gendop
+
+lens_craft_mode: prompt_generation
+
+n_samples: 4
+
+layout: grid        # grid = side-by-side columns (GT first, at the origin), overlay = same space
+grid_spacing: 0.0   # world units between columns; 0 = auto (1.6x max trajectory diagonal)
+
+cam_convention: opencv
+fov_deg: 60.0
+aspect: 1.7777
+frustum_scale: 0.0  # 0 = auto
+frustum_stride: 3
+show_grid: true
+up_axis: y
+
+export:             # used by the "capture" buttons in the viser GUI
+  dir: qualitative  # relative to the hydra run dir; override with an absolute path if preferred
+  height: 640
+  width: 960
+  settle_s: 0.3     # seconds to wait after a scene change before rendering a panel

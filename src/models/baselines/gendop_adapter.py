@@ -7,6 +7,8 @@ import numpy as np
 import torch
 from safetensors.torch import load_file
 
+from utils.paths import third_party
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,17 +29,12 @@ class GenDoPAdapter:
         self._gendop_root = self._resolve_gendop_root()
         self.model, self.opt = self._load_model()
 
-        # Cache the token decoder after sys.path is configured.
         from core.utils import token_to_camera
         self._token_to_camera = token_to_camera
 
     @staticmethod
     def _resolve_gendop_root() -> str:
-        return os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "third_parties",
-            "GenDoP",
-        )
+        return third_party("GenDoP")
 
     def _load_model(self):
         if self._gendop_root not in sys.path:

@@ -82,12 +82,12 @@ class CameraTrajectoryLoss:
         clip_pred = model_output['embeddings']
         cycle_embeddings = model_output.get('cycle_embeddings', None)
 
-        trajectory_pred = model_output['reconstructed_rot_matrix']  # (..., 12): pos + R_flat
+        trajectory_pred = model_output['reconstructed_raw_matrix']
         trajectory_target = self._euler_traj_to_matrix(camera_trajectory)
 
-        if not getattr(self, "_scale_reported", False):
+        self._call_count = getattr(self, "_call_count", 0) + 1
+        if self._call_count % 50 == 1:   # pos-vs-rot split per term, every 50 steps
             report_traj_term_scales(trajectory_pred, trajectory_target)
-            self._scale_reported = True
 
         return self.compute_total_loss(
             trajectory_pred,
