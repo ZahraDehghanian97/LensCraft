@@ -1,118 +1,199 @@
-# ET Dataset
+# E.T. dataset — data contract
 
-## Detail
+Everything a consumer (human or AI agent) needs to use E.T. data
+**without reading `third_parties/DIRECTOR` or the E.T. creation code**.
 
-The dataset combines trajectory, character, and caption data for motion capture or animation scenes. Each sample contains:
+- Source of truth for constants: DIRECTOR
+  `configs/dataset/standardization/0300.yaml`. If this file and that config
+  disagree, the config wins — then update this file.
+- Last verified against: `third_parties/DIRECTOR` @ `<commit>`.
 
-1. Trajectory data: Camera motion represented by rotation (6D continuous representation) and translation (3D) features.
-2. Character data: Character position (3D coordinates) and possibly pose information.
-3. Caption data: Textual descriptions of the scene or camera movement, encoded using CLIP embeddings (512-dimensional vectors).
+---
 
-## Key observations
+## 1. At a glance
 
-1. The dataset aligns trajectory, character, and caption data over `num_cams` (300) time steps.
-2. It includes both processed features (e.g., `traj_feat`, `char_feat`) and raw data (e.g., `char_raw`, `caption_raw`) as PyTorch tensors.
-3. CLIP embeddings are used for caption representation, with a maximum of `max_feat_length` (77) tokens.
-4. Padding masks are provided for each modality as binary tensors, allowing for variable-length sequences up to `num_cams` steps.
+| Property | Value |
+|---|---|
+| Sample id | `{year}_{videoid}_{shot:05d}_{chunk:05d}`, e.g. `2011_KAeAqaA0Llg_00005_00001` |
+| Frame rate | 25 fps |
+| Sequence length | ≤ 300 frames (12 s), zero-padded to 300 (`num_cams = 300`) |
+| Units | meters (positions), meters/frame (velocities) |
+| World frame | origin = main character's position at frame 0; y points **down** (SLAHMR convention) |
+| Camera pose | 4×4, used everywhere as **camera pose in world** (translation = camera position) |
+| Camera feature | 9 = 6 (rot6d) + 3 (translation: frame 0 absolute, frames 1+ per-frame deltas), z-scored |
+| Character feature | 3 (center xyz), same velocity encoding, z-scored with a single stat pair |
+| Caption features | CLIP ViT-B/32: per-token `(≤77, 512)` and pooled `(512,)` |
+| Motion labels | 27 classes for camera and character (+ pad value **27**), one label per velocity step (length N−1) |
+| Splits | `{set_name}_{train|test}_split.txt` in dataset root; default `set_name = "mixed"` |
 
-## More Detail
+## 2. Directory layout & file formats
 
-1. Trajectory Data:
-   - `traj_filename`: A string, the name of the trajectory file. This uniquely identifies each trajectory sequence in the dataset.
-   - `traj_feat`: A tensor of shape [num_traj_features, num_cams], representing trajectory features for num_cams time steps, with num_traj_features per step.
-     - Each column represents a time step, with 9 features: 6 for rotation (using 6D continuous rotation representation) and 3 for translation.
-     - This format allows for efficient processing of sequential data.
-   - `padding_mask`: A tensor of shape [num_cams], a binary mask indicating valid (1) and padded (0) time steps.
-     - Enables handling of variable-length sequences within a fixed-size tensor.
-   - `intrinsics`: A numpy array of shape (4,), camera intrinsic parameters.
-     - Contains [fx, fy, cx, cy] focal length and principal point for camera calibration.
+```
+<dataset root>/
+├── traj/{id}.txt            # KITTI: one line per frame = 12 floats ("%.6e"),
+│                            #   row-major 3×4 [R|t] of the camera pose (shifted world)
+├── traj_raw/{id}.txt        # same, before the origin shift (not used for training)
+├── intrinsics/{id}.npy      # float16 (4,) = fx, fy, cx, cy in pixels
+├── char/{id}.npy            # (N, 3) character center per frame (shifted world)
+├── char_raw/{id}.npy        # (N, 3) pre-shift centers; frame 0 = the shift offset
+│                            #   (used only to re-center the vertices below)
+├── vert_decimated/{id}.npy  # dict {vertices: (N, V, 3), faces: (F, 3)} — viz only
+├── caption/{id}.txt         # one-sentence caption (camera + character motion)
+├── caption_cam/{id}.txt     # camera-only caption variant
+├── caption_clip/seq/{id}.npy    # (L≤77, 512) per-token CLIP features
+├── caption_clip/token/{id}.npy  # (512,) pooled CLIP feature
+├── cam_segments/{id}.npy    # (N−1,) int camera motion class ids (see §6)
+├── char_segments/{id}.npy   # (N−1,) int character motion class ids
+└── mixed_{train,test}_split.txt # newline-separated sample ids
+```
 
-2. Character Data:
-   - `char_filename`: A string, the name of the character data file. Identifies the character data associated with the trajectory.
-   - `num_char_features`: int = 3 (x, y, z coordinates of character's center)
-   - `char_feat`: A tensor of shape [num_char_features, num_cams], representing character features for num_cams time steps.
-     - Each column represents a time step, with 3 features for the character's position (x, y, z).
-     - If `velocity` is True, the first row contains the initial position, and subsequent rows contain velocity (change in position).
-     - Processed character features, normalized and potentially transformed for model input.
-   - `char_raw`: A dictionary containing:
-     - `char_raw_feat`: A tensor of shape [num_char_features, num_cams], raw character features.
-       - Contains the original, unprocessed character positions for each time step.
-     - `char_centers`: A tensor of shape [num_char_features, num_cams], character center positions.
-       - Identical to `char_raw_feat`.
-     - If `load_vertices` is True:
-       - `char_vertices`: A tensor of shape [num_cams, num_vertices, 3], representing vertex positions.
-       - `char_faces`: A tensor of shape [num_cams, num_faces, 3], representing face indices.
-     - Provides both processed and raw data for flexibility in downstream tasks.
-   - `char_padding_mask`: A tensor of shape [num_cams], a binary mask for character data.
-     - Aligns with the trajectory padding mask for consistent processing.
-   - Character features are processed as follows:
-     - Raw features are loaded from `.npy` files.
-     - Features are padded to `num_cams` length if necessary.
-     - Velocity information is computed if the `velocity` flag is True:
-       - First row remains the initial position.
-       - Subsequent rows contain the difference between consecutive positions.
-     - Features are standardized using `norm_mean` and `norm_std` if `standardize` is True:
-       - If `velocity` is True and `norm_mean`/`norm_std` have 6 elements, the first 3 are used for the initial position and the last 3 for velocities.
-       - Otherwise, all features are normalized using the same mean and standard deviation.
-     - The data can be reshaped for sequential or non-sequential processing based on the `sequential` flag:
-       - If `sequential` is True, the final shape is [num_char_features, num_cams].
-       - If `sequential` is False, the final shape is [num_char_features * num_cams].
+## 3. Conventions — read before touching poses
 
-3. Caption Data:
-   - `caption_filename`: A string, the name of the caption file. Links textual data to the corresponding trajectory and character data.
-   - `caption_feat`: A tensor of shape [num_caption_features, max_feat_length], CLIP embeddings for the caption (num_caption_features-dimensional embeddings for max_feat_length tokens).
-     - Utilizes CLIP's text encoder for semantic representation of captions.
-   - `caption_raw`: A dictionary containing:
-     - `caption`: A string, the actual text caption describing the scene or camera movement.
-     - `segments`: A tensor of shape [num_cams], segment labels for each time step.
-       - Provides fine-grained labeling of trajectory segments, useful for action recognition or segmentation tasks.
-     - `clip_seq_caption`: A tensor of shape [max_feat_length, num_caption_features], the transposed version of `caption_feat`.
-     - `clip_seq_mask`: A tensor of shape [max_feat_length], a mask for valid tokens in the caption.
-   - `caption_padding_mask`: A tensor of shape [num_cams], a binary mask for caption data.
-     - Ensures alignment with trajectory and character data masks.
+1. **Pose direction.** Every consumer (DIRECTOR rendering, the shift
+   statistics) treats each stored 4×4 as the camera's pose **in** the
+   world (c2w-like: translation = camera position). The E.T. *creation* code
+   confusingly names the variable `w2c_poses` — ignore the name; invert the
+   matrix if you need world→camera. Sanity check: the mean frame-0 translation
+   equals `shift_mean ≈ [0.00, −0.27, −1.24]`, i.e. the camera starts ~1.24 m
+   behind and ~0.27 m above (y-down) the character at the origin.
+2. **Camera-frame axes** (OpenCV-style, used for the motion labels):
+   x = right (trucking), y = down (`boom_bottom` = +y), z = forward
+   (`push_in` = +z).
+3. **rot6d convention.** The 6 stored numbers are the **first two columns** of
+   R (DIRECTOR: `R[:, :, :2]`). Beware: pytorch3d's `matrix_to_rotation_6d`
+   takes the first two **rows** — bridge with a transpose if you use it.
+   rot6d values are in [−1, 1] and are *not* standardized.
+4. **Padding-mask polarity.** DIRECTOR items use `1.0 = valid frame`,
+   `0.0 = pad`.
+5. **Origin shift.** `char[0] ≈ (0,0,0)` for every sample by construction (the
+   whole scene is translated so the character starts at the origin). Camera
+   frame-0 statistics (`shift_*`) are therefore camera-relative-to-character.
 
-## parameters
+## 4. Feature encoding (exact)
 
-1. Trajectory Parameters:
-   - `num_feats`: int = 9 (6 for rotation, 3 for translation)
-   - `num_rawfeats`: int = 12 (original representation before processing)
-   - `num_cams`: int = 300 (number of time steps)
-   - `standardize`: bool = True (data is normalized)
+### 4.1 Camera trajectory → `(9, 300)` feature
 
-2. Character Parameters:
-   - `num_feats`: int = 3 (x, y, z coordinates of character's center)
-   - `sequential`: bool, determined by `diffuser.network.module.cond_sequential`
-   - `num_vertices`: int, number of vertices in the character mesh (if `load_vertices` is True)
-   - `num_faces`: int, number of faces in the character mesh (if `load_vertices` is True)
-   - `load_vertices`: bool, determines whether to load character mesh data
-   - `standardize`: bool, whether to standardize the character features
-   - `velocity`: bool, whether to compute velocity information
+```python
+t = poses[:, :3, 3]                                # (N, 3) absolute positions
+v = concat([t[0:1], t[1:] - t[:-1]])               # frame 0 absolute, rest deltas
+v[0]  = (v[0]  - shift_mean) / shift_std           # z-score the origin
+v[1:] = (v[1:] - norm_mean)  / norm_std            # z-score the velocities
+r6 = first_two_columns(R).reshape(N, 6)            # NOT standardized
+feat = concat([r6, v], dim=-1)                     # (N, 9); layout [r6 | txyz]
+# zero-pad to 300 frames; stored transposed as (9, 300); padding_mask marks valid frames
+```
 
-3. Caption Parameters:
-   - `num_segments`: int = 27 (sequence divided into 27 segments)
-   - `num_feats`: int = 512 (dimensionality of CLIP text embeddings)
-   - `max_feat_length`: int = 77 (maximum number of tokens in a caption)
+Decode (`get_matrix`): un-z-score → `cumsum` the velocity rows → Gram–Schmidt
+(`rotation_6d_to_matrix`) → transpose → assemble 4×4.
 
-4. Standardization Parameters:
-   - `num_interframes`: int = 0 (no interpolated frames)
-   - `num_total_frames`: int = 300 (equal to `num_cams`)
-   - `norm_mean` and `norm_std`: list, normalization parameters for trajectory data
-   - `shift_mean` and `shift_std`: list, additional transformation parameters
-   - `norm_mean_h` and `norm_std_h`: list, normalization parameters for character data
-   - `velocity`: bool = True (velocity information is included)
+### 4.2 Character center → `(3, 300)` feature
 
-5. Dataset Configuration:
-   - Uses rot6d (6D rotation representation) for trajectories
-   - Combines trajectory, caption, and optionally character data
-   - Dataset name format: f"{standardization_name}-t:{trajectory_name}-c:{caption_name}(-h:{char_name})"
-   - `dataset_dir`: str = `${data_dir}` (configurable path)
+Same velocity trick (frame 0 absolute, rest deltas), but **all** frames are
+z-scored with the single pair `norm_mean_h / norm_std_h` (the config has 3
+values, so the "all-in-one" branch runs). This only works because frame 0 ≈ 0
+(§3.5); `norm_std_h ≈ 0.01` is a *per-frame velocity* scale. **If you feed a
+subject whose frame-0 position is not near the origin, re-center it first or
+the normalized value explodes.**
 
-6. Data Processing:
-   - CLIP is used for encoding captions, resulting in 512-dimensional embeddings
-   - Character data is centered (as indicated by `center_char.yaml`)
-   - Trajectory data uses a 6D rotation representation (continuous representation of 3D rotations)
+### 4.3 Standardization constants (DIRECTOR `configs/dataset/standardization/0300.yaml`)
 
-7. Multimodal Integration:
-   - The dataset aligns trajectory, character, and caption data over 300 time steps
-   - Padding masks are provided for each modality to handle variable-length sequences
-   - The `MultimodalDataset` class is used to combine these different data types
+| Constant | Value | Units / applies to |
+|---|---|---|
+| `shift_mean` | `[0.00201079, −0.27488501, −1.23616805]` | m, camera frame-0 position |
+| `shift_std` | `[1.13433516, 1.19061042, 1.58744263]` | m |
+| `norm_mean` | `[7.9399e−05, −9.9862e−05, 4.1294e−04]` | m/frame, camera velocities |
+| `norm_std` | `[0.027841, 0.01819818, 0.03138536]` | m/frame (≈ 0.45–0.8 m/s at 25 fps) |
+| `norm_mean_h` | `[6.676e−05, −5.084e−05, −7.782e−04]` | m/frame, character (all frames) |
+| `norm_std_h` | `[0.0105, 0.006958, 0.01145]` | m/frame |
+| `velocity` | `True` | translation stored as deltas |
+
+Training-only detail (not part of the stored data or of `normalize_item`):
+DIRECTOR additionally multiplies features by `sigma_data = 0.5` inside its
+EDM training/sampling loop.
+
+## 5. Item schema — DIRECTOR `MultimodalDataset[i]`
+
+| Key | Shape / type | Notes |
+|---|---|---|
+| `traj_filename` | str `"{id}.txt"` | |
+| `traj_feat` | `(9, 300)` float32 | §4.1, normalized |
+| `padding_mask` | `(300,)` float32 | **1 = valid**, 0 = pad |
+| `intrinsics` | ndarray `(4,)` **float16** | fx, fy, cx, cy |
+| `char_filename` | str `"{id}.npy"` | |
+| `char_feat` | `(3, 300)` float32 | §4.2, normalized |
+| `char_raw.char_raw_feat` / `.char_centers` | `(3, 300)` float32 | raw (un-normalized) centers, padded |
+| `char_raw.char_vertices` / `.char_faces` | `(300, V, 3)` / `(300, F, 3)` | only if `load_vertices=True` |
+| `caption_filename` | str `"{id}"` | |
+| `caption_feat` | `(512, 77)` float32 | per-token CLIP, zero-padded, transposed |
+| `caption_raw.caption` | str | the text |
+| `caption_raw.segments` | `(300,)` int64 | camera classes, **padded with 27** |
+| `caption_raw.clip_seq_caption` | `(77, 512)` float32 | untransposed copy |
+| `caption_raw.clip_seq_mask` | `(77,)` float32 | 1 = valid token |
+| `char_padding_mask`, `caption_padding_mask` | `(300,)` | copies of `padding_mask` |
+
+⚠ DIRECTOR's `TrajectoryDataset.get_feature/get_matrix` **bundle** the
+z-scoring with the geometric encode/decode — the features they take and
+return are the normalized ones.
+
+## 6. Motion labels (27 classes) and captions
+
+Per velocity step, take the sign pattern `(sx, sy, sz) ∈ {0, +1, −1}³` of the
+thresholded velocity — **camera**: relative motion `inv(P_t) @ P_{t+1}` in the
+camera frame, ×25 → m/s, static threshold 0.02 m/s, axis-dominance threshold
+0.4; **character**: world-frame center velocity, thresholds 0.22 / 0.32. The
+class id is the pattern's index in `itertools.product([0, 1, -1], repeat=3)`.
+Labels are then mode-filtered (window 56 frames) and chunks < 25 frames merged.
+
+| id | camera | character | | id | camera | character |
+|---|---|---|---|---|---|---|
+| 0 | static | static | | 14 | truck_right+boom_bottom+pull_out | right+down+backward |
+| 1 | push_in | move_forward | | 15 | truck_right+boom_top | right+up |
+| 2 | pull_out | move_backward | | 16 | truck_right+boom_top+push_in | right+up+forward |
+| 3 | boom_bottom | move_down | | 17 | truck_right+boom_top+pull_out | right+up+backward |
+| 4 | boom_bottom+push_in | down+forward | | 18 | trucking_left | move_left |
+| 5 | boom_bottom+pull_out | down+backward | | 19 | truck_left+push_in | left+forward |
+| 6 | boom_top | move_up | | 20 | truck_left+pull_out | left+backward |
+| 7 | boom_top+push_in | up+forward | | 21 | truck_left+boom_bottom | left+down |
+| 8 | boom_top+pull_out | up+backward | | 22 | truck_left+boom_bottom+push_in | left+down+forward |
+| 9 | trucking_right | move_right | | 23 | truck_left+boom_bottom+pull_out | left+down+backward |
+| 10 | truck_right+push_in | right+forward | | 24 | truck_left+boom_top | left+up |
+| 11 | truck_right+pull_out | right+backward | | 25 | truck_left+boom_top+push_in | left+up+forward |
+| 12 | truck_right+boom_bottom | right+down | | 26 | truck_left+boom_top+pull_out | left+up+backward |
+| 13 | truck_right+boom_bottom+push_in | right+down+forward | | 27 | *(padding value only)* | *(padding value only)* |
+
+Captions were generated by prompting Mistral-7B / Mixtral-8x7B with the chunked
+segment outline ("Between frames 0 and 154: boom top; …") and asking for one
+short factual sentence; the vocabulary is therefore limited to the patterns
+above. CLIP ViT-B/32 encodings of these captions are precomputed (§2).
+
+## 7. Gotchas (recap)
+
+1. `intrinsics` is stored float16 — cast before math.
+2. Segment files have length N−1 (per velocity step); loaders pad with class
+   27 to 300; renderers duplicate the first entry to reach N.
+3. rot6d uses the first two **columns** of R; pytorch3d's rot6d uses the first
+   two **rows** — transpose when bridging (§3.3).
+4. `norm_std_h` is a velocity scale; absolute subject positions far from the
+   origin explode after normalization (§4.2).
+5. The ×0.5 `sigma_data` scaling is a DIRECTOR training-loop detail, not part
+   of the data.
+6. All statistics assume 25 fps and ≤ 300 frames; resampling a clip to another
+   length changes per-frame velocity statistics and pushes features off the
+   training distribution.
+7. Upstream storage is half precision (traj text at `%.6e`, verts/poses
+   float16) — expect ~1e-3 round-trip noise.
+
+## 8. Appendix — provenance (how the data was made)
+
+Movie shots from CondensedMovies (≥ 5 s at 25 fps; shots whose camera path is
+< 1 m are dropped). DROID-SLAM estimates camera poses; PHALP + SLAHMR jointly
+reconstruct SMPL humans and the camera in 100-frame windows with 10-frame
+overlap; windows are stitched by least-squares scale+translation on the shared
+cameras; bodies are tracked with a SORT-style Kalman tracker and the main
+character is the track maximizing screen-coverage × track-length. Velocity
+outliers (> 3× the 95th-percentile speed) are removed, remaining chunks are
+smoothed with a constant-velocity Kalman smoother, cropped to ≤ 300 frames
+(the "0300" set), and the whole scene is translated so the character's first
+position is the world origin. Motion labels and LLM captions are produced as
+in §6; all standardization statistics in §4.3 are computed over this final
+"0300 / mixed" set.

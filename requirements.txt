@@ -26,6 +26,7 @@ einops==0.8.1
 pytorch-lightning==2.5.0.post0
 matplotlib==3.10.0
 pandas==2.2.3
+fvcore==0.1.5.post20221221
 bitsandbytes==0.45.2
 rerun==1.0.30
 git+https://github.com/openai/CLIP.git

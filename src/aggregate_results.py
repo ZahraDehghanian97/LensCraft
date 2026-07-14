@@ -21,6 +21,7 @@ METRIC_COLS = ["FID", "P", "R", "D", "C", "CS", "Clatr"]
 MODEL_LABEL = {"lens_craft": "LensCraft", "ccdm": "CCDM", "et": "E.T.", "gendop": "GenDoP"}
 MODEL_ORDER = ["lens_craft", "ccdm", "et", "gendop"]
 SET_ORDER = ["static", "dynamic"]
+NO_NORM_MODE = "prompt_generation_no_norm"
 
 MODE_TO_INPUT = {
     "prompt_generation": "P",
@@ -96,6 +97,8 @@ def md_table(header: List[str], rows: List[List[str]]) -> str:
 
 
 def build_table1(metric_runs) -> str:
+    """SOTA comparison. When a baseline's run also carries the no-normalization
+    mode, an extra "(w/o norm)" row is emitted right below its default row."""
     idx = {(r.get("set"), r.get("model_type")): r
            for r in metric_runs if not r.get("variant")}
     rows = []
@@ -106,6 +109,10 @@ def build_table1(metric_runs) -> str:
                 continue
             rows.append([s.capitalize(), MODEL_LABEL.get(m, m)]
                         + _row_cells(run, "prompt_generation"))
+            if NO_NORM_MODE in run.get("metrics", {}):
+                rows.append([s.capitalize(),
+                             MODEL_LABEL.get(m, m) + " (w/o norm)"]
+                            + _row_cells(run, NO_NORM_MODE))
     return md_table(["Set", "Methods"] + METRIC_COLS, rows)
 
 
@@ -153,6 +160,27 @@ def build_table4(eff_runs) -> str:
     return md_table(["Model", "Inference Time (s)", "FLOPs (G)"], rows)
 
 
+def build_table5(metric_runs) -> str:
+    idx = {(r.get("set"), r.get("model_type")): r
+           for r in metric_runs if not r.get("variant")}
+    rows = []
+    for s in SET_ORDER:
+        for m in MODEL_ORDER:
+            if m == "lens_craft":
+                continue
+            run = idx.get((s, m))
+            if run is None:
+                continue
+            metrics = run.get("metrics", {})
+            if "prompt_generation" in metrics:
+                rows.append([s.capitalize(), MODEL_LABEL.get(m, m), "yes"]
+                            + _row_cells(run, "prompt_generation"))
+            if NO_NORM_MODE in metrics:
+                rows.append([s.capitalize(), MODEL_LABEL.get(m, m), "no"]
+                            + _row_cells(run, NO_NORM_MODE))
+    return md_table(["Set", "Methods", "Sim. norm."] + METRIC_COLS, rows)
+
+
 def write_flat_csv(metric_runs, path: str) -> None:
     header = ["model", "set", "variant", "mode"]
     for c in METRIC_COLS:
@@ -192,6 +220,7 @@ def main() -> None:
         "table2_multimodal.md": build_table2(metric_runs),
         "table3_ablation.md": build_table3(metric_runs, args.table3_mode),
         "table4_efficiency.md": build_table4(eff_runs),
+        "table5_baseline_normalization.md": build_table5(metric_runs),
     }
     for name, content in tables.items():
         with open(os.path.join(out_dir, name), "w") as f:

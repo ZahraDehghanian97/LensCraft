@@ -73,9 +73,9 @@ class CCDMDataset(Dataset):
         eps  = 1e-8
 
         if normalize:
-            camera_trajectory.sub_(mean).div_(std + eps)
+            camera_trajectory = (camera_trajectory - mean) / (std + eps)
         else:
-            camera_trajectory.mul_(std).add_(mean)
+            camera_trajectory = camera_trajectory * std + mean
 
         return camera_trajectory, subject_trajectory, subject_volume
 

@@ -23,9 +23,15 @@ def main(cfg: DictConfig) -> None:
     features_et_path = os.path.join(features_path, "dataset_simulation_model_et.pth")
     features_ccdm_path = os.path.join(features_path, "dataset_simulation_model_ccdm.pth")
     
-    prompt_generation_lens_craft = torch.load(features_lens_craft_path)["prompt_generation"]
-    prompt_generation_et = torch.load(features_et_path)["prompt_generation"]
-    prompt_generation_ccdm = torch.load(features_ccdm_path)["prompt_generation"]
+    prompt_generation_lens_craft = torch.load(
+        features_lens_craft_path, weights_only=True
+    )["prompt_generation"]
+    prompt_generation_et = torch.load(features_et_path, weights_only=True)[
+        "prompt_generation"
+    ]
+    prompt_generation_ccdm = torch.load(features_ccdm_path, weights_only=True)[
+        "prompt_generation"
+    ]
     
     all_prompt_generations = dict()
 

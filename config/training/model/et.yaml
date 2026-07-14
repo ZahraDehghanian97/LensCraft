@@ -5,4 +5,6 @@ data_format:
 inference:
   project_config_dir: ${oc.env:DIRECTOR_PROJECT_DIR}/configs/config.yaml
   dataset_dir: ${oc.env:ET_DATA_DIR}
-  et_type: adaln # adaln, ca, incontext
+  et_type: ca # adaln, ca, incontext
+  guidance_scale: 1.4 # OOD text often behaves better with lower weight; sweep this
+  undo_edm2_normalization: true # divide generations by sigma_data (DIRECTOR omits it)

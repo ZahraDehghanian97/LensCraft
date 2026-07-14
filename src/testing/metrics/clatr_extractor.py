@@ -55,7 +55,9 @@ class CLaTrFeatureExtractor(nn.Module):
             )
             self.clatr = instantiate(director_cfg.diffuser.clatr)
 
-            raw_state = torch.load(checkpoint_path, map_location="cpu")
+            raw_state = torch.load(
+                checkpoint_path, map_location="cpu", weights_only=False
+            )
             state_dict = raw_state.get("state_dict", raw_state)
             missing, unexpected = self.clatr.load_state_dict(state_dict, strict=False)
             if missing:

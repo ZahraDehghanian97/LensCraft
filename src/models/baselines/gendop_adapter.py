@@ -19,6 +19,9 @@ class GenDoPAdapter:
 
         self.discrete_bins = int(config.get("discrete_bins", 256))
         self.pose_length = int(config.get("pose_length", 30))
+        self.hidden_dim = int(config.get("hidden_dim", 1024))
+        self.num_heads = int(config.get("num_heads", 8))
+        self.num_layers = int(config.get("num_layers", 12))
         self.cond_mode = str(config.get("cond_mode", "text"))
         self.num_cond_tokens = int(config.get("num_cond_tokens", 77))
         self.target_height = int(config.get("target_height", 512))
@@ -49,6 +52,9 @@ class GenDoPAdapter:
         opt = Options()
         opt.discrete_bins = self.discrete_bins
         opt.pose_length = self.pose_length
+        opt.hidden_dim = self.hidden_dim
+        opt.num_heads = self.num_heads
+        opt.num_layers = self.num_layers
         opt.cond_mode = self.cond_mode
         opt.num_cond_tokens = self.num_cond_tokens
         opt.target_height = self.target_height
@@ -70,13 +76,19 @@ class GenDoPAdapter:
         if ckpt_path.endswith("safetensors"):
             ckpt = load_file(ckpt_path, device="cpu")
         else:
-            ckpt = torch.load(ckpt_path, map_location="cpu")
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
 
         missing, unexpected = model.load_state_dict(ckpt, strict=False)
-        if missing:
-            logger.info("[GenDoP] missing keys (%d): %s ...", len(missing), missing[:5])
-        if unexpected:
-            logger.info("[GenDoP] unexpected keys (%d): %s ...", len(unexpected), unexpected[:5])
+        if missing or unexpected:
+            raise RuntimeError(
+                "GenDoP checkpoint is incompatible with the configured model "
+                f"(hidden_dim={self.hidden_dim}, num_heads={self.num_heads}, "
+                f"num_layers={self.num_layers}). Missing keys: {len(missing)} "
+                f"({missing[:5]}); unexpected keys: {len(unexpected)} "
+                f"({unexpected[:5]}). Configure the checkpoint's exact "
+                "architecture instead of evaluating with partially initialized "
+                "weights."
+            )
 
         model = model.half().eval().to(self.device)
         logger.info("Loaded GenDoP checkpoint from %s", ckpt_path)
@@ -137,6 +149,7 @@ class GenDoPAdapter:
 
         generations = []
         for prompt in text_prompts:
+            generation_assertion_failed = False
             try:
                 with torch.autocast(device_type=self.device.type, dtype=torch.float16):
                     tokens = self.model.generate(
@@ -146,15 +159,37 @@ class GenDoPAdapter:
                     )
 
                 token_seq = torch.as_tensor(tokens[0], device=self.device)
-                if token_seq.numel() > 0:
-                    token_seq = token_seq[:-1]
+                expected_len = self.pose_length * 10
+                if token_seq.numel() == expected_len + 1:
+                    token_seq = token_seq[:expected_len]
+                elif (
+                    0 < token_seq.numel() < expected_len
+                    and token_seq.numel() % 10 == 0
+                ):
+                    missing_poses = (expected_len - token_seq.numel()) // 10
+                    token_seq = torch.cat(
+                        [token_seq, token_seq[-10:].repeat(missing_poses)], dim=0
+                    )
             except AssertionError:
+                generation_assertion_failed = True
                 logger.warning(
                     "GenDoP produced an out-of-range token sequence for prompt "
                     "%r; falling back to a default trajectory.",
                     prompt,
                 )
                 token_seq = torch.empty(0, dtype=torch.long, device=self.device)
+
+            if (
+                token_seq.numel() != self.pose_length * 10
+                and not generation_assertion_failed
+            ):
+                logger.warning(
+                    "GenDoP produced %d coordinate tokens for prompt %r; expected "
+                    "%d. Falling back to a default trajectory.",
+                    token_seq.numel(),
+                    prompt,
+                    self.pose_length * 10,
+                )
 
             c2ws = self._tokens_to_c2ws(token_seq).to(self.device)
             generations.append(c2ws)

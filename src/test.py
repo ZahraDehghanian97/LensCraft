@@ -20,7 +20,7 @@ from models.baselines.gendop_adapter import GenDoPAdapter
 from testing.metrics.callback import MetricCallback
 from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
 from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
-from testing.process import test_batch
+from testing.process import NO_NORM_ITEM, NORM_ITEM, test_batch
 from utils.load_lens_craft import load_lens_craft_model
 from visualization.utils import (
     tSNE_visualize_embeddings,
@@ -150,24 +150,46 @@ def _eval_set_tag(cfg: DictConfig) -> str | None:
     return None
 
 
-def _trajectory_cache_path(cfg: DictConfig, dataset_type: str, model_type: str) -> str:
+def _norm_ablation_enabled(cfg: DictConfig, model_type: str, dataset_type: str) -> bool:
+    """Whether to additionally report the baselines WITHOUT the
+    simulation-data normalization (same run, extra metric mode)."""
+    return (
+        bool(cfg.get("baseline_norm_ablation", True))
+        and model_type in BASELINE_MODELS
+        and dataset_type == "simulation"
+    )
+
+
+def _trajectory_cache_paths(
+    cfg: DictConfig, dataset_type: str, model_type: str, norm_ablation: bool
+) -> dict[str, str]:
     trajectories_dir = os.path.join(cfg.cache_dir, "generated_trajectory")
     os.makedirs(trajectories_dir, exist_ok=True)
     parts = ["dataset", dataset_type, "model", model_type]
     if model_type == "et":
         parts.append(str(cfg.training.model.inference.et_type))
+    elif model_type == "gendop":
+        inference_cfg = cfg.training.model.inference
+        parts.append(
+            f"{int(inference_cfg.get('num_layers', 12))}l-"
+            f"{int(inference_cfg.get('num_heads', 8))}h"
+        )
     set_tag = _eval_set_tag(cfg)
-    if set_tag:
-        parts.append(set_tag)
-    name = "_".join(parts) + ".pth"
-    return os.path.join(trajectories_dir, name)
+    tail = [set_tag] if set_tag else []
+
+    paths = {"main": os.path.join(trajectories_dir, "_".join(parts + tail) + ".pth")}
+    if norm_ablation and model_type == "et":
+        paths["no_norm"] = os.path.join(
+            trajectories_dir, "_".join(parts + ["nonorm"] + tail) + ".pth"
+        )
+    return paths
 
 
 def _load_eval_models(
     cfg: DictConfig,
     model_type: str,
     device: torch.device,
-    trajectory_cache_path: str,
+    trajectory_cache_paths: dict[str, str],
 ):
     if model_type == "lens_craft":
         model = load_lens_craft_model(
@@ -182,7 +204,7 @@ def _load_eval_models(
         model_inference=cfg.ref_model.inference,
         device=device,
     )
-    if os.path.exists(trajectory_cache_path):
+    if all(os.path.exists(path) for path in trajectory_cache_paths.values()):
         return None, ref_model
 
     if model_type == "ccdm":
@@ -208,9 +230,14 @@ def _load_clip_embeddings(cfg: DictConfig, model_type: str):
     return None
 
 
-def _select_metric_items(model_type: str, dataset_type: str) -> list[str]:
+def _select_metric_items(
+    model_type: str, dataset_type: str, norm_ablation: bool
+) -> list[str]:
     if model_type in BASELINE_MODELS:
-        return ["prompt_generation"]
+        items = [NORM_ITEM]
+        if norm_ablation:
+            items.append(NO_NORM_ITEM)
+        return items
     if dataset_type in CAPTIONED_DATASETS:
         return [
             "reconstruction",
@@ -233,56 +260,51 @@ def _run_evaluation(
     dataset_type: str,
     model_type: str,
     device: torch.device,
-    trajectory_cache_path: str,
+    trajectory_cache_paths: dict[str, str],
 ) -> None:
     limit = int(cfg.get("limit_test_batches", 0))  # 0 = no limit (smoke-test knob)
     seq_length = cfg.training.model.data_format.seq_length
-    use_cache = (
-        os.path.exists(trajectory_cache_path) and model_type in BASELINE_MODELS
-    )
 
-    if use_cache:
-        logger.info("Loading pre-generated trajectories from %s", trajectory_cache_path)
-        cached_trajectories = torch.load(trajectory_cache_path)
-        logger.info("Loaded %d pre-generated trajectories", len(cached_trajectories))
-
-        with torch.no_grad():
-            batches = zip(test_dataloader, cached_trajectories)
-            total = min(len(test_dataloader), len(cached_trajectories))
-            for bi, (batch, trajectory) in enumerate(tqdm(batches, total=total)):
-                if limit and bi >= limit:
-                    break
-                test_batch(
-                    ref_model, model, batch, metric_callback, device, metric_items,
-                    dataset_type=dataset_type,
-                    model_type=model_type,
-                    seq_length=seq_length,
-                    pre_generated_trajectory=trajectory.to(device),
-                    clatr_extractor=clatr_extractor,
+    loaded: dict[str, list] = {}
+    if model_type in BASELINE_MODELS:
+        for key, path in trajectory_cache_paths.items():
+            if os.path.exists(path):
+                loaded[key] = torch.load(path, weights_only=True)
+                logger.info(
+                    "Loaded %d pre-generated '%s' trajectories from %s",
+                    len(loaded[key]), key, path,
                 )
-        return
 
-    generated_trajectories = []
+    missing_keys = [k for k in trajectory_cache_paths if k not in loaded]
+    new_generations: dict[str, list] = {k: [] for k in missing_keys}
+
     with torch.no_grad():
         for bi, batch in enumerate(tqdm(test_dataloader)):
             if limit and bi >= limit:
                 break
-            trajectory = test_batch(
+            pre = {k: lst[bi].to(device) for k, lst in loaded.items() if bi < len(lst)}
+            if loaded and len(pre) < len(loaded) and model is None:
+                break  # cache shorter than the dataset and no model to regenerate
+            out = test_batch(
                 ref_model, model, batch, metric_callback, device, metric_items,
                 dataset_type=dataset_type,
                 model_type=model_type,
                 seq_length=seq_length,
+                pre_generated_trajectories=pre or None,
                 clatr_extractor=clatr_extractor,
             )
-            if trajectory is not None:
-                generated_trajectories.append(trajectory)
+            if out:
+                for key, trajectory in out.items():
+                    new_generations.setdefault(key, []).append(trajectory)
 
-    if model_type in BASELINE_MODELS and generated_trajectories:
-        torch.save(generated_trajectories, trajectory_cache_path)
-        logger.info(
-            "Saved %d generated trajectories to %s",
-            len(generated_trajectories), trajectory_cache_path,
-        )
+    if model_type in BASELINE_MODELS:
+        for key, generated in new_generations.items():
+            if generated:
+                torch.save(generated, trajectory_cache_paths[key])
+                logger.info(
+                    "Saved %d generated '%s' trajectories to %s",
+                    len(generated), key, trajectory_cache_paths[key],
+                )
 
 
 def _bootstrap_std(
@@ -487,9 +509,18 @@ def main(cfg: DictConfig) -> None:
     dataset_type: DatasetType = resolve_dataset_type(cfg.data.dataset.config["_target_"])
     test_dataloader = data_module.test_dataloader()
 
-    trajectory_cache_path = _trajectory_cache_path(cfg, dataset_type, model_type)
+    norm_ablation = _norm_ablation_enabled(cfg, model_type, dataset_type)
+    if model_type in BASELINE_MODELS:
+        logger.info(
+            "Reporting baseline with AND without the simulation-data "
+            "normalization in this run: %s", norm_ablation,
+        )
+
+    trajectory_cache_paths = _trajectory_cache_paths(
+        cfg, dataset_type, model_type, norm_ablation
+    )
     model, ref_model = _load_eval_models(
-        cfg, model_type, device, trajectory_cache_path
+        cfg, model_type, device, trajectory_cache_paths
     )
     clip_embeddings = _load_clip_embeddings(cfg, model_type)
 
@@ -497,12 +528,12 @@ def main(cfg: DictConfig) -> None:
         num_cams=1, device=device, clip_embeddings=clip_embeddings
     )
     clatr_extractor = _build_clatr_extractor(cfg, device)
-    metric_items = _select_metric_items(model_type, dataset_type)
+    metric_items = _select_metric_items(model_type, dataset_type, norm_ablation)
 
     _run_evaluation(
         cfg, ref_model, model, metric_callback, clatr_extractor,
         test_dataloader, metric_items, dataset_type, model_type,
-        device, trajectory_cache_path,
+        device, trajectory_cache_paths,
     )
 
     boot_std = _bootstrap_std(cfg, metric_callback, metric_items)

@@ -6,6 +6,9 @@ inference:
   checkpoint_path: ${oc.env:GENDOP_CHECKPOINT_PATH}
   pose_length: 30
   discrete_bins: 256
+  hidden_dim: 1024
+  num_heads: 8
+  num_layers: 12
   cond_mode: text
   num_cond_tokens: 77
   max_seq_length: 40960

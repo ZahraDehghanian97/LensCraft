@@ -1,4 +1,4 @@
-set -uo pipefail
+set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/common.sh"
 
@@ -32,7 +32,7 @@ for eset in static dynamic; do
 
     run_eval ccdm   "$eset" "$amt" training/model=ccdm
     run_eval et     "$eset" "$amt" training/model=et
-    run_eval gendop "$eset" "$amt" training/model=gendop data.batch_size=4
+    run_eval gendop "$eset" "$amt" training/model=gendop
 done
 
 echo ""
@@ -40,7 +40,7 @@ echo "--- efficiency ---"
 python src/efficiency.py                                   2>&1 | tee "$LOG_DIR_RUN/eff_lens_craft.log"
 python src/efficiency.py training/model=ccdm               2>&1 | tee "$LOG_DIR_RUN/eff_ccdm.log"
 python src/efficiency.py training/model=et                 2>&1 | tee "$LOG_DIR_RUN/eff_et.log"
-python src/efficiency.py training/model=gendop data.batch_size=4 2>&1 | tee "$LOG_DIR_RUN/eff_gendop.log"
+python src/efficiency.py training/model=gendop             2>&1 | tee "$LOG_DIR_RUN/eff_gendop.log"
 
 
 python src/aggregate_results.py --results-dir "$TEST_OUTPUT_DIR"

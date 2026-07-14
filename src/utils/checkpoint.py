@@ -1,7 +1,10 @@
 import torch
 
+
 def load_checkpoint(checkpoint_path, model, device):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(
+        checkpoint_path, map_location=device, weights_only=False
+    )
     state_dict = checkpoint["state_dict"]
 
     new_state_dict = {}
@@ -10,13 +13,13 @@ def load_checkpoint(checkpoint_path, model, device):
             new_key = key[6:]
         else:
             new_key = key
-        
+
         if 'subject_projection_loc_rot' in new_key:
             new_key = new_key.replace('subject_projection_loc_rot', 'subject_trajectory_projection')
-        
+
         if 'subject_projection_vol' in new_key:
             new_key = new_key.replace('subject_projection_vol', 'subject_volume_projection')
-        
+
         new_state_dict[new_key] = value
 
     model.load_state_dict(new_state_dict)

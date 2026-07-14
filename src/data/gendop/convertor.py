@@ -20,7 +20,8 @@ class GenDoPConvertor(BaseConvertor):
         device, dtype = trajectory.device, trajectory.dtype
         batch_size, seq_len = trajectory.shape[:2]
 
-        transform = trajectory
+        transform = trajectory.clone()
+        transform[..., :3, 1:3] = -transform[..., :3, 1:3]
 
         subject_transform = (
             torch.eye(4, device=device, dtype=dtype)
@@ -43,4 +44,6 @@ class GenDoPConvertor(BaseConvertor):
         subject_trajectory: torch.Tensor | None = None,
         subject_volume: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, None, None]:
-        return transform, None, None
+        out = transform.clone()
+        out[..., :3, 1:3] = -out[..., :3, 1:3]  # OpenCV -> OpenGL
+        return out, None, None

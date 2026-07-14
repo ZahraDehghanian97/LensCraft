@@ -40,7 +40,12 @@ class CCDMAdapter:
             gdown.download(id="136IZeL4PSf9L6FJ4n_jFM6QFLTDjbvr1", output=self.config.checkpoint_path, quiet=False)
             logger.info(f"Downloaded checkpoint to {self.config.checkpoint_path}")
 
-        ddpm.load_state_dict(torch.load(self.config.checkpoint_path, map_location=self.device))
+        state_dict = torch.load(
+            self.config.checkpoint_path,
+            map_location=self.device,
+            weights_only=True,
+        )
+        ddpm.load_state_dict(state_dict)
         ddpm.eval()
 
         clip_embedder = CLIPEmbedder(
@@ -89,7 +94,12 @@ class CCDMAdapter:
 
         return traj.permute(0, 2, 1)
 
+    _PROMPT_REWRITES = (("pushes in", "zooms in"), ("pulls out", "zooms out"))
+
     def generate_using_text(self, text_prompts, subject_trajectory=None, trajectory=None, padding_mask=None):
+        for old, new in self._PROMPT_REWRITES:
+            text_prompts = [prompt.replace(old, new) for prompt in text_prompts]
+
         with torch.no_grad():
             text_embeddings = self.clip_embedder.extract_clip_embeddings(text_prompts, return_seq=False).to(self.device)
 

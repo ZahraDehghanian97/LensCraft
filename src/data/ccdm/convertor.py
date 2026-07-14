@@ -5,7 +5,7 @@ from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 
 class CCDMConvertor(BaseConvertor):
-    def __init__(self, hfov_deg: float = 25.0, aspect: float = 1):
+    def __init__(self, hfov_deg: float = 45.0, aspect: float = 16 / 9):
         self.hfov_deg = hfov_deg
         self.aspect = aspect
 

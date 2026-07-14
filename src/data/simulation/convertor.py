@@ -4,10 +4,13 @@ from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 
 class SIMConvertor(BaseConvertor):
+    _GL2CV = (1.0, -1.0, -1.0)
+
     @handle_single_or_batch(arg_specs=[(1, 3)])
     def transform_to_sim6dof(self, transform):
         position = transform[..., :3, 3]
-        rotation_matrix = transform[..., :3, :3]
+        flip = torch.tensor(self._GL2CV, dtype=transform.dtype, device=transform.device)
+        rotation_matrix = transform[..., :3, :3] * flip  # OpenCV -> OpenGL (undo)
         rotation = matrix_to_euler_angles(rotation_matrix, convention="XYZ")
         return torch.cat([position, rotation], dim=-1)
 
@@ -17,9 +20,11 @@ class SIMConvertor(BaseConvertor):
         device = trajectory.device
         dtype = trajectory.dtype
 
+        flip = torch.tensor(self._GL2CV, dtype=dtype, device=device)
         transform = torch.eye(4, device=device, dtype=dtype).expand(batch_size, seq_len, 4, 4).clone()
         transform[..., :3, 3] = trajectory[..., :3]
-        transform[..., :3, :3] = euler_angles_to_matrix(trajectory[..., 3:], convention="XYZ")
+        R = euler_angles_to_matrix(trajectory[..., 3:], convention="XYZ")
+        transform[..., :3, :3] = R * flip  # OpenGL -> OpenCV
 
         return transform
 
