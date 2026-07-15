@@ -253,8 +253,7 @@ Notes:
 - GenDoP generates one prompt at a time, so keep `data.batch_size` small —
   expect it to be much slower than the LensCraft path.
 - Metric evaluation via `src/test.py` additionally needs `ref_model` pointing
-  at a trained LensCraft checkpoint and a CLaTr backend; generations are
-  cached under `$CACHE_DIR/generated_trajectory/` and reused across runs.
+  at a trained LensCraft checkpoint and a CLaTr backend.
 
 ## Configuration
 
@@ -277,7 +276,6 @@ OUTPUT_DIR=/path/to/outputs
 LOG_DIR=./logs
 
 ET_CIN_LANG_PATH=/path/to/data/et_cinematography_instructions.json
-CACHE_DIR=/path/to/LensCraft/cache
 HF_HOME=/path/to/hf_cache
 
 # Only needed for the cinematography annotation pipeline (src/annotate_data.py)

@@ -85,7 +85,7 @@ opt_file GENDOP_CHECKPOINT_PATH # only for training/model=gendop baseline
 opt_file TEST_CHECKPOINT_PATH   # only for src/test.py
 
 echo "== writable output / cache dirs =="
-for v in OUTPUT_DIR CACHE_DIR CLIP_EMBEDDINGS_CACHE_DIR LOG_DIR; do
+for v in OUTPUT_DIR CLIP_EMBEDDINGS_CACHE_DIR LOG_DIR; do
     d="${!v:-}"
     [ -z "$d" ] && { warn "$v unset"; continue; }
     mkdir -p "$d" 2>/dev/null && [ -w "$d" ] && ok "$v=$d (writable)" || bad "$v=$d not writable"

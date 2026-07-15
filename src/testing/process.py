@@ -44,15 +44,12 @@ def _generate_baseline_variants(
     seq_length: int,
     sim_camera_trajectory: torch.Tensor,
     sim_subject_trajectory: Optional[torch.Tensor],
-    pre_generated: Optional[Dict[str, torch.Tensor]],
     device: torch.device,
     batch_size: int,
 ):
-    pre_generated = pre_generated or {}
     want_norm = NORM_ITEM in metric_items
     want_no_norm = NO_NORM_ITEM in metric_items
 
-    new_generations: Dict[str, torch.Tensor] = {}
     variant_trajectories: Dict[str, torch.Tensor] = {}
 
     et_on_sim = model_type == "et" and dataset_type in ("simulation", "lens_craft")
@@ -80,12 +77,9 @@ def _generate_baseline_variants(
                 seq_length,
                 need_denormal=False,
             )
-            gen_norm = pre_generated.get("main")
-            if gen_norm is None:
-                gen_norm = model.generate_using_text(
-                    batch["text_prompts"], subj_n, traj_n, pad_n
-                )
-                new_generations["main"] = gen_norm.detach().cpu()
+            gen_norm = model.generate_using_text(
+                batch["text_prompts"], subj_n, traj_n, pad_n
+            )
             sim_gen = _to_sim_space("et", gen_norm, pad_n)
             sim_gen = undo_recenter_rescale(sim_gen, et_scene_origin, et_scene_scale)
             sim_gen, _, _ = SimulationDataset.normalize_item(sim_gen, None, None, True)
@@ -101,17 +95,14 @@ def _generate_baseline_variants(
                 batch["padding_mask"],
                 seq_length,
             )
-            gen_raw = pre_generated.get("no_norm")
-            if gen_raw is None:
-                gen_raw = model.generate_using_text(
-                    batch["text_prompts"], subj_r, traj_r, pad_r
-                )
-                new_generations["no_norm"] = gen_raw.detach().cpu()
+            gen_raw = model.generate_using_text(
+                batch["text_prompts"], subj_r, traj_r, pad_r
+            )
             sim_gen = _to_sim_space("et", gen_raw, pad_r)
             sim_gen, _, _ = SimulationDataset.normalize_item(sim_gen, None, None, True)
             variant_trajectories[NO_NORM_ITEM] = sim_gen
 
-        return variant_trajectories, new_generations
+        return variant_trajectories
 
     (
         trajectory,
@@ -128,12 +119,9 @@ def _generate_baseline_variants(
         seq_length,
         torch.full((batch_size,), SIM_SEQ_LENGTH, device=device), # fix me for other datasets
     )
-    generated = pre_generated.get("main")
-    if generated is None:
-        generated = model.generate_using_text(
-            batch["text_prompts"], subject_trajectory, trajectory, padding_mask
-        )
-        new_generations["main"] = generated.detach().cpu()
+    generated = model.generate_using_text(
+        batch["text_prompts"], subject_trajectory, trajectory, padding_mask
+    )
 
     gen_padding_mask = None if model_type == "ccdm" else padding_mask
     sim_generated = _to_sim_space(model_type, generated, gen_padding_mask)
@@ -163,7 +151,7 @@ def _generate_baseline_variants(
         raw, _, _ = SimulationDataset.normalize_item(raw, None, None, True)
         variant_trajectories[NO_NORM_ITEM] = raw
 
-    return variant_trajectories, new_generations
+    return variant_trajectories
 
 
 def _update_generation_metrics(
@@ -222,9 +210,8 @@ def test_batch(
     dataset_type: str = "simulation",
     model_type: str = "lens_craft",
     seq_length: int = 30,
-    pre_generated_trajectories: Optional[Dict[str, torch.Tensor]] = None,
     clatr_extractor=None,
-) -> Optional[Dict[str, torch.Tensor]]:
+) -> None:
     batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
 
@@ -248,7 +235,7 @@ def test_batch(
             text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
 
     if model_type in BASELINE_MODELS:
-        variant_trajectories, new_generations = _generate_baseline_variants(
+        variant_trajectories = _generate_baseline_variants(
             model,
             batch,
             metric_items,
@@ -257,7 +244,6 @@ def test_batch(
             seq_length,
             sim_camera_trajectory,
             sim_subject_trajectory,
-            pre_generated_trajectories,
             device,
             batch_size,
         )
@@ -275,7 +261,7 @@ def test_batch(
                 ref_model,
                 batch,
             )
-        return new_generations or None
+        return None
 
     if model_type != "lens_craft":
         raise ValueError(f"Unsupported model_type: {model_type}")
