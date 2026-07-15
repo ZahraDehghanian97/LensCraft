@@ -4,6 +4,7 @@ import torch
 
 from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
 from data.convertor.convertor import convert_to_target
+from data.gendop.alignment import place_relative_path_at_first_pose
 from data.simulation.dataset import SimulationDataset
 from data.sim_format import (
     SIM_SEQ_LENGTH,
@@ -138,7 +139,17 @@ def _generate_baseline_variants(
     sim_generated = _to_sim_space(model_type, generated, gen_padding_mask)
 
     if want_norm:
-        aligned = sim_generated.clone()
+        if model_type == "gendop":
+            # GenDoP predicts inv(P_0) @ P_t. Restore P_0 for the absolute
+            # evaluation while retaining the relative path for the no-norm mode.
+            generated_absolute = place_relative_path_at_first_pose(
+                generated, trajectory
+            )
+            aligned = _to_sim_space(
+                model_type, generated_absolute, gen_padding_mask
+            )
+        else:
+            aligned = sim_generated.clone()
         if model_type == "ccdm" and sim_subject_trajectory is not None:
             _, subject_denorm, _ = SimulationDataset.normalize_item(
                 sim_camera_trajectory, sim_subject_trajectory, None, False

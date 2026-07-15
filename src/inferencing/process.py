@@ -2,6 +2,7 @@ import torch
 
 from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
 from data.convertor.convertor import convert_to_target
+from data.gendop.alignment import place_relative_path_at_first_pose
 from data.simulation.dataset import SimulationDataset
 from data.sim_format import (
     SIM_SEQ_LENGTH,
@@ -54,6 +55,8 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         generated = model.generate_using_text(
             batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
         )
+        if model_type == "gendop":
+            generated = place_relative_path_at_first_pose(generated, trajectory)
         gen_padding_mask = None if model_type == "ccdm" else padding_mask
         sim_generated, *_ = convert_to_target(
             model_type, "simulation", generated, None, None,

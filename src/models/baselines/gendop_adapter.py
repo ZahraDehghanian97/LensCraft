@@ -118,7 +118,7 @@ class GenDoPAdapter:
 
         temp_traj = coords_traj / (0.5 * self.discrete_bins) - 1.0
         temp_instri = coords_instri / (self.discrete_bins / 10.0)
-        scale = torch.exp(coords_scale / self.discrete_bins * 4.0 - 2.0)
+        scale = torch.pow(10.0, coords_scale / self.discrete_bins * 4.0 - 2.0)
 
         # token_to_camera allocates helper tensors on CPU, so decode there.
         camera_tokens = torch.cat([temp_traj, temp_instri], dim=1).unsqueeze(0).cpu()

@@ -207,7 +207,10 @@ dropped, first chunk kept), positions Kalman-smoothed, and slerp/lerp-resampled
 to exactly 120 poses → `*_transforms_cleaning.json`. Motion tags (27
 translation × 7 rotation patterns, §5) are chunked into an outline; GPT-4o(-
 mini) turns the outline into the `Movement` caption and, with a 16-frame
-contact sheet, into the `Detailed`/`Concise Interaction` captions. GenDoP
-itself (the consumer) is an autoregressive transformer (OPT-style, 24×1024,
-trained with bf16) over the 300-token sequences with CLIP text / ViT-H image+
-depth conditions.
+contact sheet, into the `Detailed`/`Concise Interaction` captions. GenDoP itself (the consumer) is an autoregressive transformer over the
+300-token released-code representation. The upstream `ArAE` configuration
+uses hidden size 1024, 12 decoder layers and 8 attention heads; the paper
+reports 12 heads and a 60-pose trajectory. Use the released checkpoint
+tensor shapes and loader settings as the executable contract, and record
+these paper/code discrepancies in experiment metadata. Training uses bf16
+and SD2.1 text conditioning; RGBD variants add CLIP vision encoders.
