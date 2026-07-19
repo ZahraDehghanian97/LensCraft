@@ -211,7 +211,8 @@ def test_batch(
     model_type: str = "lens_craft",
     seq_length: int = 30,
     clatr_extractor=None,
-) -> None:
+    cached_outputs: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
 
@@ -235,18 +236,24 @@ def test_batch(
             text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
 
     if model_type in BASELINE_MODELS:
-        variant_trajectories = _generate_baseline_variants(
-            model,
-            batch,
-            metric_items,
-            dataset_type,
-            model_type,
-            seq_length,
-            sim_camera_trajectory,
-            sim_subject_trajectory,
-            device,
-            batch_size,
-        )
+        if cached_outputs is None:
+            variant_trajectories = _generate_baseline_variants(
+                model,
+                batch,
+                metric_items,
+                dataset_type,
+                model_type,
+                seq_length,
+                sim_camera_trajectory,
+                sim_subject_trajectory,
+                device,
+                batch_size,
+            )
+        else:
+            variant_trajectories = {
+                item: trajectory.to(device)
+                for item, trajectory in cached_outputs["trajectories"].items()
+            }
         for metric_item, sim_generated_trajectory in variant_trajectories.items():
             _update_generation_metrics(
                 metric_callback,
@@ -261,12 +268,18 @@ def test_batch(
                 ref_model,
                 batch,
             )
-        return None
+        return {
+            "trajectories": {
+                item: trajectory.detach().cpu()
+                for item, trajectory in variant_trajectories.items()
+            }
+        }
 
     if model_type != "lens_craft":
         raise ValueError(f"Unsupported model_type: {model_type}")
 
     key_framing_padding_mask = build_keyframing_mask(batch_size, device)
+    generated_outputs: Dict[str, Any] = {"items": {}}
 
     for metric_item in metric_items:
         caption_embedding = (
@@ -280,15 +293,26 @@ def test_batch(
         if metric_item in ("key_framing", "key_framing+prompt"):
             current_padding_mask = key_framing_padding_mask
 
-        ref_output = ref_model.generate_camera_trajectory(
-            subject_trajectory=sim_subject_trajectory,
-            subject_volume=sim_subject_volume,
-            camera_trajectory=sim_camera_trajectory,
-            padding_mask=current_padding_mask,
-            memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
-            caption_embedding=caption_embedding,
-        )
-        sim_generated_trajectory = ref_output["reconstructed"]
+        if cached_outputs is None:
+            ref_output = ref_model.generate_camera_trajectory(
+                subject_trajectory=sim_subject_trajectory,
+                subject_volume=sim_subject_volume,
+                camera_trajectory=sim_camera_trajectory,
+                padding_mask=current_padding_mask,
+                memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
+                caption_embedding=caption_embedding,
+            )
+            sim_generated_trajectory = ref_output["reconstructed"]
+        else:
+            item_output = cached_outputs["items"][metric_item]
+            sim_generated_trajectory = item_output["trajectory"].to(device)
+            ref_output = None
+
+        if cached_outputs is None:
+            generated_outputs["items"][metric_item] = {
+                "trajectory": sim_generated_trajectory.detach().cpu(),
+                "encoder_features": None,
+            }
 
         _update_generation_metrics(
             metric_callback,
@@ -308,14 +332,22 @@ def test_batch(
             metric_callback.clip_embeddings is not None
             and "cinematography_prompt_parameters" in batch
         ):
-            encoder_features = ref_output["embeddings"][
-                : ref_model.memory_tokens_count, ...
-            ]
-            encoder_features = encoder_features.permute(1, 0, 2).detach()
+            if ref_output is not None:
+                encoder_features = ref_output["embeddings"][
+                    : ref_model.memory_tokens_count, ...
+                ]
+                encoder_features = encoder_features.permute(1, 0, 2).detach()
+                generated_outputs["items"][metric_item]["encoder_features"] = (
+                    encoder_features.cpu()
+                )
+            else:
+                encoder_features = item_output["encoder_features"].to(device)
             metric_callback.update_caption_top1(
                 metric_item,
                 encoder_features,
                 batch["cinematography_prompt_parameters"],
             )
 
-    return None
+    if cached_outputs is not None:
+        return cached_outputs
+    return generated_outputs

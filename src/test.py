@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+from pathlib import Path
 
 import hydra
 import lightning as L
@@ -32,6 +35,73 @@ logger = logging.getLogger(__name__)
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
 CAPTIONED_DATASETS = ("simulation", "et")
+TRAJECTORY_CACHE_VERSION = 1
+
+
+def _trajectory_cache_key(cfg: DictConfig) -> str:
+    config = OmegaConf.to_container(cfg, resolve=True)
+    config.pop("trajectory_cache", None)
+    config.pop("trajectory_cache_dir", None)
+    canonical = json.dumps(
+        config, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _trajectory_cache_path(cfg: DictConfig, cache_key: str) -> Path:
+    cache_dir = hydra.utils.to_absolute_path(
+        str(cfg.get("trajectory_cache_dir", ".cache/test_trajectories"))
+    )
+    return Path(cache_dir) / f"{cache_key}.pt"
+
+
+def _expected_test_batches(cfg: DictConfig, test_dataloader) -> int:
+    available = len(test_dataloader)
+    limit = int(cfg.get("limit_test_batches", 0))
+    return min(available, limit) if limit else available
+
+
+def _load_trajectory_cache(
+    cfg: DictConfig, test_dataloader
+) -> tuple[Path | None, list | None]:
+    if not bool(cfg.get("trajectory_cache", True)):
+        return None, None
+
+    cache_key = _trajectory_cache_key(cfg)
+    cache_path = _trajectory_cache_path(cfg, cache_key)
+    if not cache_path.is_file():
+        logger.info("Trajectory cache miss: %s", cache_path)
+        return cache_path, None
+
+    try:
+        payload = torch.load(cache_path, map_location="cpu", weights_only=True)
+        if (
+            payload.get("version") != TRAJECTORY_CACHE_VERSION
+            or payload.get("config_hash") != cache_key
+            or len(payload.get("batches", []))
+            != _expected_test_batches(cfg, test_dataloader)
+        ):
+            raise ValueError("cache metadata or batch count does not match")
+        logger.info("Trajectory cache hit: %s", cache_path)
+        return cache_path, payload["batches"]
+    except Exception as exc:
+        logger.warning("Ignoring invalid trajectory cache %s: %s", cache_path, exc)
+        return cache_path, None
+
+
+def _save_trajectory_cache(cfg: DictConfig, cache_path: Path, batches: list) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = cache_path.with_suffix(f"{cache_path.suffix}.tmp-{os.getpid()}")
+    torch.save(
+        {
+            "version": TRAJECTORY_CACHE_VERSION,
+            "config_hash": _trajectory_cache_key(cfg),
+            "batches": batches,
+        },
+        temporary_path,
+    )
+    os.replace(temporary_path, cache_path)
+    logger.info("Saved generated trajectories to %s", cache_path)
 
 
 def _build_native_clatr_extractor(
@@ -137,7 +207,6 @@ def _model_type_from_cfg(cfg: DictConfig) -> str:
 
 
 def _norm_ablation_enabled(cfg: DictConfig, model_type: str, dataset_type: str) -> bool:
-    """Whether to additionally report the baselines WITHOUT the
     simulation-data normalization (same run, extra metric mode)."""
     return (
         bool(cfg.get("baseline_norm_ablation", True))
@@ -221,18 +290,26 @@ def _run_evaluation(
 ) -> None:
     limit = int(cfg.get("limit_test_batches", 0))  # 0 = no limit (smoke-test knob)
     seq_length = cfg.training.model.data_format.seq_length
+    cache_path, cached_batches = _load_trajectory_cache(cfg, test_dataloader)
+    generated_batches = [] if cached_batches is None else None
 
     with torch.no_grad():
         for bi, batch in enumerate(tqdm(test_dataloader)):
             if limit and bi >= limit:
                 break
-            test_batch(
+            generated = test_batch(
                 ref_model, model, batch, metric_callback, device, metric_items,
                 dataset_type=dataset_type,
                 model_type=model_type,
                 seq_length=seq_length,
                 clatr_extractor=clatr_extractor,
+                cached_outputs=(cached_batches[bi] if cached_batches is not None else None),
             )
+            if generated_batches is not None:
+                generated_batches.append(generated)
+
+    if cache_path is not None and generated_batches is not None:
+        _save_trajectory_cache(cfg, cache_path, generated_batches)
 
 
 def _bootstrap_std(

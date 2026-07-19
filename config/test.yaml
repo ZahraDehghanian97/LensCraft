@@ -10,6 +10,9 @@ output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 device: cuda
 tsne: false
 
+trajectory_cache: true
+trajectory_cache_dir: ${oc.env:TEST_TRAJECTORY_CACHE_DIR,.cache/test_trajectories}
+
 caption_top1_metric: false
 baseline_norm_ablation: true
 
