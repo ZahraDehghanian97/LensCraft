@@ -4,7 +4,6 @@ import torch
 
 from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
 from data.convertor.convertor import convert_to_target
-from data.gendop.alignment import place_relative_path_at_first_pose
 from data.simulation.dataset import SimulationDataset
 from data.sim_format import (
     SIM_SEQ_LENGTH,
@@ -12,11 +11,15 @@ from data.sim_format import (
     build_keyframing_mask,
     to_simulation_format,
 )
+from testing.baseline_modes import (
+    NO_NORM_ITEM,
+    NORM_ITEM,
+    NORM_LENSCRAFT_INIT_ITEM,
+    place_trajectory_at_first_position,
+)
 from utils.device import move_batch_to_device
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
-NORM_ITEM = "prompt_generation"
-NO_NORM_ITEM = "prompt_generation_no_norm"
 
 
 def _to_sim_space(model_type: str, generated: torch.Tensor,
@@ -35,7 +38,32 @@ def _to_sim_space(model_type: str, generated: torch.Tensor,
     return sim_generated
 
 
+def _lenscraft_first_position(
+    ref_model,
+    batch: Dict[str, Any],
+    sim_subject_trajectory: torch.Tensor,
+    sim_subject_volume: torch.Tensor,
+    sim_padding_mask: torch.Tensor,
+) -> torch.Tensor:
+    caption_embedding = batch.get("cinematography_prompt")
+    if caption_embedding is None:
+        raise ValueError(
+            "The normalized + LensCraft-init baseline mode requires a "
+            "cinematography prompt."
+        )
+
+    lenscraft_generation = ref_model.generate_camera_trajectory(
+        caption_embedding=caption_embedding,
+        camera_trajectory=None,
+        subject_trajectory=sim_subject_trajectory,
+        subject_volume=sim_subject_volume,
+        padding_mask=sim_padding_mask,
+    )["reconstructed"]
+    return lenscraft_generation[..., :1, :3]
+
+
 def _generate_baseline_variants(
+    ref_model,
     model,
     batch: Dict[str, Any],
     metric_items: List[str],
@@ -44,18 +72,23 @@ def _generate_baseline_variants(
     seq_length: int,
     sim_camera_trajectory: torch.Tensor,
     sim_subject_trajectory: Optional[torch.Tensor],
+    sim_subject_volume: Optional[torch.Tensor],
+    sim_padding_mask: torch.Tensor,
     device: torch.device,
     batch_size: int,
 ):
     want_norm = NORM_ITEM in metric_items
     want_no_norm = NO_NORM_ITEM in metric_items
+    want_lenscraft_init = NORM_LENSCRAFT_INIT_ITEM in metric_items
+    need_norm = want_norm or want_lenscraft_init
 
     variant_trajectories: Dict[str, torch.Tensor] = {}
+    normalized_trajectory: Optional[torch.Tensor] = None
 
     et_on_sim = model_type == "et" and dataset_type in ("simulation", "lens_craft")
 
     if et_on_sim:
-        if want_norm:
+        if need_norm:
             (
                 aligned_camera,
                 aligned_subject,
@@ -83,7 +116,9 @@ def _generate_baseline_variants(
             sim_gen = _to_sim_space("et", gen_norm, pad_n)
             sim_gen = undo_recenter_rescale(sim_gen, et_scene_origin, et_scene_scale)
             sim_gen, _, _ = SimulationDataset.normalize_item(sim_gen, None, None, True)
-            variant_trajectories[NORM_ITEM] = sim_gen
+            normalized_trajectory = sim_gen
+            if want_norm:
+                variant_trajectories[NORM_ITEM] = normalized_trajectory
 
         if want_no_norm:
             traj_r, subj_r, _, pad_r = convert_to_target(
@@ -99,8 +134,21 @@ def _generate_baseline_variants(
                 batch["text_prompts"], subj_r, traj_r, pad_r
             )
             sim_gen = _to_sim_space("et", gen_raw, pad_r)
-            sim_gen, _, _ = SimulationDataset.normalize_item(sim_gen, None, None, True)
             variant_trajectories[NO_NORM_ITEM] = sim_gen
+
+        if want_lenscraft_init:
+            first_position = _lenscraft_first_position(
+                ref_model,
+                batch,
+                sim_subject_trajectory,
+                sim_subject_volume,
+                sim_padding_mask,
+            )
+            variant_trajectories[NORM_LENSCRAFT_INIT_ITEM] = (
+                place_trajectory_at_first_position(
+                    normalized_trajectory, first_position
+                )
+            )
 
         return variant_trajectories
 
@@ -126,30 +174,34 @@ def _generate_baseline_variants(
     gen_padding_mask = None if model_type == "ccdm" else padding_mask
     sim_generated = _to_sim_space(model_type, generated, gen_padding_mask)
 
-    if want_norm:
-        if model_type == "gendop":
-            # GenDoP predicts inv(P_0) @ P_t. Restore P_0 for the absolute
-            # evaluation while retaining the relative path for the no-norm mode.
-            generated_absolute = place_relative_path_at_first_pose(
-                generated, trajectory
-            )
-            aligned = _to_sim_space(
-                model_type, generated_absolute, gen_padding_mask
-            )
-        else:
-            aligned = sim_generated.clone()
+    if need_norm:
+        aligned = sim_generated.clone()
         if model_type == "ccdm" and sim_subject_trajectory is not None:
             _, subject_denorm, _ = SimulationDataset.normalize_item(
                 sim_camera_trajectory, sim_subject_trajectory, None, False
             )
             aligned[..., :3] += subject_denorm[..., :3]
         aligned, _, _ = SimulationDataset.normalize_item(aligned, None, None, True)
-        variant_trajectories[NORM_ITEM] = aligned
+        normalized_trajectory = aligned
+        if want_norm:
+            variant_trajectories[NORM_ITEM] = normalized_trajectory
 
     if want_no_norm:
-        raw = sim_generated.clone()
-        raw, _, _ = SimulationDataset.normalize_item(raw, None, None, True)
-        variant_trajectories[NO_NORM_ITEM] = raw
+        variant_trajectories[NO_NORM_ITEM] = sim_generated.clone()
+
+    if want_lenscraft_init:
+        first_position = _lenscraft_first_position(
+            ref_model,
+            batch,
+            sim_subject_trajectory,
+            sim_subject_volume,
+            sim_padding_mask,
+        )
+        variant_trajectories[NORM_LENSCRAFT_INIT_ITEM] = (
+            place_trajectory_at_first_position(
+                normalized_trajectory, first_position
+            )
+        )
 
     return variant_trajectories
 
@@ -238,6 +290,7 @@ def test_batch(
     if model_type in BASELINE_MODELS:
         if cached_outputs is None:
             variant_trajectories = _generate_baseline_variants(
+                ref_model,
                 model,
                 batch,
                 metric_items,
@@ -246,6 +299,8 @@ def test_batch(
                 seq_length,
                 sim_camera_trajectory,
                 sim_subject_trajectory,
+                sim_subject_volume,
+                sim_padding_mask,
                 device,
                 batch_size,
             )

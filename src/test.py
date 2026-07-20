@@ -23,7 +23,11 @@ from models.baselines.gendop_adapter import GenDoPAdapter
 from testing.metrics.callback import MetricCallback
 from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
 from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
-from testing.process import NO_NORM_ITEM, NORM_ITEM, test_batch
+from testing.baseline_modes import (
+    BASELINE_ITEMS,
+    NORM_ITEM,
+)
+from testing.process import test_batch
 from utils.load_lens_craft import load_lens_craft_model
 from visualization.utils import (
     tSNE_visualize_embeddings,
@@ -35,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
 CAPTIONED_DATASETS = ("simulation", "et")
-TRAJECTORY_CACHE_VERSION = 1
+TRAJECTORY_CACHE_VERSION = 2
 
 
 def _trajectory_cache_key(cfg: DictConfig) -> str:
@@ -61,8 +65,18 @@ def _expected_test_batches(cfg: DictConfig, test_dataloader) -> int:
     return min(available, limit) if limit else available
 
 
+def _cached_metric_items(batch: dict) -> set[str]:
+    if "trajectories" in batch:
+        return set(batch["trajectories"])
+    if "items" in batch:
+        return set(batch["items"])
+    return set()
+
+
 def _load_trajectory_cache(
-    cfg: DictConfig, test_dataloader
+    cfg: DictConfig,
+    test_dataloader,
+    required_metric_items: list[str],
 ) -> tuple[Path | None, list | None]:
     if not bool(cfg.get("trajectory_cache", True)):
         return None, None
@@ -75,15 +89,18 @@ def _load_trajectory_cache(
 
     try:
         payload = torch.load(cache_path, map_location="cpu", weights_only=True)
+        batches = payload.get("batches", [])
         if (
             payload.get("version") != TRAJECTORY_CACHE_VERSION
             or payload.get("config_hash") != cache_key
-            or len(payload.get("batches", []))
-            != _expected_test_batches(cfg, test_dataloader)
+            or len(batches) != _expected_test_batches(cfg, test_dataloader)
         ):
             raise ValueError("cache metadata or batch count does not match")
+        required = set(required_metric_items)
+        if any(not required.issubset(_cached_metric_items(batch)) for batch in batches):
+            raise ValueError("cache does not contain every requested metric mode")
         logger.info("Trajectory cache hit: %s", cache_path)
-        return cache_path, payload["batches"]
+        return cache_path, batches
     except Exception as exc:
         logger.warning("Ignoring invalid trajectory cache %s: %s", cache_path, exc)
         return cache_path, None
@@ -207,7 +224,7 @@ def _model_type_from_cfg(cfg: DictConfig) -> str:
 
 
 def _norm_ablation_enabled(cfg: DictConfig, model_type: str, dataset_type: str) -> bool:
-    simulation-data normalization (same run, extra metric mode)."""
+    """Whether to report all three baseline post-processing modes."""
     return (
         bool(cfg.get("baseline_norm_ablation", True))
         and model_type in BASELINE_MODELS
@@ -261,10 +278,9 @@ def _select_metric_items(
     model_type: str, dataset_type: str, norm_ablation: bool
 ) -> list[str]:
     if model_type in BASELINE_MODELS:
-        items = [NORM_ITEM]
         if norm_ablation:
-            items.append(NO_NORM_ITEM)
-        return items
+            return list(BASELINE_ITEMS)
+        return [NORM_ITEM]
     if dataset_type in CAPTIONED_DATASETS:
         return [
             "reconstruction",
@@ -290,7 +306,9 @@ def _run_evaluation(
 ) -> None:
     limit = int(cfg.get("limit_test_batches", 0))  # 0 = no limit (smoke-test knob)
     seq_length = cfg.training.model.data_format.seq_length
-    cache_path, cached_batches = _load_trajectory_cache(cfg, test_dataloader)
+    cache_path, cached_batches = _load_trajectory_cache(
+        cfg, test_dataloader, metric_items
+    )
     generated_batches = [] if cached_batches is None else None
 
     with torch.no_grad():
@@ -517,8 +535,9 @@ def main(cfg: DictConfig) -> None:
     norm_ablation = _norm_ablation_enabled(cfg, model_type, dataset_type)
     if model_type in BASELINE_MODELS:
         logger.info(
-            "Reporting baseline with AND without the simulation-data "
-            "normalization in this run: %s", norm_ablation,
+            "Reporting baseline raw, normalized, and normalized + LensCraft "
+            "initial-position modes in this run: %s",
+            norm_ablation,
         )
 
     model, ref_model = _load_eval_models(cfg, model_type, device)

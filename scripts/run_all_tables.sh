@@ -30,9 +30,9 @@ for eset in static dynamic; do
 
     run_eval lens_craft "$eset" "$amt"
 
-    run_eval ccdm   "$eset" "$amt" training/model=ccdm
-    run_eval et     "$eset" "$amt" training/model=et
-    run_eval gendop "$eset" "$amt" training/model=gendop
+    run_eval ccdm   "$eset" "$amt" baseline_norm_ablation=true training/model=ccdm
+    run_eval et     "$eset" "$amt" baseline_norm_ablation=true training/model=et
+    run_eval gendop "$eset" "$amt" baseline_norm_ablation=true training/model=gendop
 done
 
 echo ""

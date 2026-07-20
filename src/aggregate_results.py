@@ -22,6 +22,19 @@ MODEL_LABEL = {"lens_craft": "LensCraft", "ccdm": "CCDM", "et": "E.T.", "gendop"
 MODEL_ORDER = ["lens_craft", "ccdm", "et", "gendop"]
 SET_ORDER = ["static", "dynamic"]
 NO_NORM_MODE = "prompt_generation_no_norm"
+NORM_MODE = "prompt_generation"
+NORM_LENSCRAFT_INIT_MODE = "prompt_generation_norm_lenscraft_init"
+
+BASELINE_MODE_SPECS = (
+    (NO_NORM_MODE, "no norm, no init", "no", "none"),
+    (NORM_MODE, "norm, no init", "yes", "none"),
+    (
+        NORM_LENSCRAFT_INIT_MODE,
+        "norm + LensCraft init",
+        "yes",
+        "LensCraft",
+    ),
+)
 
 MODE_TO_INPUT = {
     "prompt_generation": "P",
@@ -97,8 +110,7 @@ def md_table(header: List[str], rows: List[List[str]]) -> str:
 
 
 def build_table1(metric_runs) -> str:
-    """SOTA comparison. When a baseline's run also carries the no-normalization
-    mode, an extra "(w/o norm)" row is emitted right below its default row."""
+    """SOTA comparison, including every available baseline result mode."""
     idx = {(r.get("set"), r.get("model_type")): r
            for r in metric_runs if not r.get("variant")}
     rows = []
@@ -107,12 +119,17 @@ def build_table1(metric_runs) -> str:
             run = idx.get((s, m))
             if run is None:
                 continue
-            rows.append([s.capitalize(), MODEL_LABEL.get(m, m)]
-                        + _row_cells(run, "prompt_generation"))
-            if NO_NORM_MODE in run.get("metrics", {}):
-                rows.append([s.capitalize(),
-                             MODEL_LABEL.get(m, m) + " (w/o norm)"]
-                            + _row_cells(run, NO_NORM_MODE))
+            metrics = run.get("metrics", {})
+            label = MODEL_LABEL.get(m, m)
+            if m == "lens_craft":
+                if NORM_MODE in metrics:
+                    rows.append([s.capitalize(), label]
+                                + _row_cells(run, NORM_MODE))
+                continue
+            for mode, mode_label, _normalized, _initial_position in BASELINE_MODE_SPECS:
+                if mode in metrics:
+                    rows.append([s.capitalize(), f"{label} ({mode_label})"]
+                                + _row_cells(run, mode))
     return md_table(["Set", "Methods"] + METRIC_COLS, rows)
 
 
@@ -172,13 +189,18 @@ def build_table5(metric_runs) -> str:
             if run is None:
                 continue
             metrics = run.get("metrics", {})
-            if "prompt_generation" in metrics:
-                rows.append([s.capitalize(), MODEL_LABEL.get(m, m), "yes"]
-                            + _row_cells(run, "prompt_generation"))
-            if NO_NORM_MODE in metrics:
-                rows.append([s.capitalize(), MODEL_LABEL.get(m, m), "no"]
-                            + _row_cells(run, NO_NORM_MODE))
-    return md_table(["Set", "Methods", "Sim. norm."] + METRIC_COLS, rows)
+            for mode, _mode_label, normalized, initial_position in BASELINE_MODE_SPECS:
+                if mode in metrics:
+                    rows.append([
+                        s.capitalize(),
+                        MODEL_LABEL.get(m, m),
+                        normalized,
+                        initial_position,
+                    ] + _row_cells(run, mode))
+    return md_table(
+        ["Set", "Methods", "Sim. norm.", "Initial position"] + METRIC_COLS,
+        rows,
+    )
 
 
 def write_flat_csv(metric_runs, path: str) -> None:
