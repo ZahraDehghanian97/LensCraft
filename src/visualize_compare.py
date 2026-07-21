@@ -24,6 +24,13 @@ from data.convertor.constant import default_convertors
 from data.sim_format import to_simulation_format
 from data.simulation.dataset import SimulationDataset
 from inferencing.process import inference_batch
+from testing.baseline_modes import (
+    BASELINE_ITEMS,
+    NO_NORM_ITEM,
+    NORM_ITEM,
+    NORM_LENSCRAFT_INIT_ITEM,
+)
+from testing.process import _generate_baseline_variants
 from utils.device import move_batch_to_device
 from visualization.viser_utils import (
     add_frustums,
@@ -60,6 +67,16 @@ COLOR_WORD = {
     "ccdm": "blue",
     "et": "purple",
     "gendop": "pink",
+}
+BASELINE_MODE_LABEL = {
+    NO_NORM_ITEM: "plain",
+    NORM_ITEM: "normalized",
+    NORM_LENSCRAFT_INIT_ITEM: "normalized + LensCraft first",
+}
+BASELINE_MODE_COLOR_SCALE = {
+    NO_NORM_ITEM: 1.25,
+    NORM_ITEM: 1.0,
+    NORM_LENSCRAFT_INIT_ITEM: 0.72,
 }
 
 
@@ -101,6 +118,40 @@ def _resolve_device(cfg: DictConfig) -> torch.device:
 def _model_type_from_cfg(cfg: DictConfig) -> str:
     data_format_type = cfg.training.model.data_format.get("type", "simulation")
     return "lens_craft" if data_format_type == "simulation" else data_format_type
+
+
+def _baseline_column_name(model_type: str, mode: str) -> str:
+    return f"{model_type}:{mode}"
+
+
+def _split_column_name(name: str) -> tuple[str, Optional[str]]:
+    model_type, separator, mode = name.partition(":")
+    return (model_type, mode) if separator else (name, None)
+
+
+def _column_label(name: str) -> str:
+    model_type, mode = _split_column_name(name)
+    label = MODEL_LABEL.get(model_type, model_type)
+    if mode is not None:
+        label = f"{label} — {BASELINE_MODE_LABEL.get(mode, mode)}"
+    return label
+
+
+def _column_color(name: str) -> tuple[int, int, int]:
+    model_type, mode = _split_column_name(name)
+    color = MODEL_COLOR.get(model_type, (210, 200, 60))
+    scale = BASELINE_MODE_COLOR_SCALE.get(mode, 1.0)
+    return tuple(min(255, round(channel * scale)) for channel in color)
+
+
+def _column_color_word(name: str) -> str:
+    model_type, mode = _split_column_name(name)
+    color_word = COLOR_WORD.get(model_type, str(_column_color(name)))
+    if mode == NO_NORM_ITEM:
+        return f"light {color_word}"
+    if mode == NORM_LENSCRAFT_INIT_ITEM:
+        return f"dark {color_word}"
+    return color_word
 
 
 def _compose_model_cfg(model_name: str) -> DictConfig:
@@ -177,33 +228,76 @@ def _ground_truth(batch, dataset_type):
     )
 
 
-def _generate_for_model(cfg, model_cfg, batch, dataset_type, device) -> np.ndarray:
-    """Run one method on the shared batch; return standard [B, T, 4, 4] poses."""
+def _generate_for_model(
+    cfg,
+    model_cfg,
+    batch,
+    dataset_type,
+    device,
+    ref_model=None,
+) -> Dict[str, np.ndarray]:
+    """Run one method and return its comparison columns in standard poses."""
     model_type = _model_type_from_cfg(model_cfg)
     seq_length = int(model_cfg.training.model.data_format.seq_length)
-    model = _load_model(model_cfg, model_type, device)
+    owns_model = model_type != "lens_craft" or ref_model is None
+    model = _load_model(model_cfg, model_type, device) if owns_model else ref_model
     try:
         with torch.no_grad():
-            results, *_ = inference_batch(
-                model, batch, device, dataset_type, model_type, seq_length
+            if model_type == "lens_craft":
+                results, *_ = inference_batch(
+                    model, batch, device, dataset_type, model_type, seq_length
+                )
+                key = str(cfg.lens_craft_mode)
+                if key not in results:
+                    key = next(iter(results))
+                cam_std = _sim_to_standard(results[key], None, None, denormalize=True)[
+                    0
+                ]
+                return {model_type: to_numpy(cam_std)}
+
+            if ref_model is None:
+                raise ValueError(
+                    f"{MODEL_LABEL.get(model_type, model_type)} requires the "
+                    "LensCraft reference model to visualize all baseline modes."
+                )
+
+            sim_camera, sim_subject, sim_volume, sim_padding = to_simulation_format(
+                batch, dataset_type
             )
-        key = (
-            str(cfg.lens_craft_mode)
-            if model_type == "lens_craft"
-            else "prompt_generation"
-        )
-        if key not in results:
-            key = next(iter(results))
-        # LensCraft generates in normalized simulation space; the baselines are
-        # already converted to raw world coordinates by inference_batch.
-        cam_std = _sim_to_standard(
-            results[key], None, None, denormalize=(model_type == "lens_craft")
-        )[0]
-        return to_numpy(cam_std)
+            variants = _generate_baseline_variants(
+                ref_model,
+                model,
+                batch,
+                list(BASELINE_ITEMS),
+                dataset_type,
+                model_type,
+                seq_length,
+                sim_camera,
+                sim_subject,
+                sim_volume,
+                sim_padding,
+                device,
+                len(batch["text_prompts"]),
+            )
+            columns = {}
+            for mode in BASELINE_ITEMS:
+                if mode not in variants:
+                    continue
+                # Plain baseline output is already in raw world coordinates;
+                # the two normalized variants are in simulation-normalized space.
+                cam_std = _sim_to_standard(
+                    variants[mode],
+                    None,
+                    None,
+                    denormalize=(mode != NO_NORM_ITEM),
+                )[0]
+                columns[_baseline_column_name(model_type, mode)] = to_numpy(cam_std)
+            return columns
     finally:
-        del model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        if owns_model:
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 
 # --------------------------------------------------------------------------- #
@@ -336,7 +430,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
         _add_grid(server, str(cfg.up_axis), base_scale)
 
     legend = "  |  ".join(
-        f"{MODEL_LABEL.get(n, n)} = {COLOR_WORD.get(n, str(MODEL_COLOR.get(n)))}"
+        f"{_column_label(n)} = {_column_color_word(n)}"
         for n in column_names
     )
     info_md = server.gui.add_markdown("")
@@ -364,7 +458,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
     show_subject = server.gui.add_checkbox("subject", True)
     with server.gui.add_folder("methods"):
         col_cbs = {
-            n: server.gui.add_checkbox(MODEL_LABEL.get(n, n), True)
+            n: server.gui.add_checkbox(_column_label(n), True)
             for n in column_names
         }
     shot_btn = server.gui.add_button("capture this sample")
@@ -418,7 +512,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
                 continue
             off = np.zeros(3, dtype=np.float32) if force_origin else offs[name]
             cam_o = _offset(cam, off)
-            color = MODEL_COLOR.get(name, (210, 200, 60))
+            color = _column_color(name)
             base = f"/cmp/{_safe(name)}"
 
             if show_path.value:
@@ -459,7 +553,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
                     state["static"].append(
                         server.scene.add_label(
                             f"{base}/label",
-                            text=MODEL_LABEL.get(name, name),
+                            text=_column_label(name),
                             position=tuple(float(v) for v in label_pos),
                         )
                     )
@@ -504,7 +598,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
                 getattr(server, "flush", lambda: None)()
                 time.sleep(float(cfg.export.settle_s))
                 panels.append(_grab(client))
-                labels.append(MODEL_LABEL.get(name, name))
+                labels.append(_column_label(name))
         except AttributeError as exc:
             logger.error(
                 "This viser version has no client.get_render (%s). "
@@ -577,16 +671,47 @@ def main(cfg: DictConfig) -> None:
 
     gt_cam, gt_subj, gt_vol = _ground_truth(batch, dataset_type)
 
-    outputs: Dict[str, np.ndarray] = {}
-    for name in [str(m) for m in cfg.models]:
+    model_names = [str(m) for m in cfg.models]
+    baseline_models = {"ccdm", "et", "gendop"}
+    needs_ref_model = any(name in baseline_models for name in model_names)
+    ref_model = None
+    if needs_ref_model:
         try:
-            model_cfg = cfg if name == "lens_craft" else _compose_model_cfg(name)
-            outputs[name] = _generate_for_model(
-                cfg, model_cfg, batch, dataset_type, device
-            )
-            logger.info("Generated %d trajectories with %s", batch_size, name)
+            ref_model = _load_model(cfg, "lens_craft", device)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Skipping %s (%s: %s)", name, type(exc).__name__, exc)
+            logger.warning(
+                "Could not load the LensCraft reference model (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+
+    outputs: Dict[str, np.ndarray] = {}
+    try:
+        for name in model_names:
+            try:
+                model_cfg = cfg if name == "lens_craft" else _compose_model_cfg(name)
+                model_outputs = _generate_for_model(
+                    cfg,
+                    model_cfg,
+                    batch,
+                    dataset_type,
+                    device,
+                    ref_model=ref_model,
+                )
+                outputs.update(model_outputs)
+                logger.info(
+                    "Generated %d trajectories for each %s column: %s",
+                    batch_size,
+                    name,
+                    list(model_outputs),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skipping %s (%s: %s)", name, type(exc).__name__, exc)
+    finally:
+        if ref_model is not None:
+            del ref_model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     if not outputs:
         raise RuntimeError(
@@ -595,7 +720,7 @@ def main(cfg: DictConfig) -> None:
         )
 
     prompts = batch.get("text_prompts") or [""] * batch_size
-    column_names = ["GT"] + [n for n in [str(m) for m in cfg.models] if n in outputs]
+    column_names = ["GT"] + list(outputs)
 
     samples: List[CompareSample] = []
     for i in range(batch_size):
