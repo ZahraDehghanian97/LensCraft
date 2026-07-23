@@ -142,12 +142,13 @@ def initialize_all_clip_embeddings(
 
         print(f"Saved CLIP embeddings to cache: {cache_file}")
 
-    finally:
-        if not os.path.exists("embedding_means.pkl"):
-            generate_mean_stds(embeddings, embedding_dimension)
-        if embedding_mode == "default":
-            return embeddings
-        elif embedding_mode == "normal":
-            return normalize_embeddings(embeddings, embedding_dimension)
-        elif embedding_mode == "pca":
-            return pca_embeddings(embeddings, n_components_pca)
+    if not os.path.exists("embedding_means.pkl"):
+        generate_mean_stds(embeddings, embedding_dimension)
+
+    if embedding_mode == "default":
+        return embeddings
+    if embedding_mode == "normal":
+        return normalize_embeddings(embeddings, embedding_dimension)
+    if embedding_mode == "pca":
+        return pca_embeddings(embeddings, n_components_pca)
+    raise ValueError(f"Unsupported embedding_mode: {embedding_mode}")

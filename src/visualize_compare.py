@@ -5,6 +5,7 @@ import math
 import os
 import re
 import textwrap
+import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -423,7 +424,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
     up_idx = {"x": 0, "y": 1, "z": 2}.get(str(cfg.up_axis), 1)
     out_dir = os.path.abspath(str(cfg.export.dir))
 
-    server.scene.add_frame(
+    space_axes = server.scene.add_frame(
         "/world", axes_length=base_scale * 4.0, axes_radius=base_scale * 0.1
     )
     if bool(cfg.show_grid):
@@ -456,6 +457,8 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
     show_path = server.gui.add_checkbox("paths", True)
     show_frustums = server.gui.add_checkbox("frustums", True)
     show_subject = server.gui.add_checkbox("subject", True)
+    show_space_axes = server.gui.add_checkbox("space axes", True)
+    animate = server.gui.add_checkbox("animate", True)
     with server.gui.add_folder("methods"):
         col_cbs = {
             n: server.gui.add_checkbox(_column_label(n), True)
@@ -465,6 +468,8 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
     shot_all_btn = server.gui.add_button("capture all samples")
 
     state = {"static": [], "current": [], "cur_arrays": [], "subjects": []}
+    # Playback runs here while browser GUI callbacks run on Viser worker threads.
+    scene_lock = threading.RLock()
 
     def clear() -> None:
         handles = state["static"] + state["current"] + [h for h, _ in state["subjects"]]
@@ -486,8 +491,8 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
             offs[n] = off
         return offs
 
-    def render(only: Optional[str] = None, force_origin: bool = False,
-               sample: Optional[CompareSample] = None) -> None:
+    def _render(only: Optional[str] = None, force_origin: bool = False,
+                sample: Optional[CompareSample] = None) -> None:
         clear()
         s = sample if sample is not None else samples[int(sample_dd.value)]
         info_md.content = f"**prompt:** {s.prompt}\n\n{legend}"
@@ -560,17 +565,31 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
                 except Exception:
                     pass  # labels are cosmetic; keep going on old viser versions
 
+    def render(only: Optional[str] = None, force_origin: bool = False,
+               sample: Optional[CompareSample] = None) -> None:
+        with scene_lock:
+            _render(only=only, force_origin=force_origin, sample=sample)
+
     def update_frame() -> None:
-        frame = int(frame_sl.value)
-        for wxyz, pos, handle in state["cur_arrays"]:
-            fi = min(frame, pos.shape[0] - 1)
-            handle.position = tuple(float(v) for v in pos[fi])
-            handle.wxyz = tuple(float(v) for v in wxyz[fi])
-        for handle, subj in state["subjects"]:
-            fj = min(frame, subj.shape[0] - 1)
-            mat = subj[fj]
-            handle.position = tuple(float(v) for v in np.nan_to_num(mat[:3, 3]))
-            handle.wxyz = tuple(float(v) for v in matrix_to_wxyz(mat[:3, :3]))
+        with scene_lock:
+            frame = int(frame_sl.value)
+            for wxyz, pos, handle in state["cur_arrays"]:
+                fi = min(frame, pos.shape[0] - 1)
+                handle.position = tuple(float(v) for v in pos[fi])
+                handle.wxyz = tuple(float(v) for v in wxyz[fi])
+            for handle, subj in state["subjects"]:
+                fj = min(frame, subj.shape[0] - 1)
+                mat = subj[fj]
+                handle.position = tuple(
+                    float(v) for v in np.nan_to_num(mat[:3, 3])
+                )
+                handle.wxyz = tuple(
+                    float(v) for v in matrix_to_wxyz(mat[:3, :3])
+                )
+
+    def update_space_axes() -> None:
+        with scene_lock:
+            space_axes.visible = bool(show_space_axes.value)
 
     def _grab(client) -> np.ndarray:
         height, width = int(cfg.export.height), int(cfg.export.width)
@@ -590,6 +609,8 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
         s = samples[sid]
         names = [n for n in column_names if col_cbs[n].value and n in s.columns]
         panels, labels = [], []
+        resume_animation = bool(animate.value)
+        animate.value = False
         try:
             for name in names:
                 # One method at a time, re-centered at the origin, so every
@@ -610,6 +631,8 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
             logger.error("Capture failed: %s", exc)
             render()
             return None
+        finally:
+            animate.value = resume_animation
 
         render()  # restore the interactive view
         os.makedirs(out_dir, exist_ok=True)
@@ -623,7 +646,14 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
         return path
 
     def capture_all() -> None:
-        paths = [p for p in (capture_sample(i) for i in range(len(samples))) if p]
+        resume_animation = bool(animate.value)
+        animate.value = False
+        try:
+            paths = [
+                p for p in (capture_sample(i) for i in range(len(samples))) if p
+            ]
+        finally:
+            animate.value = resume_animation
         if len(paths) > 1:
             grid_path = os.path.join(out_dir, "comparison_grid.png")
             try:
@@ -639,6 +669,7 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
     for ctrl in controls:
         ctrl.on_update(lambda _: render())
     frame_sl.on_update(lambda _: update_frame())
+    show_space_axes.on_update(lambda _: update_space_axes())
     shot_btn.on_click(lambda _: capture_sample(int(sample_dd.value)))
     shot_all_btn.on_click(lambda _: capture_all())
 
@@ -646,8 +677,12 @@ def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str
     logger.info("viser comparison server at http://%s:%s", cfg.viser.host, cfg.viser.port)
     logger.info("Figure exports will be written to %s", out_dir)
 
+    period = 1.0 / 15.0
     while True:
-        time.sleep(0.1)
+        if animate.value and max_t > 1:
+            with scene_lock:
+                frame_sl.value = (int(frame_sl.value) + 1) % max_t
+        time.sleep(period)
 
 
 # --------------------------------------------------------------------------- #
