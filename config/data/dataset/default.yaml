@@ -1,10 +1,12 @@
 info:
-  max_seq_length: 30
+  max_seq_length: 500
+  seq_length: 30
 
 config:
   _target_: data.simulation.dataset.SimulationDataset
   data_path: ${oc.env:SIMULATION_DATA_PATH}
   embedding_dim: ${clip.latent_dim}
+  target_frame_count: ${training.model.data_format.seq_length}
   fill_none_with_mean: true
   normalize: true
   # allowed_movement_types:
@@ -13,16 +15,11 @@ config:
   #   - zigzag
   #   - linear
   #   - spiral
-  #   - static
   #   - figureEight
   #   - wave
-  #   - pendulum
-  #   - orbital
-  #   - bounce
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
     cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
-    embedding_dimension: 512
-    embedding_mode: "default" # choose between ["default", "normal", "pca"]
-    n_components_pca: 100
+    embedding_dimension: ${clip.latent_dim}
+    embedding_mode: "default" # choose between ["default", "normal"]

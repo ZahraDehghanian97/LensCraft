@@ -105,69 +105,97 @@ class BaseTrainer(L.LightningModule):
         decode_mode: str = 'single_step',
         compute_cycle_embeddings: bool = False
     ) -> Dict[str, torch.Tensor]:
-        if not is_training:
-            return self.model(
-                camera_trajectory,
-                subject_trajectory,
-                subject_volume,
-                tgt_key_padding_mask,
-                caption_embedding=caption_embedding,
-                memory_teacher_forcing_ratio=0.5,
-                trajectory_teacher_forcing_ratio=0.0,
-                decode_mode=decode_mode
-            )
-
         ratios = self._calculate_schedule_parameters()
+
+        if not is_training and caption_embedding is None:
+            raise ValueError(
+                "Validation/test require caption embeddings for the "
+                "caption-only conditioning path"
+            )
 
         valid_len = (
             (~tgt_key_padding_mask).sum(dim=1)
             if tgt_key_padding_mask is not None else None
         )
 
-        noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
-            camera_trajectory,
-            valid_len,
-            ratios['mask_ratio'],
-            ratios['noise_std'],
-            self.device
-        )
-
-        output = self.model(
-            noisy_masked_trajectory,
-            subject_trajectory,
-            subject_volume,
-            tgt_key_padding_mask,
-            src_key_mask,
-            camera_trajectory,
-            caption_embedding,
-            ratios['memory_teacher_forcing_ratio'],
-            ratios['trajectory_teacher_forcing_ratio'],
-            ratios['memory_mask_ratio'],
-            decode_mode
-        )
-
-        if compute_cycle_embeddings:
-            noisy_masked_trajectory, src_key_mask = apply_mask_and_noise(
-                output["reconstructed"],
+        if is_training:
+            model_input, src_key_mask = apply_mask_and_noise(
+                camera_trajectory,
                 valid_len,
                 ratios['mask_ratio'],
                 ratios['noise_std'],
                 self.device
             )
+        else:
+            # Validation/test use clean input but optimize exactly the same loss
+            # terms (including cycle consistency). Padding still has to reach
+            # the encoder.
+            model_input = camera_trajectory
+            src_key_mask = tgt_key_padding_mask
+
+        output = self.model(
+            src=model_input,
+            subject_trajectory=subject_trajectory,
+            subject_volume=subject_volume,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            src_key_mask=src_key_mask,
+            target=camera_trajectory,
+            caption_embedding=caption_embedding,
+            # Evaluation must measure the caption-conditioned generator, not
+            # a moving blend with an encoding of the ground-truth trajectory.
+            # A fixed ratio of one makes validation/test leakage-free and
+            # comparable across epochs and Optuna trials.
+            memory_teacher_forcing_ratio=(
+                ratios['memory_teacher_forcing_ratio']
+                if is_training else 1.0
+            ),
+            trajectory_teacher_forcing_ratio=(
+                ratios['trajectory_teacher_forcing_ratio']
+                if is_training else 0.0
+            ),
+            mask_memory_prob=(
+                ratios['memory_mask_ratio'] if is_training else 0.0
+            ),
+            decode_mode=decode_mode
+        )
+
+        if compute_cycle_embeddings:
+            if is_training:
+                cycle_input, cycle_key_mask = apply_mask_and_noise(
+                    output["reconstructed"],
+                    valid_len,
+                    ratios['mask_ratio'],
+                    ratios['noise_std'],
+                    self.device
+                )
+            else:
+                cycle_input = output["reconstructed"]
+                cycle_key_mask = tgt_key_padding_mask
             cycle_embeddings = self.model.encoder(
-                noisy_masked_trajectory,
+                cycle_input,
                 output["subject_embedding"],
-                src_key_mask
+                cycle_key_mask,
+                subject_key_padding_mask=tgt_key_padding_mask,
             )
             output['cycle_embeddings'] = cycle_embeddings
 
         return output
 
     def _log_metrics(self, stage: str, loss: torch.Tensor, loss_dict: Dict[str, Any], batch_size: int) -> None:
-        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, logger=True, batch_size=batch_size)
+        self.log(
+            f"{stage}_loss",
+            loss,
+            on_step=(stage == "train"),
+            on_epoch=True,
+            logger=True,
+            batch_size=batch_size,
+        )
 
         progress_metrics = {}
-        progress_metrics["ts" if stage == "train" else "ve"] = loss
+        if stage == "train":
+            progress_metrics["ts"] = loss
+        elif stage == "val":
+            progress_metrics["ve"] = loss
 
         metric_keys = {"first_frame": "ff", "speed": "sp", "relative": "re", "clip": "cl", "cycle": "cy", "contrastive": "co"}
         for key, p_key in metric_keys.items():
@@ -236,6 +264,8 @@ class BaseTrainer(L.LightningModule):
             self.log('te', train_loss, on_step=False, on_epoch=True, prog_bar=True)
 
     def on_validation_epoch_end(self) -> None:
-        val_loss = self.trainer.callback_metrics.get('val_loss_epoch')
+        val_loss = self.trainer.callback_metrics.get('val_loss')
+        if val_loss is None:
+            val_loss = self.trainer.callback_metrics.get('val_loss_epoch')
         if val_loss is not None:
             self.log('ve', val_loss, on_step=False, on_epoch=True, prog_bar=True)

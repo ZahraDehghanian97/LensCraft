@@ -5,7 +5,6 @@ from data.convertor.convertor import convert_to_target
 SIM_SEQ_LENGTH = 30
 
 NUM_VISIBLE_KEYFRAMES = 26
-NUM_HIDDEN_KEYFRAMES = SIM_SEQ_LENGTH - NUM_VISIBLE_KEYFRAMES  # 4
 
 MEMORY_TEACHER_FORCING_BY_MODE = {
     "reconstruction": 0.0,
@@ -32,12 +31,21 @@ def to_simulation_format(batch, dataset_type, *, target_len=SIM_SEQ_LENGTH):
     )
 
 
-def build_keyframing_mask(batch_size, device):
+def build_keyframing_mask(batch_size, device, sequence_length=SIM_SEQ_LENGTH):
+    if sequence_length < 1:
+        raise ValueError("sequence_length must be positive")
+    visible_ratio = NUM_VISIBLE_KEYFRAMES / SIM_SEQ_LENGTH
+    visible_count = min(
+        sequence_length,
+        max(1, round(sequence_length * visible_ratio)),
+    )
+    hidden_count = sequence_length - visible_count
     template = torch.cat([
-        torch.ones(NUM_VISIBLE_KEYFRAMES, dtype=torch.bool, device=device),
-        torch.zeros(NUM_HIDDEN_KEYFRAMES, dtype=torch.bool, device=device),
+        # PyTorch key-padding masks use True for hidden/padded tokens.
+        torch.zeros(visible_count, dtype=torch.bool, device=device),
+        torch.ones(hidden_count, dtype=torch.bool, device=device),
     ])
-    mask = torch.empty((batch_size, SIM_SEQ_LENGTH), dtype=torch.bool, device=device)
+    mask = torch.empty((batch_size, sequence_length), dtype=torch.bool, device=device)
     for i in range(batch_size):
-        mask[i] = template[torch.randperm(SIM_SEQ_LENGTH, device=device)]
+        mask[i] = template[torch.randperm(sequence_length, device=device)]
     return mask

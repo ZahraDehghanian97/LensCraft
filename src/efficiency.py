@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from data.datamodule import CameraTrajectoryDataModule
 from data.convertor.convertor import convert_to_target
 from data.dataset_type import resolve_dataset_type
+from data.simulation.utils import structured_conditioning_from_batch
 from models.baselines.ccdm_adapter import CCDMAdapter
 from models.baselines.et_adapter import ETAdapter
 from models.baselines.gendop_adapter import GenDoPAdapter
@@ -98,7 +99,7 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
             model_inference=cfg.training.model.inference,
             device=device,
         )
-        caption_embedding = batch.get("cinematography_prompt", None)
+        caption_embedding = structured_conditioning_from_batch(batch)
 
         def gen_fn():
             return ref_model.generate_camera_trajectory(

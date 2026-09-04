@@ -24,9 +24,8 @@ loss_module:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
     cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
-    embedding_dimension: 512
-    embedding_mode: "default" # choose between ["default", "normal", "pca"]
-    n_components_pca: 100
+    embedding_dimension: ${clip.latent_dim}
+    embedding_mode: "default" # choose between ["default", "normal"]
   encoder_loss_function: "clip" # choose between ["clip", "mse"]
 
 noise:

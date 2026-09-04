@@ -3,6 +3,7 @@ import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
 from data.convertor.convertor import convert_to_target
+from data.simulation.utils import structured_conditioning_from_batch
 
 
 class LightningLensCraft(BaseTrainer):
@@ -39,20 +40,21 @@ class LightningLensCraft(BaseTrainer):
         self.use_cycle_consistency = use_cycle_consistency
 
     def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
-        if self.use_merged_memory:
+        caption = structured_conditioning_from_batch(batch)
+        if caption is None:
             caption = batch['caption_feat']
             if caption.dim() == 2:
                 caption = caption.unsqueeze(0)
-            empty = caption.new_zeros((0,) + tuple(caption.shape[1:]))
-            return [caption, empty]
+        empty = caption.new_zeros((0,) + tuple(caption.shape[1:]))
+        return [caption, empty]
 
-        return [batch['cinematography_prompt'], batch['simulation_instruction']]
-
-    def _convert_et_to_simulation(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_to_simulation(
+        self, batch: Dict[str, Any], source: str
+    ) -> Dict[str, Any]:
         target_seq_len = self.model.decoder.seq_length
 
         camera_trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-            "et",
+            source,
             "simulation",
             batch["camera_trajectory"],
             batch["subject_trajectory"],
@@ -69,8 +71,8 @@ class LightningLensCraft(BaseTrainer):
         return new_batch
 
     def _step(self, batch: Dict[str, Any], batch_idx: int, stage: str) -> torch.Tensor:
-        if self.dataset_mode == 'et':
-            batch = self._convert_et_to_simulation(batch)
+        if self.dataset_mode in ('et', 'ccdm'):
+            batch = self._convert_to_simulation(batch, self.dataset_mode)
 
         camera_trajectory = batch['camera_trajectory']
         subject_trajectory = batch['subject_trajectory']
@@ -79,7 +81,9 @@ class LightningLensCraft(BaseTrainer):
 
         [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
 
-        compute_cycle = self.use_cycle_consistency and self.dataset_mode in ('simulation', 'et')
+        compute_cycle = self.use_cycle_consistency and self.dataset_mode in (
+            'simulation', 'et', 'ccdm'
+        )
 
         output = self._forward_step(
             camera_trajectory,

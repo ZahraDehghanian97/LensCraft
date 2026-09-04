@@ -45,17 +45,6 @@ enum_descriptions = {
         "easeInCirc": "with circular acceleration",
         "easeOutCirc": "with circular deceleration",
         "easeInOutCirc": "with circular acceleration and deceleration",
-        "easeInBack": "with overshooting acceleration",
-        "easeOutBack": "with overshooting deceleration",
-        "easeInOutBack": "with overshooting acceleration and deceleration",
-        "easeInElastic": "with elastic acceleration",
-        "easeOutElastic": "with elastic deceleration",
-        "easeInOutElastic": "with elastic acceleration and deceleration",
-        "easeInBounce": "with bouncing acceleration",
-        "easeOutBounce": "with bouncing deceleration",
-        "easeInOutBounce": "with bouncing acceleration and deceleration",
-        "handHeld": "with handheld camera movement",
-        "anticipation": "with anticipatory movement",
         "smooth": "with smooth movement"
     },
     "SubjectView": {
@@ -94,7 +83,17 @@ enum_descriptions = {
     "MovementMode": {
         "transition": "using transitional movement",
         "rotation": "using rotational movement",
-        "arc": "using arc movement"
+        "arc": "using arc movement",
+        "crane": "using a vertical crane-boom arc",
+        "roll": "using camera-axis roll"
+    },
+    "DynamicMode": {
+        "interpolation": "using setup interpolation",
+        "simple": "using a simple camera movement"
+    },
+    "Randomness": {
+        "handHeld": "with subtle handheld variation",
+        "shaky": "with pronounced camera shake"
     },
     "CameraMovementType": {
         "static": "remaining stationary",
@@ -114,8 +113,6 @@ enum_descriptions = {
         "arcRight": "moving in a rightward arc",
         "craneUp": "craning upward",
         "craneDown": "craning downward",
-        "dollyOutZoomIn": "moving back while zooming in",
-        "dollyInZoomOut": "moving forward while zooming out",
         "dutchLeft": "tilting left on the camera axis",
         "dutchRight": "tilting right on the camera axis"
     },
@@ -144,16 +141,14 @@ CAMERA_MOVEMENT_DESCRIPTIONS = {
     "pedestalDown": "moves straight down with a pedestal movement",
     "arcLeft": "moves in a leftward arc", "arcRight": "moves in a rightward arc",
     "craneUp": "cranes upward", "craneDown": "cranes downward",
-    "dollyOutZoomIn": "pulls out while zooming in",
-    "dollyInZoomOut": "pushes in while zooming out",
     "dutchLeft": "tilts left on the camera axis",
     "dutchRight": "tilts right on the camera axis",
 }
 
 SUBJECT_MOVEMENT_DESCRIPTIONS = {
     "static": "remains stationary", "circular": "moves in a circular path",
-    "linear": "moves back and forth in a straight line",
-    "zigzag": "moves in a zigzag pattern", "spiral": "moves in a spiral pattern",
+    "linear": "moves along a straight path",
+    "zigzag": "moves through a rounded zigzag path", "spiral": "moves in a spiral pattern",
     "figureEight": "moves in a figure-eight pattern",
     "wave": "moves in a wave-like sinusoidal pattern",
     "pendulum": "swings back and forth like a pendulum",
@@ -164,8 +159,8 @@ SUBJECT_MOVEMENT_DESCRIPTIONS = {
 DETAILED_SUBJECT_DESCRIPTIONS = {
     "static": "remains stationary throughout the entire sequence",
     "circular": "moves in a continuous circular motion",
-    "linear": "travels back and forth along a straight path",
-    "zigzag": "follows a sharp zigzag trajectory",
+    "linear": "travels once along a straight path",
+    "zigzag": "follows a smooth zigzag trajectory with rounded turns",
     "spiral": "traces an expanding spiral path",
     "figureEight": "traces a figure-eight pattern",
     "wave": "follows a smooth wave-like path",

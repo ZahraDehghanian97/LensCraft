@@ -3,7 +3,7 @@ from torch.nn.functional import mse_loss
 from .contrastive_loss import ContrastiveLoss
 from .clip_loss import ClipLoss
 
-from data.simulation.utils import load_clip_means, cinematography_struct_size
+from data.simulation.utils import load_clip_means
 from utils.naming import clip_embedding_name
 from utils.pytorch3d_transform import euler_angles_to_matrix
 
@@ -17,7 +17,8 @@ def report_traj_term_scales(pred, target):
     """pred/target are the 12-D (pos + flat R) tensors."""
     p_p, R_p = pred[..., :3], pred[..., 3:].reshape(*pred.shape[:-1], 3, 3)
     p_t, R_t = target[..., :3], target[..., 3:].reshape(*target.shape[:-1], 3, 3)
-    rot = lambda a, b: ((a - b) ** 2).mean(dim=(-2, -1)).mean().item()
+    def rot(a, b):
+        return ((a - b) ** 2).mean(dim=(-2, -1)).mean().item()
 
     pos_ff = mse_loss(p_p[:, 0:1], p_t[:, 0:1]).item()
     rot_ff = rot(R_p[:, 0:1], R_t[:, 0:1])
@@ -121,10 +122,9 @@ class CameraTrajectoryLoss:
 
 
         if self.losses_list.get("cycle", 0) and cycle_embeddings is not None:
-            n_high = cinematography_struct_size
             cycle_losses, total_cycle_loss = self.clip_loss.compute(
-                clip_target=clip_pred[:n_high],
-                clip_pred=cycle_embeddings[:n_high],
+                clip_target=clip_pred,
+                clip_pred=cycle_embeddings,
                 weighted_clip_loss=self.weighted_clip_loss,
                 encoder_loss_function=self.encoder_loss_function
             )
@@ -133,7 +133,7 @@ class CameraTrajectoryLoss:
             loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(len(cycle_losses))}
 
         elif self.losses_list.get("cycle", 0) and cycle_embeddings is None:
-            loss_dict["cycle"] = torch.tensor(0)
+            loss_dict["cycle"] = trajectory_pred.new_zeros(())
 
 
         if self.losses_list.get("first_frame", 0) or self.losses_list.get("relative", 0) or self.losses_list.get("speed", 0):

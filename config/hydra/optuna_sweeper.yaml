@@ -35,27 +35,22 @@ sweeper:
     training.optimizer.betas.0: interval(0.85, 0.95)
     training.optimizer.betas.1: interval(0.9, 0.999)
     
-    training.loss_module.losses_list.clip: interval(200, 1000)
-    training.loss_module.losses_list.first_frame: interval(0, 10)
-    training.loss_module.losses_list.relative: interval(0, 25)
-    training.loss_module.losses_list.speed: interval(0, 200)
-    training.loss_module.losses_list.cycle: interval(0, 500)
-    # training.loss_module.losses_list.contrastive: interval(5, 25)
-    # training.loss_module.contrastive_loss_margin: interval(1, 15)
+    # Keep validation-loss coefficients fixed across trials. Searching these
+    # coefficients would change the scale and definition of val_loss itself,
+    # allowing Optuna to "improve" the objective merely by shrinking a loss
+    # weight instead of selecting a better model.
 
 
     training.lr_scheduler.warmup_steps: choice(5, 10, 15)
     training.lr_scheduler.rate: interval(0.4, 0.9)
     training.lr_scheduler.n_th_root: choice(1, 2, 3)
     
-    training.noise.initial_std: interval(0.3, 2.5)
+    # A one-epoch schedule evaluates its final endpoint. Do not suggest the
+    # initial endpoints: they cannot affect a max_epochs=1 trial.
     training.noise.final_std: interval(0, 0.3)
     
-    training.mask.initial_ratio: interval(0.05, 0.2)
     training.mask.final_ratio: interval(0.6, 0.9)
     
-    training.teacher_forcing_schedule.memory_initial_ratio: interval(0.2, 0.7)
     training.teacher_forcing_schedule.memory_final_ratio: interval(0.7, 1.0)
     # training.teacher_forcing_schedule.trajectory_initial_ratio: interval(0.7, 1.0)
     # training.teacher_forcing_schedule.trajectory_final_ratio: interval(0.0, 0.3)
-  

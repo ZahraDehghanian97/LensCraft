@@ -9,24 +9,26 @@ defaults:
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
   contrastive_loss_margin: 5
+  # CameraTrajectoryLoss now receives one coefficient per objective term.
+  # Keep the simulation half of multi-dataset training on the same objective
+  # scale as the default trainer; the outer sim/CCDM weights are applied by
+  # MultiDatasetTrainer.
   losses_list:
-    - clip
-    - trajectory
-    - cycle
-    # - contrastive
+    clip:             1000
+    first_frame:      2
+    relative:         16
+    speed:            80
+    cycle:            100
+    # contrastive:      5
+  rotation_weight: 1.0
   weighted_clip_loss: false
   weight_power: 1
-  clip_loss_scaling_factor: 37500
-  trajectory_loss_scaling_factor: 10
-  contrastive_loss_scaling_factor: 0.1
-  angle_loss_scaling_factor: 180 # TODO: Format of this file should be similar to config/training/default.yaml
   clip_embeddings:
     _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
     clip_model_name: ${clip.model_name}
     cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
-    embedding_dimension: 512
-    embedding_mode: "default" # choose between ["default", "normal", "pca"]
-    n_components_pca: 100
+    embedding_dimension: ${clip.latent_dim}
+    embedding_mode: "default" # choose between ["default", "normal"]
   encoder_loss_function: "clip" # choose between ["clip", "mse"]
 
 noise:

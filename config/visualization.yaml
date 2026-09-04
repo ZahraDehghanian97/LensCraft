@@ -82,7 +82,7 @@ metrics:
     
 
   clips:
-    num_clips: 28
+    num_clips: 46
     categorize_embeddings: true
     average_clip_loss: true # to enable this option, 'clip' should be in 'losses_list'
     include_validation: true
@@ -164,6 +164,24 @@ color_map:
     - clip_25: "#E63946"
     - clip_26: "#2A9D8F"
     - clip_27: "#5E60CE"
+    - clip_28: "#E63946"
+    - clip_29: "#2A9D8F"
+    - clip_30: "#5E60CE"
+    - clip_31: "#E9C46A"
+    - clip_32: "#2A9D8F"
+    - clip_33: "#E63946"
+    - clip_34: "#9B5DE5"
+    - clip_35: "#457B9D"
+    - clip_36: "#F4A261"
+    - clip_37: "#E9C46A"
+    - clip_38: "#2A9D8F"
+    - clip_39: "#E63946"
+    - clip_40: "#9B5DE5"
+    - clip_41: "#457B9D"
+    - clip_42: "#F4A261"
+    - clip_43: "#D08C60"
+    - clip_44: "#00A896"
+    - clip_45: "#F4D35E"
   trajectory_loss:
     - los: "#457B9D"
     - trajectory: "#D08C60"
@@ -191,18 +209,36 @@ clip_structure:
       - clip_elements_12    # initialSetup_subjectView
       - clip_elements_13    # initialSetup_subjectFraming_position
       - clip_elements_14    # initialSetup_subjectFraming_dutchAngleScale
+      - clip_elements_15    # setup_kind
     dynamic:       
-      - clip_elements_15    # dynamic_easing
-      - clip_elements_16    # dynamic_endSetup_cameraAngle
-      - clip_elements_17    # dynamic_endSetup_shotSize
-      - clip_elements_18    # dynamic_endSetup_subjectView
-      - clip_elements_19    # dynamic_endSetup_subjectFraming_position
-      - clip_elements_20    # dynamic_endSetup_subjectFraming_dutchAngleScale
-      - clip_elements_21    # dynamic_endSetup_subjectAwareInterpolation
-      - clip_elements_22    # dynamic_scale
-      - clip_elements_23    # dynamic_direction
-      - clip_elements_24    # dynamic_movementMode
+      - clip_elements_16    # dynamic_type
+      - clip_elements_17    # dynamic_easing
+      - clip_elements_18    # dynamic_randomness
+      - clip_elements_19    # dynamic_complementSetup_cameraAngle
+      - clip_elements_20    # dynamic_complementSetup_shotSize
+      - clip_elements_21    # dynamic_complementSetup_subjectView
+      - clip_elements_22    # dynamic_complementSetup_subjectFraming_position
+      - clip_elements_23    # dynamic_complementSetup_subjectFraming_dutchAngleScale
+      - clip_elements_24    # dynamic_subjectAwareInterpolation
+      - clip_elements_25    # dynamic_scale
+      - clip_elements_26    # dynamic_direction
+      - clip_elements_27    # dynamic_movementMode
     constraints:    
-      - clip_elements_25    # constraints_allFramesVisibility
-      - clip_elements_26    # constraints_staticDistance
-      - clip_elements_27    # constraints_staticCameraSubjectRotation
+      - clip_elements_28    # constraints_allFramesVisibility
+      - clip_elements_29    # constraints_staticDistance
+      - clip_elements_30    # constraints_staticCameraSubjectRotation
+      - clip_elements_31    # constraints_lockedMovement_left
+      - clip_elements_32    # constraints_lockedMovement_right
+      - clip_elements_33    # constraints_lockedMovement_up
+      - clip_elements_34    # constraints_lockedMovement_down
+      - clip_elements_35    # constraints_lockedMovement_forward
+      - clip_elements_36    # constraints_lockedMovement_backward
+      - clip_elements_37    # constraints_lockedRotation_left
+      - clip_elements_38    # constraints_lockedRotation_right
+      - clip_elements_39    # constraints_lockedRotation_up
+      - clip_elements_40    # constraints_lockedRotation_down
+      - clip_elements_41    # constraints_lockedRotation_rollClockwise
+      - clip_elements_42    # constraints_lockedRotation_rollNonClockwise
+      - clip_elements_43    # constraints_maxAccelerate
+      - clip_elements_44    # constraints_maxSpeed
+      - clip_elements_45    # constraints_importance

@@ -25,8 +25,8 @@ callbacks:
     mode: min
   train_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
-    monitor: train_loss
-    filename: best-train-model-{epoch:03d}-{train_loss:.3f}
+    monitor: train_loss_epoch
+    filename: best-train-model-{epoch:03d}-{train_loss_epoch:.3f}
     save_top_k: 1
     mode: min
   lr_monitor:

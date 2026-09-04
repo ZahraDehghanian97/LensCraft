@@ -3,6 +3,7 @@ from torch.nn.functional import cosine_similarity
 import random
 import numpy as np
 from data.simulation.utils import CLIP_PARAMETERS_DICT
+from data.simulation.constants import NumericFeature
 from utils.naming import clip_embedding_name
 
 
@@ -24,9 +25,14 @@ class ContrastiveLoss:
         for index, (parameter, value, value_index, embedding) in enumerate(clip_embedding_parameters):
             if index in indices_to_modify and value_index != -1:
 
-                if parameter.count("_") > 1:
-                    parameter = "_".join(parameter.split("_")[-2:])
                 embedding_type_enum = CLIP_PARAMETERS_DICT[parameter]
+                if isinstance(embedding_type_enum, NumericFeature):
+                    continue
+                if embedding_type_enum is bool:
+                    modified_sample[index] = self.clip_embeddings["boolean"][
+                        not bool(value)
+                    ]
+                    continue
                 embedding_type_name = embedding_type_enum.__name__
                 n_embedding_values = len(embedding_type_enum)
                 
@@ -88,13 +94,13 @@ class ContrastiveLoss:
                 if value_idx == -1:
                     continue
 
-                if prefix.count("_") > 1:
-                    prefix = "_".join(prefix.split("_")[-2:])
-                
-                if CLIP_PARAMETERS_DICT[prefix].__name__ == "bool":
+                value_type_spec = CLIP_PARAMETERS_DICT[prefix]
+                if isinstance(value_type_spec, NumericFeature):
+                    continue
+                if value_type_spec.__name__ == "bool":
                     value_type = "boolean"
                 else:
-                    value_type = CLIP_PARAMETERS_DICT[prefix].__name__
+                    value_type = value_type_spec.__name__
                 
                 for embedding_key in self.clip_embeddings[value_type].keys():
                     if embedding_key != data_value:
@@ -123,13 +129,13 @@ class ContrastiveLoss:
                 if value_idx == -1:
                     continue
                     
-                if prefix.count("_") > 1:
-                    prefix = "_".join(prefix.split("_")[-2:])
-                    
-                if CLIP_PARAMETERS_DICT[prefix].__name__ == "bool":
+                value_type_spec = CLIP_PARAMETERS_DICT[prefix]
+                if isinstance(value_type_spec, NumericFeature):
+                    continue
+                if value_type_spec.__name__ == "bool":
                     value_type = "boolean"
                 else:
-                    value_type = CLIP_PARAMETERS_DICT[prefix].__name__
+                    value_type = value_type_spec.__name__
 
 
                 mean_embedding = self.embedding_means[value_type].to(self.device)
@@ -141,8 +147,8 @@ class ContrastiveLoss:
                 local_contrastive_loss += similarity + 1
                 counter += 1
             
-            contrastive_loss += local_contrastive_loss / counter
+            if counter:
+                contrastive_loss += local_contrastive_loss / counter
                 
         return contrastive_loss / batch_size
-
 

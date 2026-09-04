@@ -5,5 +5,5 @@ config:
   _target_: data.ccdm.CCDMDataset
   data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
   clip_model_name: ${clip.model_name}
-  embedding_dim: 512
+  embedding_dim: ${clip.latent_dim}
   normalize: true

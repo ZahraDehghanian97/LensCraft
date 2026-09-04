@@ -98,8 +98,8 @@ CINEMATOGRAPHY_JSON_SCHEMA = {
                                         "panLeft", "panRight", "tiltUp", "tiltDown",
                                         "truckLeft", "truckRight", "pedestalUp",
                                         "pedestalDown", "arcLeft", "arcRight",
-                                        "craneUp", "craneDown", "dollyOutZoomIn",
-                                        "dollyInZoomOut"
+                                        "craneUp", "craneDown", "dutchLeft",
+                                        "dutchRight"
                                     ]
                                 },
                                 "speed": {

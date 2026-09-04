@@ -5,6 +5,7 @@ import torch
 from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
 from data.convertor.convertor import convert_to_target
 from data.simulation.dataset import SimulationDataset
+from data.simulation.utils import structured_conditioning_from_batch
 from data.sim_format import (
     SIM_SEQ_LENGTH,
     MEMORY_TEACHER_FORCING_BY_MODE,
@@ -20,6 +21,69 @@ from testing.baseline_modes import (
 from utils.device import move_batch_to_device
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
+
+
+def _align_structured_metric_target(
+    prompt_embedding: torch.Tensor,
+    prompt_none_mask: Optional[torch.Tensor],
+    target_token_count: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Align legacy 10-token and current 46-token prompts for metrics.
+
+    Added slots are neutral and explicitly absent.  This keeps zero padding
+    from contributing a cosine score while still allowing current checkpoints
+    to be evaluated on legacy E.T. annotations (and legacy checkpoints on
+    current annotations).
+    """
+
+    if prompt_embedding.ndim != 3:
+        raise ValueError(
+            "Structured prompt embeddings must have shape [tokens, batch, dim]"
+        )
+    source_token_count, batch_size, _ = prompt_embedding.shape
+    if target_token_count < 1:
+        raise ValueError("target_token_count must be positive")
+
+    if prompt_none_mask is None:
+        presence = torch.ones(
+            batch_size,
+            source_token_count,
+            dtype=torch.bool,
+            device=prompt_embedding.device,
+        )
+    else:
+        presence = prompt_none_mask.to(
+            device=prompt_embedding.device, dtype=torch.bool
+        )
+        if presence.shape != (batch_size, source_token_count):
+            raise ValueError(
+                "prompt_none_mask must have shape [batch, prompt tokens]; "
+                f"got {tuple(presence.shape)} for prompt shape "
+                f"{tuple(prompt_embedding.shape)}"
+            )
+
+    if source_token_count > target_token_count:
+        return (
+            prompt_embedding[:target_token_count],
+            presence[:, :target_token_count],
+        )
+    if source_token_count == target_token_count:
+        return prompt_embedding, presence
+
+    missing = target_token_count - source_token_count
+    neutral = prompt_embedding.new_zeros(
+        missing, batch_size, prompt_embedding.shape[-1]
+    )
+    absent = torch.zeros(
+        batch_size,
+        missing,
+        dtype=torch.bool,
+        device=prompt_embedding.device,
+    )
+    return (
+        torch.cat([prompt_embedding, neutral], dim=0),
+        torch.cat([presence, absent], dim=1),
+    )
 
 
 def _to_sim_space(model_type: str, generated: torch.Tensor,
@@ -45,7 +109,7 @@ def _lenscraft_first_position(
     sim_subject_volume: torch.Tensor,
     sim_padding_mask: torch.Tensor,
 ) -> torch.Tensor:
-    caption_embedding = batch.get("cinematography_prompt")
+    caption_embedding = structured_conditioning_from_batch(batch)
     if caption_embedding is None:
         raise ValueError(
             "The normalized + LensCraft-init baseline mode requires a "
@@ -233,17 +297,22 @@ def _update_generation_metrics(
             text_features=text_clatr,
         )
 
-    if batch.get("cinematography_prompt") is not None:
+    prompt_embedding = structured_conditioning_from_batch(batch)
+    if prompt_embedding is not None:
         n_high = ref_model.memory_tokens_count
         gen_embedding = ref_model.embed_trajectory(
             sim_generated_trajectory,
             sim_subject_trajectory,
             sim_subject_volume,
+            src_key_mask=sim_padding_mask,
         )
-        prompt_embedding = batch["cinematography_prompt"][:n_high]
         prompt_none_mask = batch.get("prompt_none_mask")
-        if prompt_none_mask is not None:
-            prompt_none_mask = prompt_none_mask[:, :n_high]
+        prompt_embedding, prompt_none_mask = _align_structured_metric_target(
+            prompt_embedding,
+            prompt_none_mask,
+            min(n_high, gen_embedding.shape[0]),
+        )
+        gen_embedding = gen_embedding[: prompt_embedding.shape[0]]
         metric_callback.update_clip_score(
             metric_item,
             gen_embedding,
@@ -333,27 +402,32 @@ def test_batch(
     if model_type != "lens_craft":
         raise ValueError(f"Unsupported model_type: {model_type}")
 
-    key_framing_padding_mask = build_keyframing_mask(batch_size, device)
+    key_framing_padding_mask = build_keyframing_mask(
+        batch_size, device, sim_camera_trajectory.shape[1]
+    )
     generated_outputs: Dict[str, Any] = {"items": {}}
 
     for metric_item in metric_items:
         caption_embedding = (
-            batch.get("cinematography_prompt", None)
+            structured_conditioning_from_batch(batch)
             if dataset_type in ("simulation", "et")
             else None
         )
         memory_teacher_forcing_ratio = MEMORY_TEACHER_FORCING_BY_MODE[metric_item]
 
-        current_padding_mask = sim_padding_mask
-        if metric_item in ("key_framing", "key_framing+prompt"):
-            current_padding_mask = key_framing_padding_mask
+        source_mask = (
+            key_framing_padding_mask | sim_padding_mask
+            if metric_item in ("key_framing", "key_framing+prompt")
+            else sim_padding_mask
+        )
 
         if cached_outputs is None:
             ref_output = ref_model.generate_camera_trajectory(
                 subject_trajectory=sim_subject_trajectory,
                 subject_volume=sim_subject_volume,
                 camera_trajectory=sim_camera_trajectory,
-                padding_mask=current_padding_mask,
+                src_key_mask=source_mask,
+                padding_mask=sim_padding_mask,
                 memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
                 caption_embedding=caption_embedding,
             )
@@ -397,10 +471,19 @@ def test_batch(
                 )
             else:
                 encoder_features = item_output["encoder_features"].to(device)
+            parameter_batch = batch["cinematography_prompt_parameters"]
+            if "simulation_instruction_parameters" in batch:
+                parameter_batch = [
+                    cinematography + simulation
+                    for cinematography, simulation in zip(
+                        parameter_batch,
+                        batch["simulation_instruction_parameters"],
+                    )
+                ]
             metric_callback.update_caption_top1(
                 metric_item,
                 encoder_features,
-                batch["cinematography_prompt_parameters"],
+                parameter_batch,
             )
 
     if cached_outputs is not None:

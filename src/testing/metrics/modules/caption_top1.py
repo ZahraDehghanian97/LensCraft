@@ -2,6 +2,7 @@ from torch.nn.functional import cosine_similarity
 from torchmetrics import Metric
 
 from data.simulation.utils import CLIP_PARAMETERS_DICT
+from data.simulation.constants import NumericFeature
 
 
 class CaptionTop1(Metric):
@@ -25,16 +26,24 @@ class CaptionTop1(Metric):
                     if value_idx == -1:
                         continue
 
-                    if prefix.count("_") > 1:
-                        prefix = "_".join(prefix.split("_")[-2:])
-
-                    param_type = CLIP_PARAMETERS_DICT[prefix].__name__
+                    value_type = CLIP_PARAMETERS_DICT[prefix]
+                    if isinstance(value_type, NumericFeature):
+                        # Continuous features are supervised directly; top-1
+                        # classification has no finite candidate vocabulary.
+                        continue
+                    param_type = value_type.__name__
                     if param_type == "bool" or param_type == "boolean":
                         param_type = "boolean"
 
                     similarities = []
                     for embedding_key, ref_embedding in self.clip_embeddings[param_type].items():
-                        similarity = cosine_similarity(encoder_features[emb_idx].unsqueeze(0).to('cuda'), ref_embedding.unsqueeze(0).to('cuda')).item()
+                        feature = encoder_features[emb_idx]
+                        reference = ref_embedding.to(
+                            device=feature.device, dtype=feature.dtype
+                        )
+                        similarity = cosine_similarity(
+                            feature.unsqueeze(0), reference.unsqueeze(0)
+                        ).item()
                         similarities.append((embedding_key, similarity))
 
                     similarities.sort(key=lambda x: x[1], reverse=True)

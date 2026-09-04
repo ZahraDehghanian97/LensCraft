@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import os
 from pathlib import Path
@@ -16,6 +14,10 @@ from tqdm import tqdm
 
 from data.datamodule import CameraTrajectoryDataModule
 from data.dataset_type import DatasetType, resolve_dataset_type
+from data.simulation.utils import (
+    cinematography_struct_size,
+    simulation_struct_size,
+)
 from models.baselines.ccdm_adapter import CCDMAdapter
 from models.baselines.et_adapter import ETAdapter
 from models.baselines.gendop_adapter import GenDoPAdapter
@@ -28,6 +30,11 @@ from testing.baseline_modes import (
     NORM_ITEM,
 )
 from testing.process import test_batch
+from testing.trajectory_cache import (
+    TRAJECTORY_CACHE_VERSION,
+    build_trajectory_cache_key,
+    validate_cached_metric_batch,
+)
 from utils.load_lens_craft import load_lens_craft_model
 from visualization.utils import (
     tSNE_visualize_embeddings,
@@ -39,17 +46,14 @@ logger = logging.getLogger(__name__)
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
 CAPTIONED_DATASETS = ("simulation", "et")
-TRAJECTORY_CACHE_VERSION = 2
 
 
 def _trajectory_cache_key(cfg: DictConfig) -> str:
     config = OmegaConf.to_container(cfg, resolve=True)
-    config.pop("trajectory_cache", None)
-    config.pop("trajectory_cache_dir", None)
-    canonical = json.dumps(
-        config, sort_keys=True, separators=(",", ":"), default=str
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return build_trajectory_cache_key(
+        config,
+        resolve_path=hydra.utils.to_absolute_path,
+    )
 
 
 def _trajectory_cache_path(cfg: DictConfig, cache_key: str) -> Path:
@@ -63,14 +67,6 @@ def _expected_test_batches(cfg: DictConfig, test_dataloader) -> int:
     available = len(test_dataloader)
     limit = int(cfg.get("limit_test_batches", 0))
     return min(available, limit) if limit else available
-
-
-def _cached_metric_items(batch: dict) -> set[str]:
-    if "trajectories" in batch:
-        return set(batch["trajectories"])
-    if "items" in batch:
-        return set(batch["items"])
-    return set()
 
 
 def _load_trajectory_cache(
@@ -96,9 +92,23 @@ def _load_trajectory_cache(
             or len(batches) != _expected_test_batches(cfg, test_dataloader)
         ):
             raise ValueError("cache metadata or batch count does not match")
-        required = set(required_metric_items)
-        if any(not required.issubset(_cached_metric_items(batch)) for batch in batches):
-            raise ValueError("cache does not contain every requested metric mode")
+        model_type = _model_type_from_cfg(cfg)
+        expected_token_count = (
+            cinematography_struct_size + simulation_struct_size
+        )
+        expected_embedding_dim = int(cfg.clip.latent_dim)
+        for batch in batches:
+            validate_cached_metric_batch(
+                batch,
+                required_metric_items,
+                model_type=model_type,
+                require_encoder_features=(
+                    model_type == "lens_craft"
+                    and bool(cfg.get("caption_top1_metric", False))
+                ),
+                expected_token_count=expected_token_count,
+                expected_embedding_dim=expected_embedding_dim,
+            )
         logger.info("Trajectory cache hit: %s", cache_path)
         return cache_path, batches
     except Exception as exc:
@@ -267,9 +277,12 @@ def _load_clip_embeddings(cfg: DictConfig, model_type: str):
         from data.simulation.init_embeddings import initialize_all_clip_embeddings
 
         return initialize_all_clip_embeddings(
+            clip_model_name=str(cfg.clip.model_name),
             cache_file=cfg.training.model.inference.get(
                 "clip_embeddings_cache", "clip_embeddings_cache.pkl"
-            )
+            ),
+            chunk_size=int(cfg.clip.chunk_size),
+            embedding_dimension=int(cfg.clip.latent_dim),
         )
     return None
 

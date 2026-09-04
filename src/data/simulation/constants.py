@@ -1,4 +1,19 @@
+from dataclasses import dataclass
 from enum import Enum
+
+
+@dataclass(frozen=True)
+class NumericFeature:
+    """Description of a bounded scalar conditioning token.
+
+    Values outside the declared range are clipped before encoding. Optional
+    non-negative limits use logarithmic scaling so useful low values retain
+    more resolution while pathological input cannot produce NaN/inf features.
+    """
+
+    minimum: float
+    maximum: float
+    logarithmic: bool = False
 
 class CameraVerticalAngle(Enum):
     LOW = "low"
@@ -46,17 +61,6 @@ class MovementEasing(Enum):
     EASE_IN_CIRC = "easeInCirc"
     EASE_OUT_CIRC = "easeOutCirc"
     EASE_IN_OUT_CIRC = "easeInOutCirc"
-    EASE_IN_BACK = "easeInBack"
-    EASE_OUT_BACK = "easeOutBack"
-    EASE_IN_OUT_BACK = "easeInOutBack"
-    EASE_IN_ELASTIC = "easeInElastic"
-    EASE_OUT_ELASTIC = "easeOutElastic"
-    EASE_IN_OUT_ELASTIC = "easeInOutElastic"
-    EASE_IN_BOUNCE = "easeInBounce"
-    EASE_OUT_BOUNCE = "easeOutBounce"
-    EASE_IN_OUT_BOUNCE = "easeInOutBounce"
-    HAND_HELD = "handHeld"
-    ANTICIPATION = "anticipation"
     SMOOTH = "smooth"
 
 class SubjectView(Enum):
@@ -88,6 +92,11 @@ class DynamicMode(Enum):
     INTERPOLATION = "interpolation"
     SIMPLE = "simple"
 
+
+class Randomness(Enum):
+    HAND_HELD = "handHeld"
+    SHAKY = "shaky"
+
 class Direction(Enum):
     LEFT = "left"
     RIGHT = "right"
@@ -100,6 +109,8 @@ class MovementMode(Enum):
     TRANSITION = "transition"
     ROTATION = "rotation"
     ARC = "arc"
+    CRANE = "crane"
+    ROLL = "roll"
 
 class CameraMovementType(Enum):
     STATIC = "static"
@@ -119,8 +130,6 @@ class CameraMovementType(Enum):
     ARC_RIGHT = "arcRight"
     CRANE_UP = "craneUp"
     CRANE_DOWN = "craneDown"
-    DOLLY_OUT_ZOOM_IN = "dollyOutZoomIn"
-    DOLLY_IN_ZOOM_OUT = "dollyInZoomOut"
     DUTCH_LEFT = "dutchLeft"
     DUTCH_RIGHT = "dutchRight"
 
@@ -169,7 +178,9 @@ simulation_struct = [
         ("kind", SetupKind)
     ]),
     ("dynamic", [
+        ("type", DynamicMode),
         ("easing", MovementEasing),
+        ("randomness", Randomness),
         ("complementSetup", setup_config_struct),
         ("subjectAwareInterpolation", bool),
         ("scale", Scale),
@@ -179,6 +190,25 @@ simulation_struct = [
     ("constraints", [
         ("allFramesVisibility", bool),
         ("staticDistance", bool),
-        ("staticCameraSubjectRotation", bool)
+        ("staticCameraSubjectRotation", bool),
+        ("lockedMovement", [
+            ("left", bool),
+            ("right", bool),
+            ("up", bool),
+            ("down", bool),
+            ("forward", bool),
+            ("backward", bool)
+        ]),
+        ("lockedRotation", [
+            ("left", bool),
+            ("right", bool),
+            ("up", bool),
+            ("down", bool),
+            ("rollClockwise", bool),
+            ("rollNonClockwise", bool)
+        ]),
+        ("maxAccelerate", NumericFeature(0.0, 20.0, logarithmic=True)),
+        ("maxSpeed", NumericFeature(0.0, 20.0, logarithmic=True)),
+        ("importance", NumericFeature(1.0, 10.0))
     ])
 ]

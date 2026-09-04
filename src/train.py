@@ -1,7 +1,7 @@
 import os
-import sys
+import logging
+
 from dotenv import load_dotenv
-load_dotenv()
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate, get_class
@@ -9,11 +9,13 @@ from omegaconf import DictConfig, OmegaConf
 import lightning as L
 import torch
 from data.datamodule import CameraTrajectoryDataModule
-from data.dataset_type import resolve_dataset_type
 from data.multi_dataset_module import MultiDatasetModule
-from testing.metrics.callback import MetricCallback
-from testing.process import test_batch
-import logging
+from training.module_factory import (
+    build_lightning_init_kwargs,
+    finite_validation_loss,
+)
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -56,23 +58,27 @@ def main(cfg: DictConfig):
 
     LightningModuleClass = get_class(cfg.training._target_)
 
-    if hasattr(cfg, 'resume_checkpoint') and cfg.resume_checkpoint != "None":
-        checkpoint_path = cfg.resume_checkpoint
+    resume_checkpoint = getattr(cfg, "resume_checkpoint", None)
+    if resume_checkpoint not in (None, "", "None", "null"):
+        checkpoint_path = str(resume_checkpoint)
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
         logger.info(f"Loading model from checkpoint: {checkpoint_path}")
 
-        lightning_model = LightningModuleClass.load_from_checkpoint(
-            checkpoint_path,
+        loss_module = instantiate(cfg.training.loss_module)
+        init_kwargs = build_lightning_init_kwargs(
+            LightningModuleClass,
+            cfg.training,
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
-            noise=cfg.training.noise,
-            mask=cfg.training.mask,
-            teacher_forcing_schedule=cfg.training.teacher_forcing_schedule,
+            loss_module=loss_module,
             compile_mode=cfg.compile.mode,
             compile_enabled=cfg.compile.enabled,
             dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
+        )
+        lightning_model = LightningModuleClass.load_from_checkpoint(
+            checkpoint_path, **init_kwargs
         )
         logger.info("Checkpoint loaded successfully")
     else:
@@ -90,62 +96,33 @@ def main(cfg: DictConfig):
 
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
 
-    training_completed = False
     try:
         trainer.fit(lightning_model, datamodule=data_module)
-        training_completed = True
     except KeyboardInterrupt:
-        logger.info("Training was interrupted by user. Proceeding to testing with current model state...")
+        logger.info(
+            "Training was interrupted by user; evaluating the current model "
+            "to obtain a validation objective."
+        )
     except Exception as e:
         logger.exception("Error during training: %s", e)
+        raise
 
-    if use_multi_dataset:
-        dataset_type = "simulation" if getattr(cfg.data, 'sim_ratio', 0) > 0 else "ccdm"
-    else:
-        dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
+    validation_loss = trainer.callback_metrics.get("val_loss")
+    if validation_loss is None:
+        validation_loss = trainer.callback_metrics.get("val_loss_epoch")
+    if validation_loss is None:
+        validation_results = trainer.validate(
+            lightning_model, datamodule=data_module, verbose=False
+        )
+        if validation_results:
+            validation_loss = validation_results[0].get("val_loss")
+            if validation_loss is None:
+                validation_loss = validation_results[0].get("val_loss_epoch")
 
-    prdc_sum = 0
-    clatr_sum = 0
-    if dataset_type == "simulation":
-        model = lightning_model.model
-        model.eval()
+    validation_loss = finite_validation_loss(validation_loss)
 
-        device = model.device
-        model.to(device)
-
-        metric_callback = MetricCallback(num_cams=1, device=device)
-
-        val_dataloader = data_module.val_dataloader()
-
-        metric_items = ["prompt_generation", "hybrid_generation"]
-
-        with torch.no_grad():
-            for batch in val_dataloader:
-                test_batch(model, model, batch, metric_callback, device, metric_items, dataset_type='simulation', model_type='lens_craft')
-
-        for metric_item in metric_items:
-            metrics = metric_callback.compute_clatr_metrics(metric_item)
-            logger.info(f"{metric_item} Metrics: {metrics}")
-            # Sum PRDC metrics
-            type_prdc_sum = (
-                max(0, min(1, metrics[f"{metric_item}/precision"])) +
-                max(0, min(1, metrics[f"{metric_item}/recall"])) +
-                max(0, min(1, metrics[f"{metric_item}/density"])) +
-                max(0, min(1, metrics[f"{metric_item}/coverage"]))
-            )
-            prdc_sum += type_prdc_sum
-            clatr_score = metrics[f"{metric_item}/clatr_score"] / 100
-            clatr_sum +=  clatr_score
-            logger.info(f"{metric_item} PRDC sum: {type_prdc_sum}")
-            logger.info(f"{metric_item} CLATR sum: {clatr_score}")
-
-        logger.info(f"Total PRDC sum: {prdc_sum}")
-        logger.info(f"Total CLATR sum: {clatr_sum}")
-
-    if not training_completed:
-        logger.info("Testing completed after training interruption")
-
-    return -float(prdc_sum + clatr_sum * 2 - 1)
+    logger.info("Sweep objective val_loss: %.8f", validation_loss)
+    return validation_loss
 
 
 if __name__ == "__main__":

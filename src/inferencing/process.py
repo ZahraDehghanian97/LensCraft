@@ -3,6 +3,7 @@ import torch
 from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
 from data.convertor.convertor import convert_to_target
 from data.simulation.dataset import SimulationDataset
+from data.simulation.utils import structured_conditioning_from_batch
 from data.sim_format import (
     SIM_SEQ_LENGTH,
     MEMORY_TEACHER_FORCING_BY_MODE,
@@ -20,7 +21,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
     batch_size = len(batch["text_prompts"])
 
     caption_embedding = (
-        batch.get("cinematography_prompt")
+        structured_conditioning_from_batch(batch)
         if dataset_type in ("simulation", "et") else None
     )
 
@@ -72,19 +73,30 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         return ({"prompt_generation": sim_generated},
                 sim_camera, sim_subject, sim_volume, sim_padding, None)
 
-    keyframing_mask = build_keyframing_mask(batch_size, device)
+    keyframing_mask = build_keyframing_mask(
+        batch_size, device, sim_camera.shape[1]
+    )
 
     results = {}
     for mode in ("prompt_generation", "reconstruction", "key_framing+prompt",
                  "key_framing", "source_trajectory"):
-        mask = keyframing_mask if mode in _KEYFRAMING_MODES else sim_padding
+        # Keyframing hides source-camera frames from the encoder.  It is not a
+        # decoder padding operation: sending this mask only as ``padding_mask``
+        # leaked every supposedly hidden frame into the encoder and instead
+        # suppressed output timesteps. Real temporal padding must still be
+        # hidden from both paths, including in keyframing modes.
+        source_mask = (
+            keyframing_mask | sim_padding
+            if mode in _KEYFRAMING_MODES
+            else sim_padding
+        )
         mode_caption = caption_embedding
 
         if mode == "source_trajectory":
             # Pair each trajectory with a *different* sample's prompt.
-            if "cinematography_prompt" not in batch:
+            if caption_embedding is None:
                 continue
-            shuffled = [batch["cinematography_prompt"][:, idx, :]
+            shuffled = [caption_embedding[:, idx, :]
                         for idx in batch["random_prompt_index"]]
             mode_caption = torch.stack(shuffled, dim=1).to(device)
 
@@ -92,7 +104,8 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             subject_trajectory=sim_subject,
             subject_volume=sim_volume,
             camera_trajectory=sim_camera,
-            padding_mask=mask,
+            src_key_mask=source_mask,
+            padding_mask=sim_padding,
             memory_teacher_forcing_ratio=MEMORY_TEACHER_FORCING_BY_MODE[mode],
             caption_embedding=mode_caption,
         )["reconstructed"]

@@ -13,7 +13,35 @@ SIMULATION_FRAME_COUNT = 30
 CACHE_METADATA_VERSION = 1
 
 
+def resolve_dataset_root(data_path: Path) -> Path:
+    """Return the directory that owns one simulator export.
+
+    New archives are allowed to contain a dataset-scoped top-level directory so
+    extracting two archives cannot mix their dictionaries and sample files.  A
+    caller may therefore point either at that directory or at its extraction
+    parent.  Multiple dictionaries are deliberately rejected: choosing one
+    implicitly could decode samples with the wrong archive-local dictionary.
+    """
+
+    data_path = Path(data_path)
+    candidates = sorted({
+        path.parent.resolve()
+        for path in data_path.rglob("parameter_dictionary.msgpack")
+        if path.is_file()
+    })
+    if not candidates:
+        return data_path
+    if len(candidates) > 1:
+        roots = ", ".join(str(path) for path in candidates)
+        raise ValueError(
+            "Multiple simulation datasets were found below "
+            f"{data_path}: {roots}. Point data_path at one dataset directory."
+        )
+    return candidates[0]
+
+
 def load_dataset_manifest(data_path: Path) -> Optional[Dict[str, Any]]:
+    data_path = resolve_dataset_root(data_path)
     manifest_path = Path(data_path) / "manifest.json"
     if not manifest_path.exists():
         return None
@@ -38,32 +66,30 @@ def compute_dataset_fingerprint(
     """Build a cheap cache key without reading simulation payloads."""
 
     data_path = Path(data_path)
-    if manifest is not None:
-        source = {
-            "manifest": manifest,
-            "simulationFiles": sorted(Path(path).name for path in simulation_files),
-        }
-    else:
-        dictionary_path = data_path / "parameter_dictionary.msgpack"
-        dictionary_stat = dictionary_path.stat()
-        source = {
-            "manifest": None,
-            "parameterDictionary": {
-                "size": dictionary_stat.st_size,
-                "mtimeNs": dictionary_stat.st_mtime_ns,
-            },
-            "simulationFiles": [
-                {
-                    "name": path.name,
-                    "size": path.stat().st_size,
-                    "mtimeNs": path.stat().st_mtime_ns,
-                }
-                for path in sorted(
-                    (Path(path) for path in simulation_files),
-                    key=lambda path: path.name,
-                )
-            ],
-        }
+    dictionary_path = data_path / "parameter_dictionary.msgpack"
+    dictionary_stat = dictionary_path.stat()
+    # A manifest identifies a generated archive, but it does not prove that
+    # extracted payloads were left untouched. Include the actual dictionary
+    # and sample inventory for schema-v2 and legacy datasets alike so replacing
+    # a file in place cannot silently reuse stale normalization/movement caches.
+    source = {
+        "manifest": manifest,
+        "parameterDictionary": {
+            "size": dictionary_stat.st_size,
+            "mtimeNs": dictionary_stat.st_mtime_ns,
+        },
+        "simulationFiles": [
+            {
+                "name": path.name,
+                "size": path.stat().st_size,
+                "mtimeNs": path.stat().st_mtime_ns,
+            }
+            for path in sorted(
+                (Path(path) for path in simulation_files),
+                key=lambda path: path.name,
+            )
+        ],
+    }
 
     encoded = json.dumps(
         source, ensure_ascii=True, separators=(",", ":"), sort_keys=True

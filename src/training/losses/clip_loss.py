@@ -1,5 +1,4 @@
-import torch
-from torch.nn.functional import mse_loss, cosine_similarity
+from torch.nn.functional import cosine_similarity
 
 
 class ClipLoss:
@@ -23,6 +22,7 @@ class ClipLoss:
         clip_losses = []
         total_clip_loss = 0
         total_clip_loss_weighted = 0
+        applied_clip_weight = 0
         
         for i in range(clip_target.shape[0]):
             if encoder_loss_function == "clip":
@@ -33,20 +33,38 @@ class ClipLoss:
                 if len(similarity) != 0:
                     current_loss = 1 - similarity.mean()
                 else:
-                    current_loss = 0
+                    current_loss = clip_pred[i].new_zeros(())
             elif encoder_loss_function == "mse":
-                current_loss = mse_loss(clip_target[i], clip_pred[i])
+                per_sample_loss = (
+                    (clip_target[i] - clip_pred[i]) ** 2
+                ).mean(dim=-1)
+                if prompt_none_mask is not None:
+                    per_sample_loss = per_sample_loss[prompt_none_mask[:, i]]
+                current_loss = (
+                    per_sample_loss.mean()
+                    if len(per_sample_loss) != 0
+                    else clip_pred[i].new_zeros(())
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported encoder_loss_function: {encoder_loss_function}"
+                )
             
             clip_losses.append(current_loss)
             
             if weighted_clip_loss and self.clip_weights:
-                total_clip_loss_weighted += current_loss * self.clip_weights[f"clip_{i}"]
+                # New serialized constraints add tokens beyond legacy weight
+                # files. Give unspecified tokens a neutral weight instead of
+                # dropping them or failing with KeyError.
+                weight = self.clip_weights.get(f"clip_{i}", 1.0)
+                total_clip_loss_weighted += current_loss * weight
+                applied_clip_weight += weight
             
             total_clip_loss += current_loss
 
         
-        if weighted_clip_loss and self.sum_clip_weights > 0:
-            total_clip_loss_weighted = total_clip_loss_weighted / self.sum_clip_weights
+        if weighted_clip_loss and applied_clip_weight > 0:
+            total_clip_loss_weighted = total_clip_loss_weighted / applied_clip_weight
             return clip_losses, total_clip_loss_weighted
 
         total_clip_loss = total_clip_loss / clip_target.shape[0]

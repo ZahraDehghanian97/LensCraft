@@ -1,27 +1,79 @@
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Any
+import math
 import torch
 import pickle
 
 from .constants import (
+    NumericFeature,
     cinematography_struct,
     simulation_struct,
 )
 
 
 def get_enum_index(enum_class, value) -> int:
-    if isinstance(enum_class, bool) or enum_class is bool:
-        if isinstance(value, bool):
-            return 1 if value else 0
-        return -1
-        
     if isinstance(enum_class, type(Enum)):
         try:
             return list(enum_class).index(enum_class(value))
-        except (ValueError, KeyError):
+        except (TypeError, ValueError, KeyError):
             return -1
             
     return -1
+
+
+def _coerce_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return None
+
+
+def _coerce_finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _numeric_embedding(
+    value: float, feature: NumericFeature, embedding_dim: int
+) -> torch.Tensor:
+    """Encode one bounded scalar as deterministic Fourier features."""
+
+    bounded = min(max(value, feature.minimum), feature.maximum)
+    width = feature.maximum - feature.minimum
+    if width <= 0:
+        raise ValueError("NumericFeature.maximum must be greater than minimum")
+    shifted = bounded - feature.minimum
+    if feature.logarithmic:
+        normalized = math.log1p(shifted) / math.log1p(width)
+    else:
+        normalized = shifted / width
+
+    frequency = torch.arange(
+        1, (embedding_dim + 1) // 2 + 1, dtype=torch.float32
+    )
+    phase = frequency * (math.pi * normalized)
+    embedding = torch.stack((torch.sin(phase), torch.cos(phase)), dim=-1).flatten()
+    return embedding[:embedding_dim]
+
+
+def _infer_embedding_dim(clip_embeddings: Optional[Dict]) -> int:
+    if clip_embeddings:
+        for values in clip_embeddings.values():
+            if isinstance(values, dict):
+                for embedding in values.values():
+                    if torch.is_tensor(embedding):
+                        return int(embedding.numel())
+    raise ValueError("embedding_dim is required when no CLIP embeddings are available")
 
 
 def extract_cinematography_parameters(
@@ -31,8 +83,12 @@ def extract_cinematography_parameters(
     prefix: str = "",
     fill_none_with_mean: bool = False,
     embedding_means = None,
+    embedding_dim: Optional[int] = None,
 ) -> List[Tuple[str, Any, int, Optional[torch.Tensor]]]:
     parameters = []
+    clip_embeddings = clip_embeddings or {}
+    if embedding_dim is None:
+        embedding_dim = _infer_embedding_dim(clip_embeddings)
     
     for key, value_type in struct:
         current_prefix = f"{prefix}_{key}" if prefix else key
@@ -43,24 +99,54 @@ def extract_cinematography_parameters(
             index = get_enum_index(value_type, data_value)
 
             if index == -1 and fill_none_with_mean:
-                embedding = get_mean_embedding(value_type, embedding_means)
+                embedding = get_mean_embedding(
+                    value_type, embedding_means, embedding_dim
+                )
 
-            if data_value:
-                embedding = clip_embeddings[value_type.__name__][data_value]
+            if index != -1:
+                enum_value = value_type(data_value).value
+                embedding = clip_embeddings.get(value_type.__name__, {}).get(
+                    enum_value
+                )
+                if embedding is None:
+                    embedding = get_mean_embedding(
+                        value_type, embedding_means, embedding_dim
+                    )
 
             parameters.append((current_prefix, data_value, index, embedding))
             
         elif value_type is bool:
-            if data_value is None:
+            bool_value = _coerce_bool(data_value)
+            if bool_value is None:
                 index = -1
                 if fill_none_with_mean:
-                    embedding = get_mean_embedding(value_type, embedding_means)
+                    embedding = get_mean_embedding(
+                        value_type, embedding_means, embedding_dim
+                    )
 
-            elif isinstance(data_value, bool):
-                index = 1 if data_value else 0
-                embedding = clip_embeddings["boolean"][data_value]
+            else:
+                index = 1 if bool_value else 0
+                embedding = clip_embeddings.get("boolean", {}).get(bool_value)
+                if embedding is None:
+                    embedding = get_mean_embedding(
+                        value_type, embedding_means, embedding_dim
+                    )
                 
-            parameters.append((current_prefix, data_value, index, embedding))
+            parameters.append((current_prefix, bool_value, index, embedding))
+
+        elif isinstance(value_type, NumericFeature):
+            numeric_value = _coerce_finite_number(data_value)
+            if numeric_value is None:
+                index = -1
+                embedding = torch.zeros(embedding_dim, dtype=torch.float32)
+            else:
+                index = 0
+                embedding = _numeric_embedding(
+                    numeric_value, value_type, embedding_dim
+                )
+            parameters.append(
+                (current_prefix, numeric_value, index, embedding)
+            )
             
         elif isinstance(value_type, list):
             if data_value is None:
@@ -79,6 +165,7 @@ def extract_cinematography_parameters(
                 fill_none_with_mean=fill_none_with_mean,
                 prefix=current_prefix,
                 embedding_means=embedding_means,
+                embedding_dim=embedding_dim,
             )
             parameters.extend(nested_params)
                 
@@ -97,22 +184,39 @@ def count_total_parameters_in_struct(struct: List) -> int:
     return count
 
 
-def flatten_struct_parameters(struct: list, last_value=None) -> list:
+def flatten_struct_parameters(struct: list, prefix: str = "") -> list:
     parameter_list = list()
     for parameter, value_type in struct:
+        current_prefix = f"{prefix}_{parameter}" if prefix else parameter
         if isinstance(value_type, list):
-            parameter_list.extend(flatten_struct_parameters(value_type, parameter))
+            parameter_list.extend(
+                flatten_struct_parameters(value_type, current_prefix)
+            )
         else:
-            parameter_list.append((last_value + "_" + parameter, value_type))
+            parameter_list.append((current_prefix, value_type))
     return parameter_list
 
 
-def convert_parameters_to_embedding_tensor(parameters: List, struct_size: int) -> torch.Tensor:
-    embedding_dim = len(parameters[0][-1])
-    instruction_tensor = torch.full((struct_size, embedding_dim), -1, dtype=torch.float)
+def convert_parameters_to_embedding_tensor(
+    parameters: List, struct_size: int, embedding_dim: int
+) -> torch.Tensor:
+    # A zero row is the explicit neutral/unknown token. Presence is tracked
+    # separately by prompt_none_mask, so unknown values never masquerade as a
+    # real enum or numeric constraint.
+    instruction_tensor = torch.zeros(
+        (struct_size, embedding_dim), dtype=torch.float32
+    )
     
     for param_idx, (_, _, _, embedding) in enumerate(parameters):
         if embedding is not None:
+            embedding = torch.as_tensor(embedding, dtype=torch.float32).flatten()
+            if embedding.numel() != embedding_dim:
+                raise ValueError(
+                    f"Embedding at index {param_idx} has {embedding.numel()} "
+                    f"elements; expected {embedding_dim}"
+                )
+            if not torch.isfinite(embedding).all():
+                raise ValueError(f"Embedding at index {param_idx} is not finite")
             instruction_tensor[param_idx] = embedding
             
     return instruction_tensor
@@ -128,11 +232,11 @@ def load_clip_means():
     return embedding_means
 
 
-def get_mean_embedding(value_type, embedding_means):
-    if value_type == bool:
-        return embedding_means["boolean"]
-    else:
-        return embedding_means[value_type.__name__]
+def get_mean_embedding(value_type, embedding_means, embedding_dim):
+    key = "boolean" if value_type is bool else value_type.__name__
+    if embedding_means is not None and key in embedding_means:
+        return torch.as_tensor(embedding_means[key], dtype=torch.float32)
+    return torch.zeros(embedding_dim, dtype=torch.float32)
 
 
 def create_prompt_none_mask(cinematography_prompt_parameters: list, simulation_instruction_parameters: list):
@@ -147,13 +251,23 @@ def create_prompt_none_mask(cinematography_prompt_parameters: list, simulation_i
     return prompt_none_entries
 
 
-def fix_prompts_and_instructions(instruction, prompt, clip_embeddings, fill_none_with_mean, embedding_means):
+def fix_prompts_and_instructions(
+    instruction,
+    prompt,
+    clip_embeddings,
+    fill_none_with_mean,
+    embedding_means,
+    embedding_dim: Optional[int] = None,
+):
+    if embedding_dim is None:
+        embedding_dim = _infer_embedding_dim(clip_embeddings)
     simulation_instruction_parameters = extract_cinematography_parameters(
         data=instruction,
         struct=simulation_struct,
         clip_embeddings=clip_embeddings,
         fill_none_with_mean=fill_none_with_mean,
         embedding_means=embedding_means,
+        embedding_dim=embedding_dim,
     )
 
     cinematography_prompt_parameters = extract_cinematography_parameters(
@@ -162,16 +276,19 @@ def fix_prompts_and_instructions(instruction, prompt, clip_embeddings, fill_none
         clip_embeddings=clip_embeddings,
         fill_none_with_mean=fill_none_with_mean,
         embedding_means=embedding_means,
+        embedding_dim=embedding_dim,
     )
 
     simulation_instruction_tensor = convert_parameters_to_embedding_tensor(
         simulation_instruction_parameters,
-        simulation_struct_size
+        simulation_struct_size,
+        embedding_dim,
     )
     
     cinematography_prompt_tensor = convert_parameters_to_embedding_tensor(
         cinematography_prompt_parameters,
-        cinematography_struct_size
+        cinematography_struct_size,
+        embedding_dim,
     )
         
     prompt_none_mask = create_prompt_none_mask(
@@ -180,6 +297,18 @@ def fix_prompts_and_instructions(instruction, prompt, clip_embeddings, fill_none
     )
     
     return simulation_instruction_tensor, cinematography_prompt_tensor, prompt_none_mask, simulation_instruction_parameters, cinematography_prompt_parameters
+
+
+def structured_conditioning_from_batch(batch: Dict[str, torch.Tensor]):
+    """Return every structured token in model order, or ``None``."""
+
+    cinematography = batch.get("cinematography_prompt")
+    simulation = batch.get("simulation_instruction")
+    if cinematography is None:
+        return None
+    if simulation is None:
+        return cinematography
+    return torch.cat([cinematography, simulation], dim=0)
 
 
 

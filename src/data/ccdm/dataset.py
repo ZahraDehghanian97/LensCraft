@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
 from models.clip_embeddings import CLIPEmbedder
-from data.convertor.convertor import convert_to_target
 from data.collate_utils import stack_optional
 
 class CCDMDataset(Dataset):
@@ -14,7 +13,7 @@ class CCDMDataset(Dataset):
     def __init__(
         self,
         data_path: str,
-        clip_model_name: str = "openai/clip-vit-large-patch14",
+        clip_model_name: str = "openai/clip-vit-base-patch32",
         embedding_dim: int = 512,
         normalize: bool = True,
         original_seq_len: int = 300,

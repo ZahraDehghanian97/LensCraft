@@ -1,7 +1,9 @@
-from typing import Optional, Dict, Any, Tuple, List, Any
+from typing import Optional, Dict, Any, Tuple, List
 import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
+from data.convertor.convertor import convert_to_target
+from data.simulation.utils import structured_conditioning_from_batch
 
 
 class MultiDatasetTrainer(BaseTrainer):
@@ -45,7 +47,20 @@ class MultiDatasetTrainer(BaseTrainer):
         self.validation_ccdm_outputs = []
 
     def _prepare_sim_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
-        return [batch['cinematography_prompt'], batch['simulation_instruction']]
+        caption = structured_conditioning_from_batch(batch)
+        if caption is None:
+            raise ValueError("Simulation batches require structured conditioning")
+        empty = caption.new_zeros((0,) + tuple(caption.shape[1:]))
+        return [caption, empty]
+
+    @staticmethod
+    def _prepare_caption_embedding(batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        caption = batch.get("caption_feat")
+        if caption is None:
+            raise ValueError("CCDM batches require caption_feat")
+        if caption.dim() == 2:
+            caption = caption.unsqueeze(0)
+        return caption
 
     def _process_sim_batch(self, batch: Dict[str, Any], stage: str) -> Tuple[torch.Tensor, Dict[str, Any]]:
         camera_trajectory = batch['camera_trajectory']
@@ -79,24 +94,49 @@ class MultiDatasetTrainer(BaseTrainer):
         return loss, loss_dict
 
     def _process_ccdm_batch(self, batch: Dict[str, Any], stage: str) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        camera_trajectory = batch['camera_trajectory']
-        subject_trajectory = batch['subject_trajectory']
-        subject_volume = batch['subject_volume']
-        tgt_key_padding_mask = batch.get("padding_mask", None)
-
-        output = self._forward_step(
+        # CCDM stores up to 300 five-parameter frames, while LensCraft predicts
+        # a fixed-length simulation 6-DoF trajectory (30 by default). Convert
+        # the complete valid source clip before both the forward pass and loss;
+        # otherwise the decoder output and training target have different time
+        # and feature dimensions.
+        (
             camera_trajectory,
             subject_trajectory,
             subject_volume,
-            caption_embedding=None,
-            tgt_key_padding_mask=tgt_key_padding_mask,
+            tgt_key_padding_mask,
+        ) = convert_to_target(
+            "ccdm",
+            "simulation",
+            batch["camera_trajectory"],
+            batch.get("subject_trajectory"),
+            batch.get("subject_volume"),
+            batch.get("padding_mask"),
+            target_len=self.model.decoder.seq_length,
+        )
+        converted_batch = dict(batch)
+        converted_batch.update(
+            camera_trajectory=camera_trajectory,
+            subject_trajectory=subject_trajectory,
+            subject_volume=subject_volume,
+            padding_mask=tgt_key_padding_mask,
+        )
+        caption_embedding = self._prepare_caption_embedding(converted_batch)
+
+        output = self._forward_step(
+            converted_batch["camera_trajectory"],
+            converted_batch["subject_trajectory"],
+            converted_batch["subject_volume"],
+            caption_embedding=caption_embedding,
+            tgt_key_padding_mask=converted_batch["padding_mask"],
             is_training=(stage == "train"),
             decode_mode=self.decode_mode
         )
 
         first_frame_loss, relative_loss, speed_loss = self.loss_module.compute_trajectory_loss(
             output['reconstructed_raw_matrix'],
-            self.loss_module._euler_traj_to_matrix(camera_trajectory)
+            self.loss_module._euler_traj_to_matrix(
+                converted_batch["camera_trajectory"]
+            )
         )
         trajectory_loss = first_frame_loss + relative_loss + speed_loss
 
@@ -183,17 +223,3 @@ class MultiDatasetTrainer(BaseTrainer):
         except Exception as e:
             print(f"Warning: Could not determine total steps: {e}")
             return 1000 * self.trainer.max_epochs
-
-    def on_train_epoch_end(self) -> None:
-        super().on_train_epoch_end()
-
-        train_metrics = {}
-        for key, value in self.trainer.callback_metrics.items():
-            if key.startswith('train_') and key.endswith('_epoch'):
-                train_metrics[key] = value
-
-        sim_loss = train_metrics.get('train_sim_loss_epoch', torch.tensor(0.0, device=self.device))
-        ccdm_loss = train_metrics.get('train_ccdm_loss_epoch', torch.tensor(0.0, device=self.device))
-
-        combined_loss = (self.sim_weight * sim_loss) + (self.ccdm_weight * ccdm_loss)
-        self.log("te", combined_loss, prog_bar=True)

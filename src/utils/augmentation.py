@@ -2,7 +2,20 @@ import torch
 
 
 def linear_increase(initial_value, final_value, current_epoch, total_epochs):
-    return initial_value + (final_value - initial_value) * (current_epoch / total_epochs)
+    """Linearly interpolate over epochs, including both configured endpoints.
+
+    Epoch indices run from ``0`` through ``total_epochs - 1``.  Dividing by
+    ``total_epochs`` therefore never reached the final value.  A one-epoch run
+    has only its endpoint, so it deliberately uses ``final_value``.
+    """
+    if total_epochs < 1:
+        raise ValueError("total_epochs must be at least 1")
+
+    if total_epochs == 1:
+        progress = 1.0
+    else:
+        progress = min(max(current_epoch / (total_epochs - 1), 0.0), 1.0)
+    return initial_value + (final_value - initial_value) * progress
 
 
 def apply_mask_and_noise(data, valid_len=None, mask_ratio=0.0, noise_std=0.0, device='cuda'):
