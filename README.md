@@ -349,6 +349,32 @@ losses are unweighted, and missing components are marked as not logged. The
 script uses Matplotlib from `requirements.txt`, runs without a display or GPU,
 and can be rerun while training continues.
 
+### Plot native CLaTr training
+
+For CLaTr CSV logs (`train/loss_epoch`, `val/loss`, etc.), use:
+
+```bash
+python src/plot_clatr_losses.py /path/to/clatr_native \
+  --output-dir /path/to/clatr_plots
+# Keep updating the same plots while training runs (Ctrl+C stops the viewer):
+python src/plot_clatr_losses.py /path/to/clatr_native \
+  --output-dir /path/to/clatr_plots --watch 60
+```
+
+The six panels show train/validation total, reconstruction, contrastive, latent,
+and KL losses, plus the learning rate. Loss curves use completed epoch averages;
+the current epoch's latest logged step stays separate in `summary.json`.
+Component losses are unweighted, so they do not directly sum to the total.
+Before the first epoch completes, the plots show a waiting message and any
+available learning-rate observations.
+
+The script writes `clatr_loss_trends.png`, `clatr_loss_trends.svg`,
+`epoch_losses.csv`, `epoch_losses.json`, and `summary.json`. Files update
+atomically in the chosen directory. Directory input selects the newest CLaTr
+`metrics.csv` (preferring `clatr_native/` when present) and prints its path;
+watch mode stays on that logger version. Pass an explicit CSV to choose another
+version. It runs with Matplotlib on CPU and does not require the training stack.
+
 ## Evaluation
 
 Simulation files keep their original variable lengths on disk. At loading time,
