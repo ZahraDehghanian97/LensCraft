@@ -66,6 +66,8 @@ def check_batch(batch) -> None:
         "simulation", "et", cam, subj, vol, batch["padding_mask"],
         ET_SEQ_LENGTH, need_denormal=False, need_normal=False,
     )
+    # Already in E.T.'s native Y-down world after ETConvertor.from_standard;
+    # candidates below are additional axis changes, so identity is still correct.
     cam0 = traj_raw[:, 0, 6:]  # [B, 3] absolute first position
 
     shift_mean = ET_CFG["shift_mean"].to(cam0)
@@ -80,7 +82,7 @@ def check_batch(batch) -> None:
         scored.append((z.abs().mean().item(), perm, signs))
     scored.sort()
 
-    print("\n4. camera frame-0 mean |z| under shift stats, per axis mapping (best 5):")
+    print("\n4. native E.T. camera frame-0 mean |z| under shift stats, per additional axis mapping (best 5):")
     identity_rank = next(
         i for i, (_, p, s) in enumerate(scored)
         if p == (0, 1, 2) and s == (1.0, 1.0, 1.0)

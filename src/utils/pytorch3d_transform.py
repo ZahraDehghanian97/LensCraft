@@ -174,6 +174,42 @@ def euler_angles_to_matrix(euler_angles: torch.Tensor, convention: str) -> torch
     return torch.matmul(torch.matmul(matrices[0], matrices[1]), matrices[2])
 
 
+class _StableAtan2(torch.autograd.Function):
+    """Keep atan2's forward value while bounding its singular backward.
+
+    Euler angles are not uniquely differentiable at gimbal lock. Near that
+    singularity, use a bounded gradient instead of dividing by zero.
+    """
+
+    @staticmethod
+    def forward(ctx, y, x):
+        ctx.input_dtypes = (y.dtype, x.dtype)
+        ctx.input_shapes = (y.shape, x.shape)
+        work_dtype = (
+            torch.float64
+            if torch.float64 in ctx.input_dtypes
+            else torch.float32
+        )
+        with torch.autocast(device_type=y.device.type, enabled=False):
+            yy, xx = y.to(work_dtype), x.to(work_dtype)
+            ctx.save_for_backward(yy, xx)
+            angle = torch.atan2(yy, xx)
+        return angle.to(torch.promote_types(y.dtype, x.dtype))
+
+    @staticmethod
+    @torch.autograd.function.once_differentiable
+    def backward(ctx, grad_output):
+        y, x = ctx.saved_tensors
+        with torch.autocast(device_type=y.device.type, enabled=False):
+            denominator = (x.square() + y.square()).clamp_min(
+                torch.finfo(y.dtype).eps
+            )
+            grad = grad_output.to(y.dtype) / denominator
+            grad_y = (grad * x).sum_to_size(ctx.input_shapes[0])
+            grad_x = (-grad * y).sum_to_size(ctx.input_shapes[1])
+        return grad_y.to(ctx.input_dtypes[0]), grad_x.to(ctx.input_dtypes[1])
+
+
 def _angle_from_tan(
     axis: str, other_axis: str, data, horizontal: bool, tait_bryan: bool
 ) -> torch.Tensor:
@@ -201,10 +237,10 @@ def _angle_from_tan(
         i2, i1 = i1, i2
     even = (axis + other_axis) in ["XY", "YZ", "ZX"]
     if horizontal == even:
-        return torch.atan2(data[..., i1], data[..., i2])
+        return _StableAtan2.apply(data[..., i1], data[..., i2])
     if tait_bryan:
-        return torch.atan2(-data[..., i2], data[..., i1])
-    return torch.atan2(data[..., i2], -data[..., i1])
+        return _StableAtan2.apply(-data[..., i2], data[..., i1])
+    return _StableAtan2.apply(data[..., i2], -data[..., i1])
 
 
 def _index_from_letter(letter: str) -> int:
@@ -246,14 +282,15 @@ def matrix_to_euler_angles(matrix: torch.Tensor, convention: str) -> torch.Tenso
     # back to 1.0) and clamp strictly inside the domain so the gradient stays
     # large-but-finite (then tamed by gradient_clip_val).
     eps = 1e-7
+    work_matrix = matrix if matrix.dtype in (torch.float32, torch.float64) else matrix.float()
     if tait_bryan:
-        sin_central = matrix[..., i0, i2].float() * (-1.0 if i0 - i2 in [-1, 2] else 1.0)
+        sin_central = work_matrix[..., i0, i2] * (-1.0 if i0 - i2 in [-1, 2] else 1.0)
         central_angle = torch.asin(
             torch.clamp(sin_central, -1.0 + eps, 1.0 - eps)
         ).to(matrix.dtype)
     else:
         central_angle = torch.acos(
-            torch.clamp(matrix[..., i0, i0].float(), -1.0 + eps, 1.0 - eps)
+            torch.clamp(work_matrix[..., i0, i0], -1.0 + eps, 1.0 - eps)
         ).to(matrix.dtype)
 
     o = (
@@ -368,30 +405,66 @@ def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
     return torch.stack((b1, b2, b3), dim=-2)
 
 
+class _SO3Projection(torch.autograd.Function):
+    """SVD projection with the derivative of the rotation, not its SVD factors."""
+
+    @staticmethod
+    def forward(ctx, matrix):
+        ctx.input_dtype = matrix.dtype
+        work_matrix = (
+            matrix if matrix.dtype in (torch.float32, torch.float64)
+            else matrix.float()
+        )
+        with torch.autocast(device_type=matrix.device.type, enabled=False):
+            u, singular_values, vh = torch.linalg.svd(work_matrix)
+            orientation = torch.det(u @ vh).sign()
+            correction = torch.ones_like(singular_values)
+            correction[..., -1] = orientation
+            q = u * correction.unsqueeze(-2)
+            signed_values = singular_values * correction
+            rotation = q @ vh
+            ctx.save_for_backward(q, signed_values, vh)
+        return rotation.to(matrix.dtype)
+
+    @staticmethod
+    @torch.autograd.function.once_differentiable
+    def backward(ctx, grad_rotation):
+        q, signed_values, vh = ctx.saved_tensors
+        with torch.autocast(device_type=q.device.type, enabled=False):
+            # Writing M = Q diag(lambda) V^T and dR = Q Omega V^T gives
+            # Omega_ij = (A_ij - A_ji) / (lambda_i + lambda_j), where
+            # A = Q^T dM V. Its adjoint below remains finite at repeated
+            # positive singular values, including all proper rotations.
+            upstream = q.transpose(-1, -2) @ grad_rotation.to(q.dtype) @ vh.transpose(-1, -2)
+            denominator = signed_values.unsqueeze(-1) + signed_values.unsqueeze(-2)
+            scale = signed_values.abs().amax(dim=-1, keepdim=True).clamp_min(1.0)
+            floor = (torch.finfo(q.dtype).eps ** 0.5) * scale.unsqueeze(-1)
+            # Zero signed sums mark genuinely ambiguous projections (e.g.
+            # rank-one matrices or a reflection with tied smallest values).
+            # There is no unique derivative there; bound that gradient while
+            # retaining the exact derivative outside this small neighborhood.
+            tangent = (upstream - upstream.transpose(-1, -2)) / denominator.clamp_min(floor)
+            diagonal = torch.eye(3, dtype=torch.bool, device=q.device)
+            tangent = tangent.masked_fill(diagonal, 0.0)
+            grad_matrix = q @ tangent @ vh
+        return grad_matrix.to(ctx.input_dtype)
+
+
 def symmetric_orthogonalization(m: torch.Tensor) -> torch.Tensor:
-    """Project (..., 3, 3) matrices onto SO(3) via SVD (inference / non-differentiable).
+    """Project (..., 3, 3) matrices onto SO(3) with a stable first derivative.
 
-    Implements the special-orthogonal Procrustes of Levinson et al., "An Analysis of
-    SVD for Deep Rotation Estimation" (2020):
-    R = U diag(1, 1, det(U V^T)) V^T, the closest proper rotation in Frobenius norm.
+    The forward is the special-orthogonal Procrustes solution of Levinson et
+    al., "An Analysis of SVD for Deep Rotation Estimation" (2020):
+    R = U diag(1, 1, sign(det(U V^T))) V^T. The backward uses sums of signed
+    singular values instead of differentiating the individual SVD factors.
+    Undefined derivatives at ambiguous projections are bounded numerically.
 
-    Runs entirely under ``no_grad`` and returns a detached rotation. ``torch.linalg.svd``'s
-    backward has 1/(sigma_i^2 - sigma_j^2) terms that blow up to NaN when singular values
-    coincide, so we never differentiate through it. Training regresses the raw 3x3 head
-    directly against the target rotation matrix (Frobenius); this projection is applied
-    only to produce a valid rotation for the euler output, autoregressive feedback, and
-    generation.
+    Cycle loss and autoregressive feedback can therefore train the rotation
+    head. Raw-matrix reconstruction losses and the output format are unchanged.
     """
-    orig_dtype = m.dtype
-    with torch.no_grad():
-        mm = m.float() if m.dtype not in (torch.float32, torch.float64) else m
-        with torch.autocast(device_type=m.device.type, enabled=False):
-            u, _, vh = torch.linalg.svd(mm)
-            det = torch.det(torch.matmul(u, vh))                   # (...,)
-            ones = torch.ones(mm.shape[:-2] + (2,), dtype=mm.dtype, device=mm.device)
-            diag = torch.cat([ones, det.unsqueeze(-1)], dim=-1)    # (..., 3) = (1, 1, det)
-            rot = torch.matmul(u * diag.unsqueeze(-2), vh)         # scale U's last column by det
-    return rot.to(orig_dtype)
+    if m.shape[-2:] != (3, 3):
+        raise ValueError(f"Invalid rotation matrix shape {m.shape}.")
+    return _SO3Projection.apply(m)
 
 
 def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:

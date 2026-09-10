@@ -25,7 +25,7 @@ Camera Diffusion Model, EG 2024) **without reading
 | Subject | implicit: the data is subject-relative; no subject trajectory, rotation, or volume is stored |
 | Rotation | **not stored** — orientation must be reconstructed at decode time (§3.3) |
 | Normalization | global per-dim z-score; `Mean_Std.npy` = 5-vector mean/std over all frames of all sequences |
-| Captions | list of template-like sentences per sample; upstream encodes them with frozen CLIP ViT-B/32 pooled features (§6) |
+| Captions | list of template-like sentences per sample; upstream encodes them with frozen CLIP ViT-B/32 projected `encode_text` features (§6) |
 | Splits | none in the file; upstream used a random 9:1 split |
 
 ## 2. Files & formats
@@ -48,11 +48,19 @@ Camera Diffusion Model, EG 2024) **without reading
 1. **Subject-relative and subject-free.** The data contains no subject
    trajectory. Per frame, `r = camera_position − subject_position`; the world
    frame is effectively the subject's local frame.
-2. **Screen position `p`.** With `q` = subject position in the camera frame:
+2. **Screen position `p`.** With `q` = subject position in the native
+   right-handed camera frame (+X left, +Y up, +Z forward):
    `p_x = (q_x/q_z)/tan(hfov/2)` and `p_y = (q_y/q_z)/tan(vfov/2)`, so
    `|p| ≤ 1` ⇔ subject inside the frustum. The FOV itself is **not part of the
    data** — the original Unity consumer applies its own camera FOV at replay
    time, so any pose reconstruction must pick an FOV as a modeling choice.
+   The shared standard pose uses OpenCV camera axes (+X right, +Y down,
+   +Z forward). The converter bridges these camera bases with
+   `R_cv = R_native @ diag(-1, -1, 1)` and reverses that bridge before
+   projecting to native screen coordinates. This does not reflect or rescale
+   world positions. Omitting the bridge gives an upright camera a 180° roll
+   when decoded to simulation; native `[0, 0, 5, 0, 0]` must decode to a
+   Three.js/OpenGL camera at `[0, 0, 5]` with zero Euler rotation.
 3. **Rotation is not representable beyond look-at.** Only the subject-relative
    position and the subject's screen position exist, so camera **roll** and
    off-subject aim cannot be encoded; the only poses uniquely recoverable from
@@ -110,7 +118,8 @@ pans to the character. The camera switches from right front view to right back
 view. The character is at the middle center of the screen. The camera shoots
 at close shot."). Model: DDPM (β 1e-4 → 0.02, T = 1000) over the whole 300×5
 sequence with a transformer encoder (4 layers, latent 256, 4 heads, ff 1024);
-the text condition is a frozen CLIP ViT-B/32 pooled embedding added to the
+the text condition is the frozen CLIP ViT-B/32 `encode_text` embedding
+(including CLIP's learned text projection, without L2 normalization) added to the
 timestep token; classifier-free guidance (cond-mask prob 0.1 at train,
 `guide_w = 2.0` at sampling); per epoch, a random subset of each sample's
 caption sentences was joined by `" "`. Generated sequences are denormalized
@@ -118,3 +127,9 @@ and box-smoothed before export. Upstream evaluation trained a separate
 sequence classifier (6 motion classes) and computed FID/diversity on its
 features. The Unity 2018.2.13f1 demo replays generated `.txt` files (5 floats
 per line) via `camcontrol.cs` with the sign/scale quirks of §3.4.
+
+The pretrained baseline adapter uses OpenAI CLIP directly for this contract.
+`CLIPTextModel.pooler_output` omits the learned text projection and cannot
+replace `encode_text` when conditioning the released CCDM checkpoint. The
+LensCraft dataset's caption features are separate from this pretrained
+baseline condition.

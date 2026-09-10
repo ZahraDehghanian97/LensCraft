@@ -229,7 +229,6 @@ def _generate_baseline_variants(
         batch["subject_volume"],
         batch["padding_mask"],
         seq_length,
-        torch.full((batch_size,), SIM_SEQ_LENGTH, device=device), # fix me for other datasets
     )
     generated = model.generate_using_text(
         batch["text_prompts"], subject_trajectory, trajectory, padding_mask

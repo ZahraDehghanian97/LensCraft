@@ -68,6 +68,17 @@ Everything a consumer (human or AI agent) needs to use E.T. data
 5. **Origin shift.** `char[0] ≈ (0,0,0)` for every sample by construction (the
    whole scene is translated so the character starts at the origin). Camera
    frame-0 statistics (`shift_*`) are therefore camera-relative-to-character.
+6. **Shared world conversion.** `ETConvertor.to_standard` changes E.T.'s
+   right-handed **y-down** world into the shared **y-up** world using
+   `H = diag(1, -1, -1)`: camera `R_std = H @ R_et`, `t_std = H @ t_et`,
+   and subject `p_std = H @ p_et`. `from_standard` applies the same inverse
+   before native feature encoding. This changes world axes; camera-local axes
+   stay OpenCV. Native `get_feature` / `get_matrix` retain DIRECTOR's format.
+   The upstream convention is explicit in
+   [`DIRECTOR/utils/rerun.py:23`](../../../third_parties/DIRECTOR/utils/rerun.py#L23)
+   (`RIGHT_HAND_Y_DOWN`); its
+   [Blender renderer](../../../third_parties/DIRECTOR/blender/render_script.py#L53)
+   also maps native positions to `(x, z, -y)`, placing native `-y` upward.
 
 ## 4. Feature encoding (exact)
 

@@ -4,7 +4,30 @@ from .base_convertor import BaseConvertor
 from data.convertor.utils import handle_single_or_batch, resample_batch_trajectories
 
 
-@handle_single_or_batch(arg_specs=[(2, 2), (3, 2), (5, 1), (7, 0)])
+def _pad_native_features(target, trajectory, subject_trajectory, padding_mask):
+    if padding_mask is None:
+        return trajectory, subject_trajectory
+    if target == "ccdm":
+        # CCDM training extends short paths by repeating the final frame.
+        counts = (~padding_mask).sum(dim=1)
+        last_index = (counts - 1).clamp(min=0)
+        last = trajectory[torch.arange(trajectory.shape[0], device=trajectory.device), last_index]
+        last = last.masked_fill((counts == 0)[:, None], 0.0)
+        trajectory = torch.where(padding_mask[..., None], last[:, None], trajectory)
+    elif target != "gendop":
+        trajectory = trajectory.masked_fill(padding_mask[..., None], 0.0)
+    if subject_trajectory is not None:
+        subject_trajectory = subject_trajectory.masked_fill(padding_mask[..., None], 0.0)
+    return trajectory, subject_trajectory
+
+
+@handle_single_or_batch(arg_specs=[
+    (2, lambda args: 3 if args["source"] == "gendop" else 2),
+    (3, 2),
+    (4, lambda args: 2 if args["source"] in ("simulation", "lens_craft") else 1),
+    (5, 1),
+    (7, 0),
+])
 def convert_to_target(
     source: str,
     target: str,
@@ -22,10 +45,6 @@ def convert_to_target(
         source = 'simulation'
     if target == 'lens_craft':
         target = 'simulation'
-    if source == target:
-        return trajectory, subject_trajectory, subject_volume, padding_mask
-
-    from .constant import default_normalizers
     if convertors is None:
         from .constant import default_convertors
         convertors = default_convertors
@@ -47,7 +66,19 @@ def convert_to_target(
 
     batch_size = trajectory.shape[0]
 
+    if source == target and trajectory.shape[1] == target_len and valid_target_len is None:
+        if need_denormal != need_normal:
+            from .constant import default_normalizers
+            trajectory, subject_trajectory, subject_volume = default_normalizers[source](
+                trajectory, subject_trajectory, subject_volume, need_normal
+            )
+        trajectory, subject_trajectory = _pad_native_features(
+            target, trajectory, subject_trajectory, padding_mask
+        )
+        return trajectory, subject_trajectory, subject_volume, padding_mask
+
     if need_denormal:
+        from .constant import default_normalizers
         trajectory, subject_trajectory, subject_volume = default_normalizers[source](
             trajectory, subject_trajectory, subject_volume, False
         )
@@ -76,8 +107,16 @@ def convert_to_target(
     )
 
     if need_normal:
+        from .constant import default_normalizers
         trajectory, subject_trajectory, subject_volume = default_normalizers[target](
             trajectory, subject_trajectory, subject_volume, True
         )
+
+    # Native datasets pad features after normalization. In particular, ET's
+    # velocity encoding otherwise produces a jump to the origin at the first
+    # padded frame, and its character attention consumes those padded values.
+    trajectory, subject_trajectory = _pad_native_features(
+        target, trajectory, subject_trajectory, padding_mask
+    )
 
     return trajectory, subject_trajectory, subject_volume, padding_mask

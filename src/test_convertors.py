@@ -39,11 +39,17 @@ def make_native(name, B, T, pos_scale=3.0, device="cpu", dtype=torch.float32):
         trans = torch.randn(B, T, 3, device=device, dtype=dtype) * 0.1
         return torch.cat([rot6d, trans], dim=-1)
     if name == "ccdm":
-        d = torch.randn(B, T, 3, device=device, dtype=dtype)
-        d = d / d.norm(dim=-1, keepdim=True)
-        rel = d * (2 + torch.rand(B, T, 1, device=device, dtype=dtype) * 3)
+        yaw = torch.rand(B, T, device=device, dtype=dtype) * (2 * math.pi)
+        pitch = (torch.rand(B, T, device=device, dtype=dtype) - 0.5) * 0.6
+        x = torch.stack([yaw.cos(), torch.zeros_like(yaw), -yaw.sin()], dim=-1)
+        z = torch.stack([pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos()], dim=-1)
+        rotation = torch.stack([x, torch.cross(z, x, dim=-1), z], dim=-1)
         px = (torch.rand(B, T, 1, device=device, dtype=dtype) * 2 - 1) * 0.5
         py = (torch.rand(B, T, 1, device=device, dtype=dtype) * 2 - 1) * 0.5
+        depth = 2 + torch.rand(B, T, 1, device=device, dtype=dtype) * 3
+        tan_h = math.tan(math.radians(45) / 2)
+        q = torch.cat([px * tan_h, py * tan_h / (16 / 9), torch.ones_like(px)], dim=-1) * depth
+        rel = -(rotation @ q.unsqueeze(-1)).squeeze(-1)
         return torch.cat([rel, px, py], dim=-1)
     if name == "gendop":
         R = random_rotations(B, T, device=device, dtype=dtype)
@@ -63,7 +69,7 @@ def make_sim_lookat(B, T, device="cpu", dtype=torch.float32):
     d = d / d.norm(dim=-1, keepdim=True)
     cam = d * (2 + torch.rand(B, T, 1, device=device, dtype=dtype) * 3)
 
-    z = -cam / cam.norm(dim=-1, keepdim=True)            # camera +z looks at subject
+    z = cam / cam.norm(dim=-1, keepdim=True)             # OpenGL +z points away from subject
     up = torch.tensor([0.0, 1.0, 0.0], device=device, dtype=dtype).expand_as(z)
     x = torch.cross(up, z, dim=-1)
     x = x / (x.norm(dim=-1, keepdim=True) + 1e-8)
@@ -112,7 +118,7 @@ def test_native_roundtrip(B, T, device, dtype):
         "gendop": GenDoPConvertor(),
     }
     all_ok = True
-    print(f"{'convertor':<12}{'native max|Δ|':>16}{'pos err':>14}{'rot err (deg)':>16}   result")
+    print(f"{'convertor':<12}{'native max|Δ|':>16}{'max pos err':>14}{'max rot (deg)':>16}   result")
     for name, conv in convertors.items():
         try:
             native = make_native(name, B, T, device=device, dtype=dtype)
@@ -120,14 +126,11 @@ def test_native_roundtrip(B, T, device, dtype):
             native2 = conv.from_standard(T1, None, None)[0]
             T2 = conv.to_standard(native2, None, None)[0]
             nd = (native - native2).abs().max().item()
-            pe = pos_err(T1[..., :3, 3], T2[..., :3, 3]).mean().item()
-            re = rot_err_deg(T1[..., :3, :3], T2[..., :3, :3]).mean().item()
-            # CCDM's p_x/p_y recovery is slightly loose in native units, but the
-            # reconstructed *pose* is consistent -- judge on pose, not raw native.
-            ok = (pe < 1e-3) and (re < ROT_NOISE_DEG)
+            pe = pos_err(T1[..., :3, 3], T2[..., :3, 3]).max().item()
+            re = rot_err_deg(T1[..., :3, :3], T2[..., :3, :3]).max().item()
+            ok = (pe < 1e-3) and (re < ROT_NOISE_DEG) and (name != "ccdm" or nd < 1e-3)
             all_ok &= ok
-            note = "  (native Δ is in p_x/p_y; pose round-trips)" if name == "ccdm" and nd > 1e-3 else ""
-            print(f"{name:<12}{nd:>16.3e}{pe:>14.3e}{re:>16.3e}   {verdict(ok)}{note}")
+            print(f"{name:<12}{nd:>16.3e}{pe:>14.3e}{re:>16.3e}   {verdict(ok)}")
         except Exception as exc:  # noqa: BLE001
             all_ok = False
             print(f"{name:<12}{'ERROR':>16}   {type(exc).__name__}: {exc}")
@@ -158,7 +161,7 @@ def test_cross_roundtrip(B, T, device, dtype):
     ]
 
     all_ok = True
-    print(f"{'via':<14}{'pos err':>14}{'rot err (deg)':>16}   result")
+    print(f"{'via':<14}{'max pos err':>14}{'max rot (deg)':>16}   result")
     for label, sim, tgt, rtol, note in cases:
         try:
             fwd = convert_to_target("simulation", tgt, sim, None, None, mask,
@@ -167,8 +170,8 @@ def test_cross_roundtrip(B, T, device, dtype):
                                      target_len=T, need_denormal=False, need_normal=False)[0]
             R0, t0 = sim_to_RT(sim)
             R1, t1 = sim_to_RT(back)
-            pe = pos_err(t0, t1).mean().item()
-            re = rot_err_deg(R0, R1).mean().item()
+            pe = pos_err(t0, t1).max().item()
+            re = rot_err_deg(R0, R1).max().item()
             ok = (pe < 5e-3) and (re < rtol)
             # rnd-rot ccdm failing is expected and informative, not a code bug
             if label == "ccdm rnd-rot":
@@ -250,6 +253,8 @@ def main():
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    if args.batch < 1 or args.seq < 2:
+        ap.error("--batch must be positive and --seq must be at least 2")
 
     torch.manual_seed(args.seed)
     device, dtype = torch.device(args.device), torch.float32
@@ -269,7 +274,8 @@ def main():
     if r1 and r2 and not r3:
         print("Geometry is correct (incl. CCDM on its valid domain); the failure is the")
         print("ET subject NORMALIZATION (test 3) -- that is what to fix.")
+    return 0 if r1 and r2 and r3 else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -5,6 +5,11 @@ from data.et.config import STANDARDIZATION_CONFIG
 from utils.pytorch3d_transform import matrix_to_rotation_6d, rotation_6d_to_matrix
 
 class ETConvertor(BaseConvertor):
+    # DIRECTOR's world is right-handed with Y down (utils/rerun.py), while
+    # the shared world uses Y up. Rotate the world 180 degrees around X;
+    # camera-local axes remain OpenCV in both representations.
+    _WORLD_FLIP = (1.0, -1.0, -1.0)
+
     def __init__(self):
         self.augmentation = None
         self.velocity = STANDARDIZATION_CONFIG["velocity"]
@@ -29,7 +34,9 @@ class ETConvertor(BaseConvertor):
         batch_size = rot6d_trajectory.shape[0]
         num_cams = rot6d_trajectory.shape[1]
 
-        matrix_trajectory = torch.eye(4, device=device).expand(batch_size, num_cams, 4, 4).clone()
+        matrix_trajectory = torch.eye(
+            4, device=device, dtype=rot6d_trajectory.dtype
+        ).expand(batch_size, num_cams, 4, 4).clone()
 
         raw_trans = rot6d_trajectory[..., 6:]
         if self.velocity:
@@ -51,9 +58,13 @@ class ETConvertor(BaseConvertor):
         batch_size, seq_len = trajectory.shape[:2]
 
         transform = self.get_matrix(trajectory)
+        world_flip = trajectory.new_tensor(self._WORLD_FLIP)
+        transform[..., :3, :] *= world_flip[:, None]
 
         if subject_volume is None:
-            subject_volume = torch.tensor([[0.5, 1.7, 0.3]], dtype=dtype, device=device)
+            subject_volume = torch.tensor(
+                [0.5, 1.7, 0.3], dtype=dtype, device=device
+            ).expand(batch_size, -1).clone()
 
         if subject_trajectory is not None:
             subject_positions = subject_trajectory[..., :3]
@@ -61,6 +72,7 @@ class ETConvertor(BaseConvertor):
                 # normalize_item received velocities (frame0 absolute, rest deltas);
                 # cumsum reconstructs absolute positions exactly.
                 subject_positions = torch.cumsum(subject_positions, dim=1)
+            subject_positions = subject_positions * world_flip
         else:
             subject_positions = torch.zeros((batch_size, seq_len, 3), dtype=dtype, device=device)
 
@@ -77,9 +89,12 @@ class ETConvertor(BaseConvertor):
         subject_trajectory: torch.Tensor | None = None,
         subject_volume: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        world_flip = transform.new_tensor(self._WORLD_FLIP)
+        native_transform = transform.clone()
+        native_transform[..., :3, :] *= world_flip[:, None]
         processed_subject_trajectory = None
         if subject_trajectory is not None:
-            positions = subject_trajectory[..., :3, 3]
+            positions = subject_trajectory[..., :3, 3] * world_flip
             if self.velocity:
                 # Velocity-encode the subject like the camera (get_feature) so
                 # normalize_item's per-frame velocity std (norm_std_h) applies to
@@ -89,6 +104,6 @@ class ETConvertor(BaseConvertor):
             else:
                 processed_subject_trajectory = positions
 
-        trajectory = self.get_feature(transform)
+        trajectory = self.get_feature(native_transform)
         subject_volume = None
         return trajectory, processed_subject_trajectory, subject_volume

@@ -5,7 +5,6 @@ from typing import List, Optional
 
 import numpy as np
 import torch
-from safetensors.torch import load_file
 
 from utils.paths import third_party
 
@@ -74,6 +73,8 @@ class GenDoPAdapter:
             )
 
         if ckpt_path.endswith("safetensors"):
+            from safetensors.torch import load_file
+
             ckpt = load_file(ckpt_path, device="cpu")
         else:
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
@@ -112,12 +113,25 @@ class GenDoPAdapter:
             tokens = fallback.repeat(self.pose_length)
 
         coords = tokens.reshape(-1, 10).float()
+        if not torch.isfinite(coords).all() or (coords < 0).any() or (
+            coords > self.discrete_bins
+        ).any():
+            raise ValueError(
+                "GenDoP coordinate tokens must be finite and within "
+                f"[0, {self.discrete_bins}]."
+            )
         coords_traj = coords[:, :7]
         coords_instri = coords[:, 7:]
         coords_scale = coords_instri[:, -1]
 
         temp_traj = coords_traj / (0.5 * self.discrete_bins) - 1.0
+        # An in-range token sequence can still encode an invalid quaternion.
+        # The upstream decoder divides by its squared norm and would emit NaNs,
+        # which otherwise propagate through trajectory resampling and metrics.
+        if (temp_traj[:, :4].square().sum(dim=-1) == 0).any():
+            raise ValueError("GenDoP generated a zero-norm camera quaternion.")
         temp_instri = coords_instri / (self.discrete_bins / 10.0)
+        # Training quantizes log10(scale), so the inverse uses base 10.
         scale = torch.pow(10.0, coords_scale / self.discrete_bins * 4.0 - 2.0)
 
         # token_to_camera allocates helper tensors on CPU, so decode there.

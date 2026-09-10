@@ -32,8 +32,8 @@ class GenDoPConvertor(BaseConvertor):
 
         if subject_volume is None:
             subject_volume = torch.tensor(
-                [list(self.DEFAULT_SUBJECT_VOLUME)], dtype=dtype, device=device
-            )
+                self.DEFAULT_SUBJECT_VOLUME, dtype=dtype, device=device
+            ).expand(batch_size, -1).clone()
 
         return transform, subject_transform, subject_volume
 

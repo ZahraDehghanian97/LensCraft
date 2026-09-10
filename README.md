@@ -320,6 +320,35 @@ The training process includes:
 3. Gradual increase in task difficulty (noise reduction and mask ratio increase)
 4. Multi-task learning (trajectory reconstruction and CLIP embedding prediction)
 
+### Plot training losses
+
+Generate the train/validation curves for total, cycle, CLIP, first-frame,
+relative-motion, and speed losses from Lightning CSV logs:
+
+```bash
+python src/plot_losses.py /path/to/run
+# Or choose a specific logger version and a reusable output directory:
+python src/plot_losses.py /path/to/run/train/lightning_logs/version_0/metrics.csv \
+  --output-dir /path/to/run/loss_plots \
+  --title "LensCraft | Training from scratch"
+```
+
+A directory input selects the most recently modified `metrics.csv`, searching
+inside its `train/` directory when present. The selected file is printed; logger
+versions are not merged. Pass a specific CSV to select another version.
+
+The script writes `loss_trends.png`, `loss_trends.svg`, `epoch_losses.csv`,
+`epoch_losses.json`, and `summary.json`. By default these go in a new timestamped
+`analysis_*` folder under the input directory (or beside an input CSV).
+An explicit `--output-dir` reuses that folder and replaces the generated files.
+On the training server, use an output path under `/media/external20/morteza_abolghasemi/`.
+
+Only epochs with both train and validation total-loss averages are included;
+step losses and incomplete epochs are excluded. Curves are unsmoothed, component
+losses are unweighted, and missing components are marked as not logged. The
+script uses Matplotlib from `requirements.txt`, runs without a display or GPU,
+and can be rerun while training continues.
+
 ## Evaluation
 
 The model is evaluated on a validation set during training. The evaluation metrics include:

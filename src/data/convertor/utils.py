@@ -1,7 +1,7 @@
 import functools
+import inspect
 
 import torch
-import numpy as np
 from utils.pytorch3d_transform import matrix_to_quaternion, quaternion_to_matrix
 
 
@@ -15,36 +15,41 @@ def handle_single_or_batch(arg_specs=(0, 1), device=None, dtype=None):
             arg_pairs.append((idx, 1 if dim is None else dim))
 
     def decorator(func):
+        signature = inspect.signature(func)
+        parameter_names = tuple(signature.parameters)
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            new_args = list(args)
-            single_flags = {}
+            bound = signature.bind(*args, **kwargs)
+            single_input = False
 
-            for idx, dim in arg_pairs:
-                if idx >= len(args):
+            for pair_index, (idx, dim) in enumerate(arg_pairs):
+                name = parameter_names[idx]
+                if name not in bound.arguments:
                     continue
-
-                x = args[idx]
+                x = bound.arguments[name]
 
                 if x is None:
                     continue
 
-                if isinstance(x, np.ndarray):
-                    xt = torch.as_tensor(x, device=device, dtype=dtype)
-                elif torch.is_tensor(x):
+                if torch.is_tensor(x):
                     xt = x.to(device=device, dtype=dtype) if (device or dtype) else x
+                else:
+                    xt = torch.as_tensor(x, device=device, dtype=dtype)
 
-                is_single = xt.ndim == dim
-                single_flags[idx] = is_single
+                single_dim = dim(bound.arguments) if callable(dim) else dim
+                is_single = xt.ndim == single_dim
+                if pair_index == 0:
+                    single_input = is_single
 
                 if is_single:
                     xt = xt.unsqueeze(0)
 
-                new_args[idx] = xt
+                bound.arguments[name] = xt
 
-            out = func(*new_args, **kwargs)
+            out = func(*bound.args, **bound.kwargs)
 
-            if single_flags and any(single_flags.values()):
+            if single_input:
                 if isinstance(out, tuple):
                     out = tuple(o.squeeze(0) if o is not None else None for o in out)
                 else:
@@ -112,34 +117,39 @@ def resample_batch_trajectories(
     """
     batch_size, max_seq_len = batch_trajectory.shape[:2]
     device = batch_trajectory.device
+    if target_len < 1 or max_seq_len < 1:
+        raise ValueError("Source and target sequence lengths must be positive")
 
-    if current_valid_len is None:
-        valid_len = torch.full((batch_size,), max_seq_len, device=device, dtype=torch.long)
-    else:
-        valid_len = current_valid_len.to(device=device, dtype=torch.long)
-    valid_len = valid_len.clamp(min=1, max=max_seq_len)
+    def lengths(value, default, maximum):
+        result = torch.as_tensor(
+            default if value is None else value, device=device, dtype=torch.long
+        )
+        result = torch.broadcast_to(result, (batch_size,))
+        if torch.any((result < 0) | (result > maximum)):
+            raise ValueError(f"Valid lengths must be between 0 and {maximum}")
+        return result
 
-    if valid_target_len is None:
-        num_target = torch.full((batch_size,), target_len, device=device, dtype=torch.long)
-    else:
-        num_target = valid_target_len.to(device=device, dtype=torch.long)
-    num_target = num_target.clamp(min=1, max=target_len)
+    valid_len = lengths(current_valid_len, max_seq_len, max_seq_len)
+    num_target = lengths(valid_target_len, target_len, target_len)
+    num_target = torch.where(valid_len > 0, num_target, 0)
+    valid_len = valid_len.clamp(min=1)
 
     # Per (sample, target step) bracketing indices into the source frames.
     steps = torch.arange(target_len, device=device).unsqueeze(0)            # [1, T]
     valid_mask = steps < num_target.unsqueeze(1)                            # [B, T]
 
     # Normalised target time in [0, 1]; guard the single-target-frame case.
-    denom = (num_target - 1).clamp(min=1).float().unsqueeze(1)             # [B, 1]
-    t = (steps.float() / denom).clamp(max=1.0)                             # [B, T]
+    work_dtype = torch.float64 if batch_trajectory.dtype == torch.float64 else torch.float32
+    denom = (num_target - 1).clamp(min=1).to(work_dtype).unsqueeze(1)    # [B, 1]
+    t = (steps.to(work_dtype) / denom).clamp(max=1.0)                    # [B, T]
 
-    pos = t * (valid_len - 1).float().unsqueeze(1)                         # [B, T]
+    pos = t * (valid_len - 1).to(work_dtype).unsqueeze(1)                 # [B, T]
     prev_idx = pos.floor().long()
     next_idx = prev_idx + 1
     max_idx = (valid_len - 1).unsqueeze(1)
     prev_idx = prev_idx.clamp(min=0).minimum(max_idx)
     next_idx = next_idx.clamp(min=0).minimum(max_idx)
-    alpha = pos - prev_idx.float()                                         # [B, T]
+    alpha = pos - prev_idx.to(work_dtype)                                # [B, T]
 
     translations = batch_trajectory[..., :3, 3]                           # [B, S, 3]
     quats = matrix_to_quaternion(batch_trajectory[..., :3, :3])           # [B, S, 4]
@@ -157,8 +167,9 @@ def resample_batch_trajectories(
     )
     resampled_batch[..., :3, :3] = rot_out
     resampled_batch[..., :3, 3] = trans_out
-    # Zero out padded steps, then restore the homogeneous 1 on every row.
-    resampled_batch = resampled_batch * valid_mask[..., None, None].to(resampled_batch.dtype)
+    # Keep padding a proper transform; zero feature padding after conversion.
+    identity = torch.eye(4, device=device, dtype=batch_trajectory.dtype)
+    resampled_batch = torch.where(valid_mask[..., None, None], resampled_batch, identity)
     resampled_batch[..., 3, 3] = 1.0
 
     return resampled_batch, ~valid_mask

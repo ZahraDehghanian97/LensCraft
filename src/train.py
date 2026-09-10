@@ -59,6 +59,7 @@ def main(cfg: DictConfig):
     LightningModuleClass = get_class(cfg.training._target_)
 
     resume_checkpoint = getattr(cfg, "resume_checkpoint", None)
+    checkpoint_path = None
     if resume_checkpoint not in (None, "", "None", "null"):
         checkpoint_path = str(resume_checkpoint)
         if not os.path.exists(checkpoint_path):
@@ -78,7 +79,7 @@ def main(cfg: DictConfig):
             dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
         )
         lightning_model = LightningModuleClass.load_from_checkpoint(
-            checkpoint_path, **init_kwargs
+            checkpoint_path, map_location="cpu", **init_kwargs
         )
         logger.info("Checkpoint loaded successfully")
     else:
@@ -97,7 +98,8 @@ def main(cfg: DictConfig):
     trainer = instantiate(cfg.trainer, callbacks=callbacks)
 
     try:
-        trainer.fit(lightning_model, datamodule=data_module)
+        # Restore loop, optimizer, scheduler, and callback state as well as weights.
+        trainer.fit(lightning_model, datamodule=data_module, ckpt_path=checkpoint_path)
     except KeyboardInterrupt:
         logger.info(
             "Training was interrupted by user; evaluating the current model "

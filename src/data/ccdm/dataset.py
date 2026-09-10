@@ -4,7 +4,6 @@ import numpy as np
 from pathlib import Path
 from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
-from models.clip_embeddings import CLIPEmbedder
 from data.collate_utils import stack_optional
 
 class CCDMDataset(Dataset):
@@ -21,6 +20,8 @@ class CCDMDataset(Dataset):
         aspect: float = 16 / 9,
         device: str | torch.device | None = None,
     ) -> None:
+        from models.clip_embeddings import CLIPEmbedder
+
         self.data_path = Path(data_path)
         CCDMDataset.get_normalization_parameters(self.data_path.parent)
         self.embedding_dim = embedding_dim

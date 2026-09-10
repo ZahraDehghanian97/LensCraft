@@ -48,7 +48,6 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             dataset_type, model_type,
             batch["camera_trajectory"], batch["subject_trajectory"],
             batch["subject_volume"], batch["padding_mask"], seq_length,
-            torch.full((batch_size,), SIM_SEQ_LENGTH, device=device),  # TODO: other datasets
         )
 
     if model_type in ("ccdm", "et", "gendop"):

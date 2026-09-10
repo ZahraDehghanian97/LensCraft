@@ -11,7 +11,7 @@ from typing import Any
 import torch
 
 
-TRAJECTORY_CACHE_VERSION = 3
+TRAJECTORY_CACHE_VERSION = 4
 SIMULATION_TRAJECTORY_SHAPE = (30, 6)
 
 _PATH_INPUT_KEYS = frozenset(
