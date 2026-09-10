@@ -459,8 +459,8 @@ def symmetric_orthogonalization(m: torch.Tensor) -> torch.Tensor:
     singular values instead of differentiating the individual SVD factors.
     Undefined derivatives at ambiguous projections are bounded numerically.
 
-    Cycle loss and autoregressive feedback can therefore train the rotation
-    head. Raw-matrix reconstruction losses and the output format are unchanged.
+    Projected trajectory losses, cycle loss, and autoregressive feedback can
+    therefore train the rotation head without changing the output format.
     """
     if m.shape[-2:] != (3, 3):
         raise ValueError(f"Invalid rotation matrix shape {m.shape}.")

@@ -10,7 +10,6 @@ import torch
 from hydra.utils import instantiate
 
 from data.convertor.constant import default_convertors
-from data.et.caption_encoder import CaptionEncoder
 from data.et.config import STANDARDIZATION_CONFIG_TORCH
 from data.et.load import load_et_config
 from utils.seed import set_random_seed
@@ -24,8 +23,12 @@ class ETAdapter:
         self.device = device
         self.guidance_scale = config.get("guidance_scale", 1.4)
         self.undo_edm2_normalization = config.get("undo_edm2_normalization", True)
+        seed = int(self._validate_generation_seeds([config.get("seed", 42)], 1)[0])
+        self._next_generation_seed = seed
         self._load_models(config["project_config_dir"], config["dataset_dir"], config["et_type"])
-        set_random_seed(42)
+        set_random_seed(seed)
+        from data.et.caption_encoder import CaptionEncoder
+
         self.caption_encoder = CaptionEncoder(device=device)
 
 
@@ -96,8 +99,49 @@ class ETAdapter:
 
         return caption_feat
 
-    def generate_using_text(self, text_prompts, subject_trajectory=None, trajectory=None, padding_mask=None):
-        self.diffuser.gen_seeds = np.arange(len(text_prompts))
+    @staticmethod
+    def _validate_generation_seeds(seeds, count):
+        seeds = np.asarray(seeds)
+        if seeds.ndim != 1 or len(seeds) != count:
+            raise ValueError("Generation seeds must contain one integer per prompt.")
+        if seeds.size and (
+            not np.issubdtype(seeds.dtype, np.integer)
+            or (seeds < 0).any()
+            or (seeds > (1 << 32) - 1).any()
+        ):
+            raise ValueError("Generation seeds must be integers in [0, 2**32 - 1].")
+        return seeds.astype(np.uint32, copy=True)
+
+    def reserve_generation_seeds(self, count):
+        """Reserve distinct seeds for consecutive samples in this adapter."""
+        if (
+            isinstance(count, bool)
+            or not isinstance(count, (int, np.integer))
+            or count < 0
+        ):
+            raise ValueError("The generation seed count must be a nonnegative integer.")
+        start = self._next_generation_seed
+        stop = start + int(count)
+        if stop > 1 << 32:
+            raise ValueError("The generation seed sequence exceeds 2**32 - 1.")
+        seeds = np.arange(start, stop, dtype=np.uint32)
+        self._next_generation_seed = stop
+        return seeds
+
+    def generate_using_text(
+        self, text_prompts, subject_trajectory=None, trajectory=None,
+        padding_mask=None, generation_seeds=None,
+    ):
+        """Generate paths using one uint32 seed per prompt.
+
+        Explicit seeds allow paired variants and cache replay to use the same
+        noise. Calls without seeds reserve the next seeds in the local stream.
+        """
+        self.diffuser.gen_seeds = (
+            self.reserve_generation_seeds(len(text_prompts))
+            if generation_seeds is None else
+            self._validate_generation_seeds(generation_seeds, len(text_prompts))
+        )
         caption_feat = self._generate_caption_feat(text_prompts)
 
         if self.config["et_type"] == "ca":

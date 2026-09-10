@@ -148,6 +148,7 @@ def _generate_baseline_variants(
     device: torch.device,
     batch_size: int,
     padding_masks: Optional[Dict[str, torch.Tensor]] = None,
+    generation_seeds=None,
 ):
     want_norm = NORM_ITEM in metric_items
     want_no_norm = NO_NORM_ITEM in metric_items
@@ -166,6 +167,14 @@ def _generate_baseline_variants(
             )
 
     et_on_sim = model_type == "et" and dataset_type in ("simulation", "lens_craft")
+    generation_kwargs = {}
+    if model_type == "et":
+        # Reserve once for this set of samples, then use the same noise for
+        # both normalization variants. Evaluation can supply seeds indexed by
+        # absolute sample position, including when cached batches are replayed.
+        if generation_seeds is None:
+            generation_seeds = model.reserve_generation_seeds(batch_size)
+        generation_kwargs["generation_seeds"] = generation_seeds
 
     if et_on_sim:
         if need_norm:
@@ -191,7 +200,7 @@ def _generate_baseline_variants(
                 need_denormal=False,
             )
             gen_norm = model.generate_using_text(
-                batch["text_prompts"], subj_n, traj_n, pad_n
+                batch["text_prompts"], subj_n, traj_n, pad_n, **generation_kwargs
             )
             sim_gen = _to_sim_space("et", gen_norm, pad_n)
             sim_gen = undo_recenter_rescale(sim_gen, et_scene_origin, et_scene_scale)
@@ -212,7 +221,7 @@ def _generate_baseline_variants(
                 seq_length,
             )
             gen_raw = model.generate_using_text(
-                batch["text_prompts"], subj_r, traj_r, pad_r
+                batch["text_prompts"], subj_r, traj_r, pad_r, **generation_kwargs
             )
             sim_gen = _to_sim_space("et", gen_raw, pad_r)
             variant_trajectories[NO_NORM_ITEM] = sim_gen
@@ -248,7 +257,8 @@ def _generate_baseline_variants(
         seq_length,
     )
     generated = model.generate_using_text(
-        batch["text_prompts"], subject_trajectory, trajectory, padding_mask
+        batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
+        **generation_kwargs,
     )
 
     gen_padding_mask = None if model_type in ("ccdm", "gendop") else padding_mask
@@ -366,6 +376,7 @@ def test_batch(
     seq_length: int = 30,
     clatr_extractor=None,
     cached_outputs: Optional[Dict[str, Any]] = None,
+    generation_seeds=None,
 ) -> Dict[str, Any]:
     batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
@@ -409,6 +420,7 @@ def test_batch(
                 device,
                 batch_size,
                 padding_masks=variant_padding_masks,
+                generation_seeds=generation_seeds,
             )
         else:
             variant_trajectories = {

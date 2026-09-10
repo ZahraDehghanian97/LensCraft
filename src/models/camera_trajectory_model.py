@@ -344,8 +344,8 @@ class LensCraft(nn.Module):
             'subject_embedding': subject_embedding,
             'embeddings': camera_embedding,
             'reconstructed': reconstructed,                 # euler from valid SO(3): cycle / inference
-            'reconstructed_raw_matrix': reconstructed_raw,  # 3 pos + 9 RAW entries -> the training target
-            'reconstructed_rot_matrix': recon_matrix,       # 3 pos + 9 projected (valid SO(3)); informational
+            'reconstructed_raw_matrix': reconstructed_raw,  # raw matrices for the target auxiliary loss
+            'reconstructed_rot_matrix': recon_matrix,       # projected SO(3) geometry for trajectory losses
         }
 
         if self.use_merged_memory:

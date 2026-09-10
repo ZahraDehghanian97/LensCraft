@@ -324,11 +324,18 @@ def _run_evaluation(
         cfg, test_dataloader, metric_items
     )
     generated_batches = [] if cached_batches is None else None
+    sample_offset = 0
 
     with torch.no_grad():
         for bi, batch in enumerate(tqdm(test_dataloader)):
             if limit and bi >= limit:
                 break
+            sample_count = len(batch["text_prompts"])
+            generation_seeds = (
+                [(int(cfg.get("seed", 42)) + index) % (2**32)
+                 for index in range(sample_offset, sample_offset + sample_count)]
+                if model_type == "et" else None
+            )
             generated = test_batch(
                 ref_model, model, batch, metric_callback, device, metric_items,
                 dataset_type=dataset_type,
@@ -336,7 +343,9 @@ def _run_evaluation(
                 seq_length=seq_length,
                 clatr_extractor=clatr_extractor,
                 cached_outputs=(cached_batches[bi] if cached_batches is not None else None),
+                generation_seeds=generation_seeds,
             )
+            sample_offset += sample_count
             if generated_batches is not None:
                 generated_batches.append(generated)
 

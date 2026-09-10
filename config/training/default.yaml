@@ -14,9 +14,11 @@ loss_module:
     first_frame:      2      #    (L_init — coefficient 1 in Eq. 7)
     relative:         16      # φ  (L_rel)
     speed:            80     # τ  (L_speed)
+    rotation_absolute: 2    # all-frame orientation after SO(3) projection
+    rotation_raw:      1    # raw matrices toward proper target rotations
     cycle:            100      # ς  (L_cycle)
     # contrastive:      5
-  rotation_weight: 1.0       # global position:rotation balance (svd9d matrix loss); calibrate via report_traj_term_scales
+  rotation_weight: 1.0       # scales every rotation term relative to position
   weighted_clip_loss: false
   weight_power: 1
   contrastive_loss_version: 3         # Select between versions [1, 2, 3]

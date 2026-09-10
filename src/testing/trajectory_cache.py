@@ -12,6 +12,9 @@ import torch
 
 
 TRAJECTORY_CACHE_VERSION = 5
+# Old E.T. evaluations restarted the same latent seeds in every batch.
+# Only E.T.'s cache key changes when its generation protocol changes.
+ET_GENERATION_SEED_VERSION = 2
 
 _PATH_INPUT_KEYS = frozenset(
     {
@@ -264,6 +267,11 @@ def build_trajectory_cache_key(
             cache_config, resolve_path=resolve_path
         ),
     }
+    model_type = (
+        cache_config.get("training", {}).get("model", {}).get("data_format", {}).get("type")
+    )
+    if model_type == "et":
+        source["etGenerationSeedVersion"] = ET_GENERATION_SEED_VERSION
     canonical = json.dumps(
         source, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")

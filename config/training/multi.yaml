@@ -18,9 +18,11 @@ loss_module:
     first_frame:      2
     relative:         16
     speed:            80
+    rotation_absolute: 2
+    rotation_raw:      1
     cycle:            100
     # contrastive:      5
-  rotation_weight: 1.0
+  rotation_weight: 1.0       # scales every rotation term relative to position
   weighted_clip_loss: false
   weight_power: 1
   clip_embeddings:

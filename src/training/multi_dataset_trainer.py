@@ -132,15 +132,21 @@ class MultiDatasetTrainer(BaseTrainer):
             decode_mode=self.decode_mode
         )
 
-        first_frame_loss, relative_loss, speed_loss = self.loss_module.compute_trajectory_loss(
+        trajectory_losses = self.loss_module.compute_trajectory_losses(
             output['reconstructed_raw_matrix'],
             self.loss_module._euler_traj_to_matrix(
                 converted_batch["camera_trajectory"]
-            )
+            ),
+            tgt_key_padding_mask=converted_batch["padding_mask"],
+            projected_pred=output['reconstructed_rot_matrix'],
         )
-        trajectory_loss = first_frame_loss + relative_loss + speed_loss
+        trajectory_loss = sum(
+            self.loss_module.losses_list.get(name, 0) * value
+            for name, value in trajectory_losses.items()
+        )
 
         loss_dict = {
+            **trajectory_losses,
             "trajectory": trajectory_loss.item(),
             "total": trajectory_loss.item()
         }

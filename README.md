@@ -320,6 +320,25 @@ The training process includes:
 3. Gradual increase in task difficulty (noise reduction and mask ratio increase)
 4. Multi-task learning (trajectory reconstruction and CLIP embedding prediction)
 
+Rotation losses use the same SO(3)-projected matrices as generated trajectories.
+First-frame, relative-motion, and speed losses therefore measure the rotations
+that the model actually emits. Two additional losses supervise every valid
+frame: `rotation_absolute` compares projected orientations with the targets,
+and `rotation_raw` pulls raw decoder matrices toward proper target rotations.
+The raw auxiliary discourages reflected matrices, whose temporal products can
+otherwise look correct before projection. Padded frames are excluded.
+
+The default weights are `rotation_absolute: 2` and `rotation_raw: 1`, and
+`rotation_weight` scales all rotation components. For older configurations
+that enable trajectory losses but omit these keys, the loss module supplies
+these defaults; an explicit zero disables the corresponding term. Both halves
+of multi-dataset training apply the configured trajectory weights.
+
+Existing checkpoints remain loadable, but this objective change does not repair
+their learned rotations. Run a new training or fine-tuning experiment and
+evaluate generated trajectories to measure improvement. Total losses from the
+old and new objectives are not directly comparable.
+
 ### Plot training losses
 
 Generate the train/validation curves for total, cycle, CLIP, first-frame,
