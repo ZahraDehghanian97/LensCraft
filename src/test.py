@@ -442,6 +442,7 @@ def _write_metrics_json(
             "dataset_type": dataset_type,
             "et_type": et_type,
             "clatr_backend": cfg.get("clatr_backend", "native"),
+            "prdc_recall_version": 2,
             "set": cfg.get("eval_set", None),
             "variant": cfg.get("variant", None),
             "allowed_movement_types": allowed_movement_types,

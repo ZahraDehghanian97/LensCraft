@@ -5,18 +5,21 @@ import torch
 
 from testing.metrics.modules.caption_top1 import CaptionTop1
 from testing.metrics.modules.clip_score import ClipScore
+from testing.metrics.modules.prdc import ManifoldMetrics
 from utils.importing import ModuleImporter
 from utils.paths import third_party
 
 logger = logging.getLogger(__name__)
 
-_ET_ROOT = third_party("DIRECTOR")
-
-with ModuleImporter.temporary_module(_ET_ROOT, replace_modules=["utils.rotation_utils"]):
-    from src.metrics.modules.prdc import ManifoldMetrics
-with ModuleImporter.temporary_module(_ET_ROOT):
-    from src.metrics.modules.fcd import FrechetCLaTrDistance
-    from src.metrics.modules.clatr_score import CLaTrScore as _CLaTrScoreBase
+# Import by file so LensCraft's own `src` package cannot shadow DIRECTOR's.
+FrechetCLaTrDistance = ModuleImporter.import_module(
+    "_lenscraft_director_fcd",
+    third_party("DIRECTOR", "src", "metrics", "modules", "fcd.py"),
+).FrechetCLaTrDistance
+_CLaTrScoreBase = ModuleImporter.import_module(
+    "_lenscraft_director_clatr_score",
+    third_party("DIRECTOR", "src", "metrics", "modules", "clatr_score.py"),
+).CLaTrScore
 
 
 class CLaTrScore(_CLaTrScoreBase):
