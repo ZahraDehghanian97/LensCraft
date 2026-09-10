@@ -26,7 +26,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
     )
 
     sim_camera, sim_subject, sim_volume, sim_padding = to_simulation_format(
-        batch, dataset_type
+        batch, dataset_type, target_len=seq_length
     )
 
     et_scene_origin = et_scene_scale = None
@@ -54,12 +54,20 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         generated = model.generate_using_text(
             batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
         )
-        gen_padding_mask = None if model_type == "ccdm" else padding_mask
+        gen_padding_mask = None if model_type in ("ccdm", "gendop") else padding_mask
         sim_generated, *_ = convert_to_target(
             model_type, "simulation", generated, None, None,
-            gen_padding_mask, SIM_SEQ_LENGTH,
+            gen_padding_mask, generated.shape[1],
+            valid_target_len=(
+                (~gen_padding_mask).sum(dim=1)
+                if gen_padding_mask is not None else None
+            ),
             need_denormal=False, need_normal=False,
         )
+        if sim_camera.shape[1] != sim_generated.shape[1]:
+            sim_camera, sim_subject, sim_volume, sim_padding = to_simulation_format(
+                batch, dataset_type, target_len=sim_generated.shape[1]
+            )
         if model_type == "ccdm" and sim_subject is not None:
             _, subject_denorm, _ = SimulationDataset.normalize_item(
                 sim_camera, sim_subject, None, False

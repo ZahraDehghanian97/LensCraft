@@ -9,7 +9,7 @@ import lightning as L
 import torch
 from dotenv import load_dotenv
 from hydra.core.global_hydra import GlobalHydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from data.datamodule import CameraTrajectoryDataModule
@@ -108,6 +108,7 @@ def _load_trajectory_cache(
                 ),
                 expected_token_count=expected_token_count,
                 expected_embedding_dim=expected_embedding_dim,
+                expected_sequence_length=int(cfg.training.model.data_format.seq_length),
             )
         logger.info("Trajectory cache hit: %s", cache_path)
         return cache_path, batches
@@ -533,6 +534,12 @@ def main(cfg: DictConfig) -> None:
 
     model_type = _model_type_from_cfg(cfg)
     L.seed_everything(cfg.get("seed", 42), workers=True)
+
+    if "SimulationDataset" in cfg.data.dataset.config["_target_"]:
+        # Read native model inputs and the common reference directly from the
+        # original clip, avoiding a second resampling of the ground truth.
+        with open_dict(cfg.data.dataset.config):
+            cfg.data.dataset.config.reference_frame_count = cfg.data.dataset.info.seq_length
 
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,

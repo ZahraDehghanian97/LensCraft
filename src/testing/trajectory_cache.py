@@ -11,8 +11,7 @@ from typing import Any
 import torch
 
 
-TRAJECTORY_CACHE_VERSION = 4
-SIMULATION_TRAJECTORY_SHAPE = (30, 6)
+TRAJECTORY_CACHE_VERSION = 5
 
 _PATH_INPUT_KEYS = frozenset(
     {
@@ -271,16 +270,16 @@ def build_trajectory_cache_key(
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _validate_trajectory(value, label: str) -> int:
+def _validate_trajectory(value, label: str, expected_sequence_length: int) -> int:
     if (
         not torch.is_tensor(value)
         or value.ndim != 3
-        or tuple(value.shape[-2:]) != SIMULATION_TRAJECTORY_SHAPE
+        or tuple(value.shape[-2:]) != (expected_sequence_length, 6)
         or value.shape[0] < 1
         or not torch.isfinite(value).all()
     ):
         raise ValueError(
-            f"{label} must be a finite [batch, 30, 6] tensor"
+            f"{label} must be a finite [batch, {expected_sequence_length}, 6] tensor"
         )
     return value.shape[0]
 
@@ -293,6 +292,7 @@ def validate_cached_metric_batch(
     require_encoder_features: bool,
     expected_token_count: int,
     expected_embedding_dim: int,
+    expected_sequence_length: int = 30,
 ) -> None:
     """Reject stale/corrupt cached trajectories before metric evaluation."""
 
@@ -308,8 +308,21 @@ def validate_cached_metric_batch(
             raise ValueError("cache does not contain every requested metric mode")
         for metric_item in required:
             _validate_trajectory(
-                trajectories[metric_item], f"{metric_item} trajectory"
+                trajectories[metric_item], f"{metric_item} trajectory",
+                expected_sequence_length,
             )
+        padding_masks = batch.get("padding_masks")
+        if padding_masks is not None:
+            if not isinstance(padding_masks, Mapping) or not required.issubset(padding_masks):
+                raise ValueError("cache does not contain every requested padding mask")
+            for metric_item in required:
+                mask = padding_masks[metric_item]
+                if (
+                    not torch.is_tensor(mask)
+                    or mask.dtype != torch.bool
+                    or mask.shape != trajectories[metric_item].shape[:2]
+                ):
+                    raise ValueError(f"{metric_item} padding mask must match its trajectory")
         return
 
     items = batch.get("items")
@@ -321,7 +334,8 @@ def validate_cached_metric_batch(
         if not isinstance(item, Mapping):
             raise ValueError(f"{metric_item} cache entry must be a mapping")
         batch_size = _validate_trajectory(
-            item.get("trajectory"), f"{metric_item} trajectory"
+            item.get("trajectory"), f"{metric_item} trajectory",
+            expected_sequence_length,
         )
         features = item.get("encoder_features")
         if features is None:

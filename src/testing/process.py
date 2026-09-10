@@ -95,7 +95,11 @@ def _to_sim_space(model_type: str, generated: torch.Tensor,
         None,
         None,
         gen_padding_mask,
-        SIM_SEQ_LENGTH,
+        generated.shape[1],
+        valid_target_len=(
+            (~gen_padding_mask).sum(dim=1)
+            if gen_padding_mask is not None else None
+        ),
         need_denormal=False,
         need_normal=False,
     )
@@ -105,9 +109,7 @@ def _to_sim_space(model_type: str, generated: torch.Tensor,
 def _lenscraft_first_position(
     ref_model,
     batch: Dict[str, Any],
-    sim_subject_trajectory: torch.Tensor,
-    sim_subject_volume: torch.Tensor,
-    sim_padding_mask: torch.Tensor,
+    dataset_type: str,
 ) -> torch.Tensor:
     caption_embedding = structured_conditioning_from_batch(batch)
     if caption_embedding is None:
@@ -116,6 +118,11 @@ def _lenscraft_first_position(
             "cinematography prompt."
         )
 
+    _, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = (
+        to_simulation_format(
+            batch, dataset_type, target_len=ref_model.decoder.seq_length
+        )
+    )
     lenscraft_generation = ref_model.generate_camera_trajectory(
         caption_embedding=caption_embedding,
         camera_trajectory=None,
@@ -140,6 +147,7 @@ def _generate_baseline_variants(
     sim_padding_mask: torch.Tensor,
     device: torch.device,
     batch_size: int,
+    padding_masks: Optional[Dict[str, torch.Tensor]] = None,
 ):
     want_norm = NORM_ITEM in metric_items
     want_no_norm = NO_NORM_ITEM in metric_items
@@ -148,6 +156,14 @@ def _generate_baseline_variants(
 
     variant_trajectories: Dict[str, torch.Tensor] = {}
     normalized_trajectory: Optional[torch.Tensor] = None
+
+    def record_padding(item, mask, trajectory):
+        if padding_masks is not None:
+            padding_masks[item] = (
+                mask if mask is not None else torch.zeros(
+                    trajectory.shape[:2], dtype=torch.bool, device=trajectory.device
+                )
+            )
 
     et_on_sim = model_type == "et" and dataset_type in ("simulation", "lens_craft")
 
@@ -183,6 +199,7 @@ def _generate_baseline_variants(
             normalized_trajectory = sim_gen
             if want_norm:
                 variant_trajectories[NORM_ITEM] = normalized_trajectory
+                record_padding(NORM_ITEM, pad_n, normalized_trajectory)
 
         if want_no_norm:
             traj_r, subj_r, _, pad_r = convert_to_target(
@@ -199,20 +216,20 @@ def _generate_baseline_variants(
             )
             sim_gen = _to_sim_space("et", gen_raw, pad_r)
             variant_trajectories[NO_NORM_ITEM] = sim_gen
+            record_padding(NO_NORM_ITEM, pad_r, sim_gen)
 
         if want_lenscraft_init:
             first_position = _lenscraft_first_position(
                 ref_model,
                 batch,
-                sim_subject_trajectory,
-                sim_subject_volume,
-                sim_padding_mask,
+                dataset_type,
             )
             variant_trajectories[NORM_LENSCRAFT_INIT_ITEM] = (
                 place_trajectory_at_first_position(
                     normalized_trajectory, first_position
                 )
             )
+            record_padding(NORM_LENSCRAFT_INIT_ITEM, pad_n, normalized_trajectory)
 
         return variant_trajectories
 
@@ -234,12 +251,18 @@ def _generate_baseline_variants(
         batch["text_prompts"], subject_trajectory, trajectory, padding_mask
     )
 
-    gen_padding_mask = None if model_type == "ccdm" else padding_mask
+    gen_padding_mask = None if model_type in ("ccdm", "gendop") else padding_mask
     sim_generated = _to_sim_space(model_type, generated, gen_padding_mask)
 
     if need_norm:
         aligned = sim_generated.clone()
         if model_type == "ccdm" and sim_subject_trajectory is not None:
+            if sim_subject_trajectory.shape[1] != sim_generated.shape[1]:
+                sim_camera_trajectory, sim_subject_trajectory, _, _ = (
+                    to_simulation_format(
+                        batch, dataset_type, target_len=sim_generated.shape[1]
+                    )
+                )
             _, subject_denorm, _ = SimulationDataset.normalize_item(
                 sim_camera_trajectory, sim_subject_trajectory, None, False
             )
@@ -248,23 +271,24 @@ def _generate_baseline_variants(
         normalized_trajectory = aligned
         if want_norm:
             variant_trajectories[NORM_ITEM] = normalized_trajectory
+            record_padding(NORM_ITEM, gen_padding_mask, normalized_trajectory)
 
     if want_no_norm:
         variant_trajectories[NO_NORM_ITEM] = sim_generated.clone()
+        record_padding(NO_NORM_ITEM, gen_padding_mask, sim_generated)
 
     if want_lenscraft_init:
         first_position = _lenscraft_first_position(
             ref_model,
             batch,
-            sim_subject_trajectory,
-            sim_subject_volume,
-            sim_padding_mask,
+            dataset_type,
         )
         variant_trajectories[NORM_LENSCRAFT_INIT_ITEM] = (
             place_trajectory_at_first_position(
                 normalized_trajectory, first_position
             )
         )
+        record_padding(NORM_LENSCRAFT_INIT_ITEM, gen_padding_mask, normalized_trajectory)
 
     return variant_trajectories
 
@@ -281,13 +305,22 @@ def _update_generation_metrics(
     clatr_extractor,
     ref_model,
     batch: Dict[str, Any],
+    generated_padding_mask: Optional[torch.Tensor] = None,
 ) -> None:
+    # Learned metrics use the reference model's temporal view; generated and
+    # cached baseline trajectories retain their complete native frame count.
+    sim_generated_trajectory, _, _, metric_generated_mask = convert_to_target(
+        "simulation", "simulation", sim_generated_trajectory,
+        padding_mask=generated_padding_mask,
+        target_len=sim_padding_mask.shape[1],
+        need_denormal=False, need_normal=False,
+    )
     if clatr_extractor is not None and ref_clatr is not None:
         gen_clatr = clatr_extractor.encode_trajectory(
             sim_generated_trajectory,
             sim_subject_trajectory,
             sim_subject_volume,
-            sim_padding_mask,
+            metric_generated_mask,
         )
         metric_callback.update_clatr_metrics(
             metric_item,
@@ -303,7 +336,8 @@ def _update_generation_metrics(
             sim_generated_trajectory,
             sim_subject_trajectory,
             sim_subject_volume,
-            src_key_mask=sim_padding_mask,
+            src_key_mask=metric_generated_mask,
+            subject_key_padding_mask=sim_padding_mask,
         )
         prompt_none_mask = batch.get("prompt_none_mask")
         prompt_embedding, prompt_none_mask = _align_structured_metric_target(
@@ -341,7 +375,9 @@ def test_batch(
         sim_subject_trajectory,
         sim_subject_volume,
         sim_padding_mask,
-    ) = to_simulation_format(batch, dataset_type)
+    ) = to_simulation_format(
+        batch, dataset_type, target_len=ref_model.decoder.seq_length
+    )
 
     ref_clatr: Optional[torch.Tensor] = None
     text_clatr: Optional[torch.Tensor] = None
@@ -356,7 +392,11 @@ def test_batch(
             text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
 
     if model_type in BASELINE_MODELS:
+        variant_padding_masks: Dict[str, torch.Tensor] = {}
         if cached_outputs is None:
+            native_sim_view = to_simulation_format(
+                batch, dataset_type, target_len=seq_length
+            )
             variant_trajectories = _generate_baseline_variants(
                 ref_model,
                 model,
@@ -365,17 +405,19 @@ def test_batch(
                 dataset_type,
                 model_type,
                 seq_length,
-                sim_camera_trajectory,
-                sim_subject_trajectory,
-                sim_subject_volume,
-                sim_padding_mask,
+                *native_sim_view,
                 device,
                 batch_size,
+                padding_masks=variant_padding_masks,
             )
         else:
             variant_trajectories = {
                 item: trajectory.to(device)
                 for item, trajectory in cached_outputs["trajectories"].items()
+            }
+            variant_padding_masks = {
+                item: mask.to(device)
+                for item, mask in cached_outputs.get("padding_masks", {}).items()
             }
         for metric_item, sim_generated_trajectory in variant_trajectories.items():
             _update_generation_metrics(
@@ -390,12 +432,17 @@ def test_batch(
                 clatr_extractor,
                 ref_model,
                 batch,
+                generated_padding_mask=variant_padding_masks.get(metric_item),
             )
         return {
             "trajectories": {
                 item: trajectory.detach().cpu()
                 for item, trajectory in variant_trajectories.items()
-            }
+            },
+            "padding_masks": {
+                item: mask.detach().cpu()
+                for item, mask in variant_padding_masks.items()
+            },
         }
 
     if model_type != "lens_craft":
@@ -454,6 +501,7 @@ def test_batch(
             clatr_extractor,
             ref_model,
             batch,
+            generated_padding_mask=sim_padding_mask,
         )
 
         if (

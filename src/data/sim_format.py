@@ -17,7 +17,15 @@ MEMORY_TEACHER_FORCING_BY_MODE = {
 
 
 def to_simulation_format(batch, dataset_type, *, target_len=SIM_SEQ_LENGTH):
-    if dataset_type == "simulation":
+    if dataset_type in ("simulation", "lens_craft"):
+        reference = batch.get("simulation_reference")
+        if reference is not None and reference["camera_trajectory"].shape[1] == target_len:
+            device = batch["camera_trajectory"].device
+            batch = {
+                key: value.to(device) if torch.is_tensor(value) else value
+                for key, value in reference.items()
+            }
+    if dataset_type in ("simulation", "lens_craft") and batch["camera_trajectory"].shape[1] == target_len:
         return (
             batch["camera_trajectory"],
             batch["subject_trajectory"],
@@ -28,6 +36,11 @@ def to_simulation_format(batch, dataset_type, *, target_len=SIM_SEQ_LENGTH):
         dataset_type, "simulation",
         batch["camera_trajectory"], batch["subject_trajectory"],
         batch["subject_volume"], batch["padding_mask"], target_len,
+        valid_target_len=(
+            (~batch["padding_mask"]).sum(dim=1)
+            if batch["camera_trajectory"].shape[1] == target_len
+            and batch["padding_mask"] is not None else None
+        ),
     )
 
 

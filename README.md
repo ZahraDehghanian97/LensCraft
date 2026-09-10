@@ -351,6 +351,32 @@ and can be rerun while training continues.
 
 ## Evaluation
 
+Simulation files keep their original variable lengths on disk. At loading time,
+each model reads the full clip at its configured native resolution: 300 frames
+for CCDM and E.T., and 30 for the released GenDoP and current LensCraft model.
+Baseline outputs and trajectory caches retain that native length. Learned
+metrics use a separate view matching the reference model; its ground truth is
+sampled directly from the original file. Spatial normalization is shared across
+these temporal resolutions.
+
+Run a small comparison on the same held-out simulation samples for every model:
+
+```bash
+python scripts/run_pilot_evaluation.py \
+  --dataset-path /path/to/simulation-dataset \
+  --lenscraft-checkpoint /path/to/lenscraft.ckpt \
+  --lenscraft-config /path/to/train/.hydra/config.yaml \
+  --clatr-checkpoint /path/to/native-clatr.ckpt \
+  --output-dir /path/to/new-pilot-output \
+  --samples 128
+```
+
+Use `--samples 32` for a functional smoke test, `--dry-run` to inspect commands,
+and `--split-manifest /path/to/split_indices.json` to verify the saved training
+split. The runner writes a sample manifest, per-model logs, and `summary.md` /
+`summary.json`; it reports failures while continuing the other models. These
+small-sample metrics are preliminary, especially FCD.
+
 The model is evaluated on a validation set during training. The evaluation metrics include:
 1. Trajectory reconstruction loss (MSE for positions, circular distance for angles)
 2. CLIP embedding similarity loss for movement types, easing functions, camera angles, and shot types

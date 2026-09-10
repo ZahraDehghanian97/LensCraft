@@ -41,6 +41,8 @@ class SimulationDataset(Dataset):
         allowed_movement_types: List[str] = None,
         normalize: bool = True,
         target_frame_count: int = SIMULATION_FRAME_COUNT,
+        normalization_frame_count: Optional[int] = None,
+        reference_frame_count: Optional[int] = None,
     ):
         self.data_path = resolve_dataset_root(Path(data_path))
         self.embedding_dim = embedding_dim
@@ -51,6 +53,18 @@ class SimulationDataset(Dataset):
         if target_frame_count < 2:
             raise ValueError("target_frame_count must be at least 2")
         self.target_frame_count = int(target_frame_count)
+        self.normalization_frame_count = (
+            self.target_frame_count
+            if normalization_frame_count is None
+            else int(normalization_frame_count)
+        )
+        self.reference_frame_count = (
+            None if reference_frame_count is None else int(reference_frame_count)
+        )
+        if self.normalization_frame_count < 2 or (
+            self.reference_frame_count is not None and self.reference_frame_count < 2
+        ):
+            raise ValueError("Normalization and reference frame counts must be at least 2")
 
         self.embedding_means = load_clip_means() if self.fill_none_with_mean else None
 
@@ -138,7 +152,7 @@ class SimulationDataset(Dataset):
                 simulation_files=normalization_files,
                 fixed_point_scale=self.fixed_point_scale,
                 dataset_fingerprint=self.dataset_fingerprint,
-                target_frame_count=self.target_frame_count,
+                target_frame_count=self.normalization_frame_count,
             )
             print("Normalization enabled. Using normalization parameters.")
         else:
@@ -316,6 +330,25 @@ class SimulationDataset(Dataset):
                 f"{original_frame_count} camera frames versus "
                 f"{subject_trajectory.shape[0]} subject frames"
             )
+        reference = None
+        if self.reference_frame_count is not None:
+            reference_camera, reference_subject = resample_paired_euler_trajectories(
+                camera_trajectory, subject_trajectory, self.reference_frame_count
+            )
+            reference_volume = subject_volume
+            if self.normalize:
+                reference_camera, reference_subject, reference_volume = (
+                    SimulationDataset._normalize_item_with_parameters(
+                        reference_camera, reference_subject, reference_volume,
+                        self.normalization_parameters,
+                    )
+                )
+            reference = {
+                "camera_trajectory": reference_camera,
+                "subject_trajectory": reference_subject,
+                "subject_volume": reference_volume,
+                "padding_mask": torch.zeros(self.reference_frame_count, dtype=torch.bool),
+            }
         camera_trajectory, subject_trajectory = (
             resample_paired_euler_trajectories(
                 camera_trajectory,
@@ -354,7 +387,7 @@ class SimulationDataset(Dataset):
                 self.normalization_parameters,
             )
 
-        return {
+        item = {
             "camera_trajectory": camera_trajectory,
             "subject_trajectory": subject_trajectory,
             "subject_volume": subject_volume,
@@ -371,13 +404,16 @@ class SimulationDataset(Dataset):
             "text_prompt": extract_text_prompt(prompt, movement_type),
             "prompt_none_mask": prompt_none_mask,
         }
+        if reference is not None:
+            item["simulation_reference"] = reference
+        return item
 
 
 def collate_fn(batch):
     subject_volume = stack_optional(batch, "subject_volume")
     subject_trajectory = stack_optional(batch, "subject_trajectory")
 
-    return {
+    result = {
         "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
         "subject_trajectory": subject_trajectory,
         "subject_volume": subject_volume,
@@ -402,3 +438,10 @@ def collate_fn(batch):
         "text_prompts": [item["text_prompt"] for item in batch],
         "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
     }
+    if "simulation_reference" in batch[0]:
+        references = [item["simulation_reference"] for item in batch]
+        result["simulation_reference"] = {
+            key: stack_optional(references, key)
+            for key in ("camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask")
+        }
+    return result
