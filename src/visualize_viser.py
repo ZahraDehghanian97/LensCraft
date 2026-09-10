@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -18,9 +17,16 @@ from data.datamodule import CameraTrajectoryDataModule
 from data.dataset_type import resolve_dataset_type
 from data.convertor.convertor import convert_to_target
 from data.convertor.constant import default_convertors, default_normalizers
-from data.simulation.dataset import SimulationDataset
-from utils.device import move_batch_to_device
+from models.factory import (
+    load_model as _load_model,
+    model_type_from_cfg as _model_type_from_cfg,
+)
+from utils.device import move_batch_to_device, resolve_device as _resolve_device
 from visualization.viser_utils import (
+    add_grid as _add_grid,
+    safe_name as _safe,
+    sim_to_standard as _sim_to_standard,
+    volume_at as _vol_at,
     ROUNDTRIP_COLOR,
     add_frustums,
     add_path,
@@ -51,53 +57,6 @@ def _convertor_key(name: str) -> str:
     return "simulation" if name in ("lens_craft", "simulation") else name
 
 
-def _vol_at(vol_np: Optional[np.ndarray], i: int) -> Optional[np.ndarray]:
-    if vol_np is None:
-        return None
-    if vol_np.ndim == 1:
-        return vol_np
-    return vol_np[i] if i < vol_np.shape[0] else vol_np[0]
-
-
-def _safe(name: str) -> str:
-    return re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_") or "x"
-
-
-def _resolve_device(cfg: DictConfig) -> torch.device:
-    if cfg.get("device"):
-        return torch.device(cfg.device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _model_type_from_cfg(cfg: DictConfig) -> str:
-    data_format_type = cfg.training.model.data_format.get("type", "simulation")
-    return "lens_craft" if data_format_type == "simulation" else data_format_type
-
-
-def _load_model(cfg: DictConfig, model_type: str, device: torch.device):
-    from utils.load_lens_craft import load_lens_craft_model
-
-    if model_type == "lens_craft":
-        return load_lens_craft_model(
-            model_module=cfg.training.model.module,
-            model_inference=cfg.training.model.inference,
-            device=device,
-        )
-    if model_type == "ccdm":
-        from models.baselines.ccdm_adapter import CCDMAdapter
-
-        return CCDMAdapter(cfg.training.model.inference, device)
-    if model_type == "et":
-        from models.baselines.et_adapter import ETAdapter
-
-        return ETAdapter(cfg.training.model.inference, device)
-    if model_type == "gendop":
-        from models.baselines.gendop_adapter import GenDoPAdapter
-
-        return GenDoPAdapter(cfg.training.model.inference, device)
-    raise ValueError(f"Unsupported model type: {model_type}")
-
-
 def fetch_batch(cfg: DictConfig, device: torch.device):
     dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
     normalize = bool(cfg.data.dataset.config.get("normalize", True))
@@ -123,18 +82,6 @@ def _dataset_to_standard(cam, subject, volume, key: str, normalize: bool):
     if normalize:
         cam, subject, volume = default_normalizers[key](cam, subject, volume, False)
     return default_convertors[key].to_standard(cam, subject, volume)
-
-
-def _sim_to_standard(cam, subject, volume, denormalize: bool):
-    SimulationDataset.get_normalization_parameters()
-    cam = cam.clone()
-    subject = subject.clone() if subject is not None else None
-    volume = volume.clone() if torch.is_tensor(volume) else volume
-    if denormalize:
-        cam, subject, volume = SimulationDataset.normalize_item(
-            cam, subject, volume, False
-        )
-    return default_convertors["simulation"].to_standard(cam, subject, volume)
 
 
 def _relative_to_subject(cam, subject):
@@ -311,20 +258,6 @@ def build_convertor(cfg, batch, dataset_type, normalize):
         err["rot_mean_deg"], err["rot_max_deg"],
     )
     return samples, info
-
-
-def _add_grid(server, up_axis: str, scale: float) -> None:
-    plane = {"y": "xz", "z": "xy", "x": "yz"}.get(up_axis, "xz")
-    size = max(scale * 40.0, 1.0)
-    try:
-        server.scene.add_grid("/grid", width=size, height=size, plane=plane)
-    except TypeError:
-        try:
-            server.scene.add_grid("/grid", width=size, height=size)
-        except Exception:
-            pass
-    except Exception:
-        pass
 
 
 def _add_info(server, info_text: str) -> None:

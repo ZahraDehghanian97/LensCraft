@@ -12,10 +12,6 @@ TRAJECTORY_LOSS_KEYS = (
 )
 
 
-def rotation_frobenius_loss(R_pred, R_target):
-    return ((R_pred - R_target) ** 2).mean(dim=(-2, -1)).mean()
-
-
 class CameraTrajectoryLoss:
     def __init__(self,
                  contrastive_loss_margin: int=5,
@@ -29,7 +25,8 @@ class CameraTrajectoryLoss:
                  rotation_weight: float=1.0
                  ):
         self.clip_loss = ClipLoss(clip_weights=clip_weights, weight_power=weight_power)
-        self.contrastive_loss_margin = contrastive_loss_margin
+        # contrastive_loss_margin remains accepted for saved Hydra configs;
+        # the implemented contrastive objectives do not use a margin.
         self.losses_list = dict(losses_list or {})
         # Saved training configs predate these terms. Keep the correction
         # active when those configs are reused, while honoring explicit zeros

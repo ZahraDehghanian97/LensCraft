@@ -8,7 +8,6 @@ from pathlib import Path
 from .caption import enum_descriptions
 import numpy as np
 import copy
-from sklearn.decomposition import PCA
 
 
 CLIP_EMBEDDING_CACHE_VERSION = 2
@@ -197,38 +196,6 @@ def normalize_embeddings(embeddings_data: dict, embedding_dimension: int) -> dic
     return embeddings_data_normalized
 
 
-
-def pca_embeddings(embeddings_data: dict, n_components: int) -> tuple[dict, dict]:
-    clip_emb = copy.deepcopy(embeddings_data)
-    pca_map = dict()
-    for key, value in clip_emb.items():
-        feature_embeddings = list()
-        n_feature_embeddings = len(value)
-
-        for key_n, value_n in value.items():
-            feature_embeddings.append(value_n)
-        feature_embeddings = np.array(feature_embeddings)
-        std = feature_embeddings.std(axis=0)
-
-        while feature_embeddings.shape[0] < n_components:
-            noise = np.random.randn(*feature_embeddings.shape) * (std * 10e-4)
-            feature_embeddings = np.concatenate([feature_embeddings,
-                                                 feature_embeddings + noise], axis=0)
-
-        pca = PCA(n_components=n_components)
-        pca.fit(feature_embeddings)
-        feature_embeddings_low_dim = pca.transform(feature_embeddings[:n_feature_embeddings, :])
-        pca_map[key] = pca
-
-        feature_embeddings_low_dim = torch.tensor(feature_embeddings_low_dim)
-        idx = 0
-        for key_n, value_n in value.items():
-            clip_emb[key][key_n] = feature_embeddings_low_dim[idx, :]
-            idx += 1
-
-    return clip_emb, pca_map
-
-
 def save_means_and_stds(means: dict, stds:dict) -> None:
     with open("embedding_means.pkl", "wb") as f:
         pickle.dump(means, f)
@@ -245,6 +212,11 @@ def initialize_all_clip_embeddings(
     embedding_mode: str = "default",
     n_components_pca: int = 10
 ) -> Dict[str, Any]:
+    """Initialize conditioning embeddings from a validated cache or CLIP.
+
+    ``n_components_pca`` is deprecated and ignored, but remains accepted for
+    compatibility with older callers. PCA conditioning is unsupported.
+    """
     if embedding_mode == "pca":
         raise ValueError(
             "embedding_mode='pca' changes the conditioning width and returns "

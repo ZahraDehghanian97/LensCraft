@@ -4,11 +4,7 @@ from omegaconf import DictConfig
 from tensorboard.backend.event_processing import event_accumulator
 import matplotlib.pyplot as plt
 from typing import Dict, List
-from data.simulation.utils import CLIP_PARAMETERS
 from visualization.style import calc_dimensions, get_line_style, get_title
-
-
-CLIP_PARAMETERS_KEYS = [item[0] for item in CLIP_PARAMETERS]
 
 
 def generate_metric_tags(cfg: DictConfig) -> List[str]:
@@ -214,7 +210,6 @@ def print_available_tags(cfg: DictConfig, event_acc:event_accumulator.EventAccum
                 print(f"\n{tag_type}:")
                 for tag in tags:
                     print(f"  - {tag}")
-
 
 
 

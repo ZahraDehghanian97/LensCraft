@@ -18,9 +18,7 @@ from data.simulation.utils import (
     cinematography_struct_size,
     simulation_struct_size,
 )
-from models.baselines.ccdm_adapter import CCDMAdapter
-from models.baselines.et_adapter import ETAdapter
-from models.baselines.gendop_adapter import GenDoPAdapter
+from models.factory import load_model, model_type_from_cfg as _model_type_from_cfg
 
 from testing.metrics.callback import MetricCallback
 from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
@@ -229,11 +227,6 @@ def _resolve_device(cfg: DictConfig) -> torch.device:
     return torch.device(requested)
 
 
-def _model_type_from_cfg(cfg: DictConfig) -> str:
-    data_format_type = cfg.training.model.data_format.get("type", "simulation")
-    return "lens_craft" if data_format_type == "simulation" else data_format_type
-
-
 def _norm_ablation_enabled(cfg: DictConfig, model_type: str, dataset_type: str) -> bool:
     """Whether to report all three baseline post-processing modes."""
     return (
@@ -249,11 +242,7 @@ def _load_eval_models(
     device: torch.device,
 ):
     if model_type == "lens_craft":
-        model = load_lens_craft_model(
-            model_module=cfg.training.model.module,
-            model_inference=cfg.training.model.inference,
-            device=device,
-        )
+        model = load_model(cfg, model_type, device)
         return model, model
 
     ref_model = load_lens_craft_model(
@@ -262,14 +251,7 @@ def _load_eval_models(
         device=device,
     )
 
-    if model_type == "ccdm":
-        model = CCDMAdapter(cfg.training.model.inference, device)
-    elif model_type == "et":
-        model = ETAdapter(cfg.training.model.inference, device)
-    elif model_type == "gendop":
-        model = GenDoPAdapter(cfg.training.model.inference, device)
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
+    model = load_model(cfg, model_type, device)
     return model, ref_model
 
 

@@ -3,7 +3,6 @@ import torch
 import torch.nn.functional as F
 from transformers import CLIPTokenizer, CLIPTextModel
 from dataclasses import dataclass
-from tqdm import tqdm
 
 
 @dataclass

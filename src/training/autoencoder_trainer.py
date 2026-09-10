@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
@@ -39,14 +39,13 @@ class LightningLensCraft(BaseTrainer):
         self.decode_mode = decode_mode
         self.use_cycle_consistency = use_cycle_consistency
 
-    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
+    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         caption = structured_conditioning_from_batch(batch)
         if caption is None:
             caption = batch['caption_feat']
             if caption.dim() == 2:
                 caption = caption.unsqueeze(0)
-        empty = caption.new_zeros((0,) + tuple(caption.shape[1:]))
-        return [caption, empty]
+        return caption
 
     def _convert_to_simulation(
         self, batch: Dict[str, Any], source: str
@@ -79,7 +78,7 @@ class LightningLensCraft(BaseTrainer):
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
 
-        [caption_embedding, additional_embeddings] = self._prepare_clip_embeddings(batch)
+        caption_embedding = self._prepare_clip_embeddings(batch)
 
         compute_cycle = self.use_cycle_consistency and self.dataset_mode in (
             'simulation', 'et', 'ccdm'
@@ -96,12 +95,10 @@ class LightningLensCraft(BaseTrainer):
             compute_cycle_embeddings=compute_cycle
         )
 
-        merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)
-
         loss, loss_dict = self.loss_module(
             output,
             camera_trajectory,
-            merge_embeddings,
+            caption_embedding,
             batch,
             tgt_key_padding_mask
         )

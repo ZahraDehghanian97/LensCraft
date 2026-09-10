@@ -6,10 +6,10 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from models.clip_embeddings import CLIPEmbedder
 from training.clatr.lightning_module import LightningCLaTr
+from utils.clatr_text import prepare_text_features
 
 logger = logging.getLogger(__name__)
 
@@ -95,17 +95,9 @@ class NativeCLaTrFeatureExtractor(nn.Module):
         seqs = clip_out.sequence_features.to(self.device)
         valid_lens = clip_out.valid_lengths.to(self.device)
 
-        bs = seqs.shape[0]
-        feat_dim = seqs.shape[-1]
-        L = self.max_text_tokens
-
-        padded = seqs.new_zeros((bs, L, feat_dim))
-        mask = torch.zeros((bs, L), dtype=torch.bool, device=self.device)
-        for i in range(bs):
-            li = max(1, min(int(valid_lens[i].item()), L))
-            padded[i, :li] = seqs[i, :li]
-            mask[i, :li] = True
-
+        padded, mask = prepare_text_features(
+            seqs, valid_lens, self.max_text_tokens
+        )
         latent = self.lit.model.encode(
             {"x": padded.float(), "mask": mask},
             modality="text",

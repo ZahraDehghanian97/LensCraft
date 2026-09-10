@@ -14,11 +14,8 @@ from data.datamodule import CameraTrajectoryDataModule
 from data.convertor.convertor import convert_to_target
 from data.dataset_type import resolve_dataset_type
 from data.simulation.utils import structured_conditioning_from_batch
-from models.baselines.ccdm_adapter import CCDMAdapter
-from models.baselines.et_adapter import ETAdapter
-from models.baselines.gendop_adapter import GenDoPAdapter
-from utils.device import move_batch_to_device
-from utils.load_lens_craft import load_lens_craft_model
+from models.factory import load_model, model_type_from_cfg as _model_type_from_cfg
+from utils.device import move_batch_to_device, resolve_device as _resolve_device
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -44,17 +41,6 @@ def time_generation(gen_fn, device, n_warmup=10, n_runs=100):
         ts.append(time.perf_counter() - t0)
     ts = np.asarray(ts)
     return float(ts.mean()), float(ts.std(ddof=1))
-
-
-def _resolve_device(cfg: DictConfig) -> torch.device:
-    if cfg.get("device"):
-        return torch.device(cfg.device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _model_type_from_cfg(cfg: DictConfig) -> str:
-    data_format_type = cfg.training.model.data_format.get("type", "simulation")
-    return "lens_craft" if data_format_type == "simulation" else data_format_type
 
 
 def _warmup_and_runs(cfg: DictConfig, model_type: str) -> tuple[int, int]:
@@ -94,11 +80,7 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
     sim_camera, sim_subject, sim_volume, sim_padding = sim_batch
 
     if model_type == "lens_craft":
-        ref_model = load_lens_craft_model(
-            model_module=cfg.training.model.module,
-            model_inference=cfg.training.model.inference,
-            device=device,
-        )
+        ref_model = load_model(cfg, model_type, device)
         caption_embedding = structured_conditioning_from_batch(batch)
 
         def gen_fn():
@@ -122,14 +104,7 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
         torch.full((batch_size,), 30, device=device),
     )
 
-    if model_type == "ccdm":
-        model = CCDMAdapter(cfg.training.model.inference, device)
-    elif model_type == "et":
-        model = ETAdapter(cfg.training.model.inference, device)
-    elif model_type == "gendop":
-        model = GenDoPAdapter(cfg.training.model.inference, device)
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
+    model = load_model(cfg, model_type, device)
 
     def gen_fn():
         return model.generate_using_text(

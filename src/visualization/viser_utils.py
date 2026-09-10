@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Tuple
+import re
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -155,3 +156,44 @@ def pose_error(transforms_a, transforms_b) -> Dict[str, float]:
         "rot_mean_deg": float(np.mean(rot_err)),
         "rot_max_deg": float(np.max(rot_err)),
     }
+
+
+def volume_at(vol_np: Optional[np.ndarray], i: int) -> Optional[np.ndarray]:
+    if vol_np is None:
+        return None
+    if vol_np.ndim == 1:
+        return vol_np
+    return vol_np[i] if i < vol_np.shape[0] else vol_np[0]
+
+
+def safe_name(name: str) -> str:
+    return re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_") or "x"
+
+
+def sim_to_standard(cam, subject, volume, denormalize: bool):
+    from data.convertor.constant import default_convertors
+    from data.simulation.dataset import SimulationDataset
+
+    SimulationDataset.get_normalization_parameters()
+    cam = cam.clone()
+    subject = subject.clone() if subject is not None else None
+    volume = volume.clone() if torch.is_tensor(volume) else volume
+    if denormalize:
+        cam, subject, volume = SimulationDataset.normalize_item(
+            cam, subject, volume, False
+        )
+    return default_convertors["simulation"].to_standard(cam, subject, volume)
+
+
+def add_grid(server, up_axis: str, scale: float) -> None:
+    plane = {"y": "xz", "z": "xy", "x": "yz"}.get(up_axis, "xz")
+    size = max(scale * 40.0, 1.0)
+    try:
+        server.scene.add_grid("/grid", width=size, height=size, plane=plane)
+    except TypeError:
+        try:
+            server.scene.add_grid("/grid", width=size, height=size)
+        except Exception:
+            pass
+    except Exception:
+        pass

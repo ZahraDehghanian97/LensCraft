@@ -59,19 +59,6 @@ def handle_single_or_batch(arg_specs=(0, 1), device=None, dtype=None):
     return decorator
 
 
-def torch_interp(x, xp, fp):
-    i = torch.searchsorted(xp, x)
-    i = torch.clamp(i, 1, len(xp) - 1)
-
-    t = (x - xp[i - 1]) / (xp[i] - xp[i - 1] + 1e-8)
-    result = fp[i - 1] + t * (fp[i] - fp[i - 1])
-
-    result = torch.where(x <= xp[0], fp[0], result)
-    result = torch.where(x >= xp[-1], fp[-1], result)
-
-    return result
-
-
 _SLERP_NLERP_THRESHOLD = 0.9995
 
 

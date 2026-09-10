@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 
 from data.et.config import STANDARDIZATION_CONFIG_TORCH
 from data.simulation.utils import fix_prompts_and_instructions, load_clip_means
-from data.collate_utils import stack_optional
+from data.collate_utils import collate_structured_conditioning, collate_trajectories
 
 from .load import load_et_dataset
 
@@ -14,14 +14,8 @@ from .load import load_et_dataset
 class ETDataset(Dataset):
     def __init__(self, project_config_dir: str, dataset_dir: str, et_cin_lang_path: str, fill_none_with_mean: bool,
                  clip_embeddings: Dict, set_name: str, split: str, normalize: bool):
-        original_dataset = load_et_dataset(
+        self.original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
-
-        target_ids = None # {'2011_4lQ_MjU4QHw_00005_00005': 1328, '2011_KQM0klOXck8_00023_00000': 4891, '2012_ZryPGAMBuF4_00004_00002': 18583, '2014_pDEJr2Sqhxc_00005_00000': 24719, '2015_2ad7SgwLNXo_00014_00002': 25731, '2016_ux9JHznPT8E_00009_00001': 36731, '2017_JjfbxBMmXTI_00001_00000': 40366}
-
-        self.original_dataset = (
-            [original_dataset[i] for i in target_ids.values()] if target_ids else original_dataset
-        )
 
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
         self.fill_none_with_mean = fill_none_with_mean
@@ -160,24 +154,11 @@ class ETDataset(Dataset):
 
 
 def collate_fn(batch):
-    subject_volume = stack_optional(batch, "subject_volume")
-    subject_trajectory = stack_optional(batch, "subject_trajectory")
-
     return {
-        "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory": subject_trajectory,
-        "subject_volume": subject_volume,
-        'padding_mask': torch.stack([item['padding_mask'] for item in batch]),
+        **collate_trajectories(batch),
         'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
         'intrinsics': torch.stack([item['intrinsics'] for item in batch]),
-        "simulation_instruction": torch.stack([item["simulation_instruction"] for item in batch]).transpose(0, 1),
-        "cinematography_prompt": torch.stack([item["cinematography_prompt"] for item in batch]).transpose(0, 1),
-        "simulation_instruction_parameters": [
-            item["simulation_instruction_parameters"] for item in batch
-        ],
-        "cinematography_prompt_parameters": [
-            item["cinematography_prompt_parameters"] for item in batch
-        ],
+        **collate_structured_conditioning(batch),
         "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
         "raw_prompt": [item["raw_prompt"] for item in batch],
         "raw_instruction": [item["raw_instruction"] for item in batch],

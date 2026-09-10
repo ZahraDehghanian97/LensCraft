@@ -5,13 +5,11 @@ class ClipLoss:
     def __init__(self, clip_weights=None, weight_power=1):
         self.clip_weights = clip_weights
         self.weight_power = weight_power
-        self.sum_clip_weights = 0
         
         if self.clip_weights:
             for embedding, weight in self.clip_weights.items():
                 if self.weight_power > 1:
                     self.clip_weights[embedding] = weight ** self.weight_power
-                self.sum_clip_weights += self.clip_weights[embedding]
     
     def compute(self,
                 clip_target,

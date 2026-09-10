@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import math
 import os
-import re
 import textwrap
 import threading
 import time
@@ -21,9 +20,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from data.datamodule import CameraTrajectoryDataModule
 from data.dataset_type import resolve_dataset_type
-from data.convertor.constant import default_convertors
 from data.sim_format import to_simulation_format
-from data.simulation.dataset import SimulationDataset
 from inferencing.process import inference_batch
 from testing.baseline_modes import (
     BASELINE_ITEMS,
@@ -32,8 +29,16 @@ from testing.baseline_modes import (
     NORM_LENSCRAFT_INIT_ITEM,
 )
 from testing.process import _generate_baseline_variants
-from utils.device import move_batch_to_device
+from models.factory import (
+    load_model as _load_model,
+    model_type_from_cfg as _model_type_from_cfg,
+)
+from utils.device import move_batch_to_device, resolve_device as _resolve_device
 from visualization.viser_utils import (
+    add_grid as _add_grid,
+    safe_name as _safe,
+    sim_to_standard as _sim_to_standard,
+    volume_at as _vol_at,
     add_frustums,
     add_path,
     add_subject_box,
@@ -92,33 +97,10 @@ class CompareSample:
 # --------------------------------------------------------------------------- #
 # small helpers
 # --------------------------------------------------------------------------- #
-def _safe(name: str) -> str:
-    return re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_") or "x"
-
-
-def _vol_at(vol_np: Optional[np.ndarray], i: int) -> Optional[np.ndarray]:
-    if vol_np is None:
-        return None
-    if vol_np.ndim == 1:
-        return vol_np
-    return vol_np[i] if i < vol_np.shape[0] else vol_np[0]
-
-
 def _offset(transforms: np.ndarray, off: np.ndarray) -> np.ndarray:
     out = transforms.copy()
     out[..., :3, 3] = out[..., :3, 3] + off
     return out
-
-
-def _resolve_device(cfg: DictConfig) -> torch.device:
-    if cfg.get("device"):
-        return torch.device(cfg.device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _model_type_from_cfg(cfg: DictConfig) -> str:
-    data_format_type = cfg.training.model.data_format.get("type", "simulation")
-    return "lens_craft" if data_format_type == "simulation" else data_format_type
 
 
 def _baseline_column_name(model_type: str, mode: str) -> str:
@@ -165,42 +147,6 @@ def _compose_model_cfg(model_name: str) -> DictConfig:
     """
     with initialize(version_base=None, config_path="../config"):
         return compose(config_name="compare", overrides=[f"training/model={model_name}"])
-
-
-def _load_model(cfg: DictConfig, model_type: str, device: torch.device):
-    from utils.load_lens_craft import load_lens_craft_model
-
-    if model_type == "lens_craft":
-        return load_lens_craft_model(
-            model_module=cfg.training.model.module,
-            model_inference=cfg.training.model.inference,
-            device=device,
-        )
-    if model_type == "ccdm":
-        from models.baselines.ccdm_adapter import CCDMAdapter
-
-        return CCDMAdapter(cfg.training.model.inference, device)
-    if model_type == "et":
-        from models.baselines.et_adapter import ETAdapter
-
-        return ETAdapter(cfg.training.model.inference, device)
-    if model_type == "gendop":
-        from models.baselines.gendop_adapter import GenDoPAdapter
-
-        return GenDoPAdapter(cfg.training.model.inference, device)
-    raise ValueError(f"Unsupported model type: {model_type}")
-
-
-def _sim_to_standard(cam, subject, volume, denormalize: bool):
-    SimulationDataset.get_normalization_parameters()
-    cam = cam.clone()
-    subject = subject.clone() if subject is not None else None
-    volume = volume.clone() if torch.is_tensor(volume) else volume
-    if denormalize:
-        cam, subject, volume = SimulationDataset.normalize_item(
-            cam, subject, volume, False
-        )
-    return default_convertors["simulation"].to_standard(cam, subject, volume)
 
 
 def fetch_batch(cfg: DictConfig, device: torch.device):
@@ -262,7 +208,7 @@ def _generate_for_model(
                     "LensCraft reference model to visualize all baseline modes."
                 )
 
-            sim_camera, sim_subject, sim_volume, sim_padding = to_simulation_format(
+            sim_camera, sim_subject, *_ = to_simulation_format(
                 batch, dataset_type
             )
             variants = _generate_baseline_variants(
@@ -275,9 +221,6 @@ def _generate_for_model(
                 seq_length,
                 sim_camera,
                 sim_subject,
-                sim_volume,
-                sim_padding,
-                device,
                 len(batch["text_prompts"]),
             )
             columns = {}
@@ -393,20 +336,6 @@ def stack_rows(row_paths, out_path, pad=16, bg=(255, 255, 255)) -> None:
 # --------------------------------------------------------------------------- #
 # viser
 # --------------------------------------------------------------------------- #
-def _add_grid(server, up_axis: str, scale: float) -> None:
-    plane = {"y": "xz", "z": "xy", "x": "yz"}.get(up_axis, "xz")
-    size = max(scale * 40.0, 1.0)
-    try:
-        server.scene.add_grid("/grid", width=size, height=size, plane=plane)
-    except TypeError:
-        try:
-            server.scene.add_grid("/grid", width=size, height=size)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-
 def launch(cfg: DictConfig, samples: List[CompareSample], column_names: List[str]) -> None:
     import viser
 

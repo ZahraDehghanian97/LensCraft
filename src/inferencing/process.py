@@ -29,28 +29,27 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         batch, dataset_type, target_len=seq_length
     )
 
-    et_scene_origin = et_scene_scale = None
-    if model_type == "et" and dataset_type in ("simulation", "lens_craft"):
-        aligned_camera, aligned_subject, aligned_volume, et_scene_origin, et_scene_scale = (
-            recenter_rescale_sim(
-                batch["camera_trajectory"], batch["subject_trajectory"],
-                batch["subject_volume"],
-            )
-        )
-        trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-            "simulation", "et",
-            aligned_camera, aligned_subject, aligned_volume,
-            batch["padding_mask"], seq_length,
-            need_denormal=False,
-        )
-    else:
-        trajectory, subject_trajectory, subject_volume, padding_mask = convert_to_target(
-            dataset_type, model_type,
-            batch["camera_trajectory"], batch["subject_trajectory"],
-            batch["subject_volume"], batch["padding_mask"], seq_length,
-        )
-
     if model_type in ("ccdm", "et", "gendop"):
+        et_scene_origin = et_scene_scale = None
+        if model_type == "et" and dataset_type in ("simulation", "lens_craft"):
+            aligned_camera, aligned_subject, aligned_volume, et_scene_origin, et_scene_scale = (
+                recenter_rescale_sim(
+                    batch["camera_trajectory"], batch["subject_trajectory"],
+                    batch["subject_volume"],
+                )
+            )
+            trajectory, subject_trajectory, _, padding_mask = convert_to_target(
+                "simulation", "et",
+                aligned_camera, aligned_subject, aligned_volume,
+                batch["padding_mask"], seq_length,
+                need_denormal=False,
+            )
+        else:
+            trajectory, subject_trajectory, _, padding_mask = convert_to_target(
+                dataset_type, model_type,
+                batch["camera_trajectory"], batch["subject_trajectory"],
+                batch["subject_volume"], batch["padding_mask"], seq_length,
+            )
         generated = model.generate_using_text(
             batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
         )

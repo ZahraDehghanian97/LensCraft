@@ -11,11 +11,12 @@ from omegaconf import DictConfig, OmegaConf
 
 from data.datamodule import CameraTrajectoryDataModule
 from data.dataset_type import resolve_dataset_type
-from utils.load_lens_craft import load_lens_craft_model
 from inferencing.process import inference_batch
-from models.baselines.ccdm_adapter import CCDMAdapter
-from models.baselines.et_adapter import ETAdapter
-from models.baselines.gendop_adapter import GenDoPAdapter
+from models.factory import (
+    load_model as _load_model,
+    model_type_from_cfg as _model_type_from_cfg,
+)
+from utils.device import resolve_device as _resolve_device
 
 from dotenv import load_dotenv
 
@@ -46,33 +47,6 @@ def tensor_to_serializable(obj: Any) -> Any:
         except Exception:
             return str(obj)
     return obj
-
-
-def _resolve_device(cfg: DictConfig) -> torch.device:
-    if cfg.get("device"):
-        return torch.device(cfg.device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _model_type_from_cfg(cfg: DictConfig) -> str:
-    data_format_type = cfg.training.model.data_format.get("type", "simulation")
-    return "lens_craft" if data_format_type == "simulation" else data_format_type
-
-
-def _load_model(cfg: DictConfig, model_type: str, device: torch.device):
-    if model_type == "lens_craft":
-        return load_lens_craft_model(
-            model_module=cfg.training.model.module,
-            model_inference=cfg.training.model.inference,
-            device=device,
-        )
-    if model_type == "ccdm":
-        return CCDMAdapter(cfg.training.model.inference, device)
-    if model_type == "et":
-        return ETAdapter(cfg.training.model.inference, device)
-    if model_type == "gendop":
-        return GenDoPAdapter(cfg.training.model.inference, device)
-    raise ValueError(f"Unsupported model type: {model_type}")
 
 
 def _build_inference_result(

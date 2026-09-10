@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Tuple, List
+from typing import Optional, Dict, Any, Tuple
 import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
@@ -41,17 +41,14 @@ class MultiDatasetTrainer(BaseTrainer):
         self.ccdm_weight = ccdm_weight
         self.decode_mode = decode_mode
 
-        self.train_step_count = 0
-
         self.validation_sim_outputs = []
         self.validation_ccdm_outputs = []
 
-    def _prepare_sim_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
+    def _prepare_sim_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         caption = structured_conditioning_from_batch(batch)
         if caption is None:
             raise ValueError("Simulation batches require structured conditioning")
-        empty = caption.new_zeros((0,) + tuple(caption.shape[1:]))
-        return [caption, empty]
+        return caption
 
     @staticmethod
     def _prepare_caption_embedding(batch: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -68,7 +65,7 @@ class MultiDatasetTrainer(BaseTrainer):
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
 
-        [caption_embedding, additional_embeddings] = self._prepare_sim_clip_embeddings(batch)
+        caption_embedding = self._prepare_sim_clip_embeddings(batch)
 
         output = self._forward_step(
             camera_trajectory,
@@ -81,12 +78,10 @@ class MultiDatasetTrainer(BaseTrainer):
             compute_cycle_embeddings=True
         )
 
-        merge_embeddings = torch.cat([caption_embedding, additional_embeddings], dim=0)
-
         loss, loss_dict = self.loss_module(
             output,
             camera_trajectory,
-            merge_embeddings,
+            caption_embedding,
             batch,
             tgt_key_padding_mask
         )
@@ -174,7 +169,6 @@ class MultiDatasetTrainer(BaseTrainer):
         self._log_metrics("train", combined_loss, combined_loss_dict,
                         len(sim_batch['camera_trajectory']) + len(ccdm_batch['camera_trajectory']))
 
-        self.train_step_count += 1
         return combined_loss
 
     def validation_step(self, batch: Dict[str, Any], batch_idx: int, dataloader_idx: int = 0) -> torch.Tensor:

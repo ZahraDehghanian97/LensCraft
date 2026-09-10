@@ -1,17 +1,20 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, Union, List, Tuple
+from typing import Dict, Union, List, Tuple, Optional
 import torch
 from sklearn.manifold import TSNE
-import seaborn as sns
 
 def _prepare_embeddings(
     embeddings: Union[np.ndarray, torch.Tensor, List[torch.Tensor]],
-    max_points: int = None,
+    max_points: Optional[int] = None,
     random_state: int = 42
-) -> np.ndarray:
+) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Convert embeddings to numpy array and subsample if needed."""
+    if max_points is not None and (
+        not isinstance(max_points, (int, np.integer)) or max_points < 1
+    ):
+        raise ValueError("max_points must be a positive integer or None")
     if isinstance(embeddings, torch.Tensor):
         embeddings = embeddings.detach().cpu().numpy()
     elif isinstance(embeddings, list) and all(isinstance(e, torch.Tensor) for e in embeddings):
@@ -19,11 +22,11 @@ def _prepare_embeddings(
     else:
         embeddings = np.array(embeddings)
     
-    # if max_points and len(embeddings) > max_points:
-    #     indices = np.random.RandomState(random_state).choice(
-    #         len(embeddings), max_points, replace=False)
-    #     embeddings = embeddings[indices]
-    #     return embeddings, indices
+    if max_points is not None and len(embeddings) > max_points:
+        indices = np.random.RandomState(random_state).choice(
+            len(embeddings), max_points, replace=False
+        )
+        return embeddings[indices], indices
     
     return embeddings, None
 
@@ -73,7 +76,7 @@ def tSNE_visualize_embeddings(
     embeddings_dict: Dict[str, Union[np.ndarray, torch.Tensor]],
     random_state: int = 42,
     perplexity: int = 30,
-    max_points: int = 100,
+    max_points: Optional[int] = 100,
     figsize: tuple = (12, 8),
     title: str = 'Embedding Visualization using t-SNE',
     add_density: bool = True,
@@ -82,7 +85,9 @@ def tSNE_visualize_embeddings(
     verbose: bool = True,
     save_path: str = "./test_results/embeddings_tSNE.png"
 ) -> plt.Figure:
-    """Visualize embeddings from different models in 2D using t-SNE."""
+    """Visualize at most max_points embeddings per model; None keeps all points."""
+    import seaborn as sns
+
     all_embeddings, labels, model_counts = [], [], {}
     if verbose:
         print("Processing embeddings...")
@@ -148,6 +153,8 @@ def tSNE_visualize_embeddings_by_class_type(
     """
     Visualize caption and encoder embeddings in 2D using t-SNE, colored by class type.
     """
+    import seaborn as sns
+
     caption_embeddings_values = []
     caption_embeddings_keys = []
     for key, value in caption_embeddings.items():
@@ -157,11 +164,6 @@ def tSNE_visualize_embeddings_by_class_type(
     prepared_caption, _ = _prepare_embeddings([torch.stack(caption_embeddings_values)], max_points=None, random_state=random_state)
     prepared_encoder, _ = _prepare_embeddings(encoder_embeddings, max_points=None, random_state=random_state)
 
-    indices = None
-    
-    # if indices is not None:
-    #     class_types = [class_types[i] for i in indices]
-  
     all_embeddings = np.vstack([prepared_caption, prepared_encoder])
     
     embeddings_2d = _compute_tsne(all_embeddings, random_state, perplexity, verbose)

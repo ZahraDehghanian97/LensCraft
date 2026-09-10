@@ -7,7 +7,6 @@ from data.convertor.convertor import convert_to_target
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import structured_conditioning_from_batch
 from data.sim_format import (
-    SIM_SEQ_LENGTH,
     MEMORY_TEACHER_FORCING_BY_MODE,
     build_keyframing_mask,
     to_simulation_format,
@@ -143,9 +142,6 @@ def _generate_baseline_variants(
     seq_length: int,
     sim_camera_trajectory: torch.Tensor,
     sim_subject_trajectory: Optional[torch.Tensor],
-    sim_subject_volume: Optional[torch.Tensor],
-    sim_padding_mask: torch.Tensor,
-    device: torch.device,
     batch_size: int,
     padding_masks: Optional[Dict[str, torch.Tensor]] = None,
     generation_seeds=None,
@@ -416,8 +412,8 @@ def test_batch(
                 dataset_type,
                 model_type,
                 seq_length,
-                *native_sim_view,
-                device,
+                native_sim_view[0],
+                native_sim_view[1],
                 batch_size,
                 padding_masks=variant_padding_masks,
                 generation_seeds=generation_seeds,

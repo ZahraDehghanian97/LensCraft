@@ -5,7 +5,6 @@ import logging
 import gdown
 import zipfile
 import torch.nn.functional as F
-import torch
 
 from hydra.utils import instantiate
 
@@ -21,7 +20,6 @@ class ETAdapter:
     def __init__(self, config, device):
         self.config = config
         self.device = device
-        self.guidance_scale = config.get("guidance_scale", 1.4)
         self.undo_edm2_normalization = config.get("undo_edm2_normalization", True)
         seed = int(self._validate_generation_seeds([config.get("seed", 42)], 1)[0])
         self._next_generation_seed = seed
@@ -37,7 +35,6 @@ class ETAdapter:
 
         clatr_output = os.path.join(checkpoints_dir, "clatr-e100.ckpt")
         if not os.path.exists(clatr_output):
-            clatr_output = os.path.join(checkpoints_dir, "clatr-e100.ckpt")
             gdown.download(id="1FqN-pa955Wvu3utGViUKiVfza6cL_W0D", output=clatr_output, quiet=False)
 
         director_zip = os.path.join(checkpoints_dir, "director.zip")
@@ -75,14 +72,7 @@ class ETAdapter:
         self.diffuser.modalities = list(dataset.modality_datasets.keys())
         self.diffuser.get_matrix = dataset.get_matrix
         self.diffuser.v_get_matrix = dataset.get_matrix
-        self.diffuser.to(self.device)
         self.diffuser.guidance_weight = self.config.get("guidance_scale", 1.4)
-
-    def add_subject_trajectory_to_et_batch(self, et_batch, batch):
-        device = et_batch["char_feat"].device
-        subject_positions = batch["subject_trajectory"][:, :, :3].permute(0, 2, 1)
-        et_batch["char_feat"] = torch.zeros_like(et_batch["char_feat"], device=device)
-        et_batch["char_feat"][:, :, :subject_positions.shape[2]] = subject_positions.to(device)
 
     def _generate_caption_feat(self, text_prompts):
         caption_seq_list, caption_tokens = self.caption_encoder.encode_text(text_prompts)

@@ -8,7 +8,6 @@ defaults:
 
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
-  contrastive_loss_margin: 5
   # CameraTrajectoryLoss now receives one coefficient per objective term.
   # Keep the simulation half of multi-dataset training on the same objective
   # scale as the default trainer; the outer sim/CCDM weights are applied by

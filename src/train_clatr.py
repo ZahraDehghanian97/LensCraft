@@ -9,7 +9,6 @@ import lightning as L
 import torch
 from dotenv import load_dotenv
 from hydra.core.global_hydra import GlobalHydra
-from hydra.utils import instantiate
 from lightning.pytorch.callbacks import (
     EarlyStopping,
     LearningRateMonitor,

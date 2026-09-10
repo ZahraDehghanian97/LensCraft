@@ -5,10 +5,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import lightning as L
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
 from models.clip_embeddings import CLIPEmbedder
+from utils.clatr_text import prepare_text_features
 from utils.importing import ModuleImporter
 from utils.paths import third_party
 
@@ -90,18 +90,9 @@ class LightningCLaTr(L.LightningModule):
         valid_lens = clip_out.valid_lengths.to(self.device)
         pool = clip_out.pooled_features.to(self.device)
 
-        bs = seqs.shape[0]
-        D = seqs.shape[-1]
-        L = self.max_text_tokens
-
-        seq_feat = seqs.new_zeros((bs, L, D))
-        seq_mask = torch.zeros((bs, L), dtype=torch.bool, device=self.device)
-        for i in range(bs):
-            li = int(valid_lens[i].item())
-            li = max(1, min(li, L))
-            seq_feat[i, :li] = seqs[i, :li]
-            seq_mask[i, :li] = True
-
+        seq_feat, seq_mask = prepare_text_features(
+            seqs, valid_lens, self.max_text_tokens
+        )
         return seq_feat, seq_mask, pool
 
     def compute_loss(

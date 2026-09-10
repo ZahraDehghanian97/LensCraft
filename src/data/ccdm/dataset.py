@@ -4,7 +4,7 @@ import numpy as np
 from pathlib import Path
 from typing import Any, Dict, Optional
 from torch.utils.data import Dataset
-from data.collate_utils import stack_optional
+from data.collate_utils import collate_trajectories
 
 class CCDMDataset(Dataset):
     _normalization_parameters = None
@@ -137,14 +137,8 @@ class CCDMDataset(Dataset):
         }
 
 def collate_fn(batch):
-    subject_volume = stack_optional(batch, "subject_volume")
-    subject_trajectory = stack_optional(batch, "subject_trajectory")
-
     return {
-        "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory": subject_trajectory,
-        "subject_volume": subject_volume,
-        "padding_mask": torch.stack([item["padding_mask"] for item in batch]),
+        **collate_trajectories(batch),
         "caption_feat": torch.stack([item["caption_feat"] for item in batch]),
         "text_prompts": [item["text_prompts"] for item in batch],
     }

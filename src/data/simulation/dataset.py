@@ -25,7 +25,11 @@ from .metadata import (
     resolve_dataset_root,
 )
 from .utils import fix_prompts_and_instructions, load_clip_means
-from data.collate_utils import stack_optional
+from data.collate_utils import (
+    collate_structured_conditioning,
+    collate_trajectories,
+    stack_optional,
+)
 
 
 class SimulationDataset(Dataset):
@@ -410,29 +414,12 @@ class SimulationDataset(Dataset):
 
 
 def collate_fn(batch):
-    subject_volume = stack_optional(batch, "subject_volume")
-    subject_trajectory = stack_optional(batch, "subject_trajectory")
-
     result = {
-        "camera_trajectory": torch.stack([item["camera_trajectory"] for item in batch]),
-        "subject_trajectory": subject_trajectory,
-        "subject_volume": subject_volume,
-        "padding_mask": torch.stack([item["padding_mask"] for item in batch]),
+        **collate_trajectories(batch),
         "original_frame_count": torch.tensor(
             [item["original_frame_count"] for item in batch], dtype=torch.long
         ),
-        "simulation_instruction": torch.stack(
-            [item["simulation_instruction"] for item in batch]
-        ).transpose(0, 1),
-        "cinematography_prompt": torch.stack(
-            [item["cinematography_prompt"] for item in batch]
-        ).transpose(0, 1),
-        "simulation_instruction_parameters": [
-            item["simulation_instruction_parameters"] for item in batch
-        ],
-        "cinematography_prompt_parameters": [
-            item["cinematography_prompt_parameters"] for item in batch
-        ],
+        **collate_structured_conditioning(batch),
         "raw_prompt": [item["raw_prompt"] for item in batch],
         "raw_instruction": [item["raw_instruction"] for item in batch],
         "text_prompts": [item["text_prompt"] for item in batch],
