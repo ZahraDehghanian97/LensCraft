@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from .caption import extract_text_prompt
 from .loader import (
     extract_camera_trajectory,
+    extract_camera_intrinsics,
     extract_subject_components,
     filter_files_by_movement_types,
     find_simulation_files,
@@ -348,6 +349,9 @@ class SimulationDataset(Dataset):
                     )
                 )
             reference = {
+                "camera_intrinsics": extract_camera_intrinsics(
+                    data["cameraFrames"], self.reference_frame_count
+                ),
                 "camera_trajectory": reference_camera,
                 "subject_trajectory": reference_subject,
                 "subject_volume": reference_volume,
@@ -392,6 +396,10 @@ class SimulationDataset(Dataset):
             )
 
         item = {
+            "camera_intrinsics": extract_camera_intrinsics(
+                data["cameraFrames"], self.target_frame_count
+            ),
+            "simulation_normalized": self.normalize,
             "camera_trajectory": camera_trajectory,
             "subject_trajectory": subject_trajectory,
             "subject_volume": subject_volume,
@@ -414,7 +422,20 @@ class SimulationDataset(Dataset):
 
 
 def collate_fn(batch):
+    def collate_intrinsics(items):
+        values = [item.get("camera_intrinsics") for item in items]
+        if all(value is None for value in values):
+            return None
+        # Missing lens metadata is excluded from projection metrics per sample.
+        template = next(value for value in values if value is not None)
+        return torch.stack([
+            value if value is not None else torch.full_like(template, float("nan"))
+            for value in values
+        ])
+
     result = {
+        "camera_intrinsics": collate_intrinsics(batch),
+        "simulation_normalized": batch[0].get("simulation_normalized", True),
         **collate_trajectories(batch),
         "original_frame_count": torch.tensor(
             [item["original_frame_count"] for item in batch], dtype=torch.long
@@ -431,4 +452,5 @@ def collate_fn(batch):
             key: stack_optional(references, key)
             for key in ("camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask")
         }
+        result["simulation_reference"]["camera_intrinsics"] = collate_intrinsics(references)
     return result

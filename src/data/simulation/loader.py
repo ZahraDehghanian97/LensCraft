@@ -390,6 +390,34 @@ def load_or_calculate_normalization_parameters(
     return norm_params
 
 
+def extract_camera_intrinsics(camera_frames: List[Dict], target_frame_count: int):
+    """Focal length (mm), aspect on the same timeline as paired pose sampling.
+
+    Legacy clips without lens metadata return None; evaluation must not invent
+    an optical model for those clips.
+    """
+    if not camera_frames or any(
+        frame.get("focalLength") is None or frame.get("aspectRatio") is None
+        for frame in camera_frames
+    ):
+        return None
+    if target_frame_count < 1:
+        raise ValueError("target_frame_count must be positive")
+    values = torch.tensor(
+        [[frame["focalLength"], frame["aspectRatio"]] for frame in camera_frames],
+        dtype=torch.float32,
+    )
+    if not torch.isfinite(values).all() or (values <= 0).any():
+        raise ValueError("Camera focal length and aspect ratio must be finite and positive")
+    if len(values) >= target_frame_count:
+        indices = torch.linspace(0, len(values) - 1, target_frame_count,
+                                 dtype=torch.float64).round().long()
+        return values[indices]
+    return torch.nn.functional.interpolate(
+        values.T[None], size=target_frame_count, mode="linear", align_corners=True
+    )[0].T
+
+
 def extract_camera_trajectory(camera_frames: List[Dict]) -> torch.Tensor:
     return torch.tensor(
         [

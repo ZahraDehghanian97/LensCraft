@@ -6,6 +6,7 @@ import torch
 from testing.metrics.modules.caption_top1 import CaptionTop1
 from testing.metrics.modules.clip_score import ClipScore
 from testing.metrics.modules.prdc import ManifoldMetrics
+from testing.metrics.modules.geometry import GeometryMetrics
 from utils.importing import ModuleImporter
 from utils.paths import third_party
 
@@ -44,6 +45,13 @@ class MetricCallback:
 
         self.metrics: Dict[str, Dict[str, Any]] = {}
         self.active_metrics: set[str] = set()
+        self.geometry_metrics: Dict[str, GeometryMetrics] = {}
+
+    def update_geometry_metrics(self, run_type: str, generated, target, **kwargs):
+        self._get_or_create_metric(run_type)
+        metric = self.geometry_metrics.setdefault(run_type, GeometryMetrics())
+        metric.update(generated, target, **kwargs)
+        self.active_metrics.add(run_type)
 
     def _get_or_create_metric(self, run_type: str) -> Dict[str, Any]:
         if run_type not in self.metrics:
@@ -114,8 +122,12 @@ class MetricCallback:
         )
 
     def bootstrap_metrics(self, run_type, n_boot=500, seed=0, max_samples=None):
+        if n_boot <= 0:
+            return {}
         import numpy as np
         m = self.metrics[run_type]
+        if not m["clatr_prdc"].real_features:
+            return {}
 
         def _cat(x):
             return (torch.cat(x) if isinstance(x, (list, tuple)) else x).detach().float()
@@ -253,4 +265,10 @@ class MetricCallback:
             result[f"{run_type}/caption_{key}_top1"] = float(value)
         if clip_score is not None:
             result[f"{run_type}/clip_score"] = clip_score
+        geometry = self.geometry_metrics.pop(run_type, None)
+        if geometry is not None:
+            result.update({
+                f"{run_type}/{key}": value
+                for key, value in geometry.compute().items() if value is not None
+            })
         return result

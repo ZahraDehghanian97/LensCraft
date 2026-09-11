@@ -9,6 +9,7 @@
 #   test_models.sh       [3/3] evaluate the 4 models, print summary
 #
 # Usage:
+#   export SEMANTIC_EVALUATOR_CHECKPOINT_PATH=/runs/fixed-evaluator/best.ckpt
 #   bash scripts/run_train_and_test.sh
 #
 # Optional environment overrides (otherwise taken from .env / defaults):

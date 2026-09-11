@@ -6,6 +6,8 @@ Example (the environment also supplies baseline checkpoint/data paths)::
     python scripts/run_pilot_evaluation.py --dataset-path /data/simulation \
         --lenscraft-checkpoint /runs/train/best.ckpt \
         --lenscraft-config /runs/train/.hydra/config.yaml \
+        --semantic-evaluator-checkpoint /runs/evaluator/best.ckpt \
+        --semantic-evaluator-config /runs/evaluator/.hydra/config.yaml \
         --clatr-checkpoint /runs/clatr/best.ckpt --output-dir /runs/pilot \
         --split-manifest /runs/metadata/split_indices.json --samples 128
 
@@ -40,6 +42,14 @@ def parse_args(argv=None):
     parser.add_argument("--dataset-path", type=Path, required=True)
     parser.add_argument("--lenscraft-checkpoint", type=Path, required=True)
     parser.add_argument("--lenscraft-config", type=Path, required=True)
+    parser.add_argument(
+        "--semantic-evaluator-checkpoint", type=Path,
+        help="Fixed semantic evaluator weights; defaults to SEMANTIC_EVALUATOR_CHECKPOINT_PATH.",
+    )
+    parser.add_argument(
+        "--semantic-evaluator-config", type=Path,
+        help="Optional evaluator training config; defaults to SEMANTIC_EVALUATOR_CONFIG_PATH.",
+    )
     parser.add_argument("--clatr-checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split-manifest", type=Path)
@@ -63,11 +73,43 @@ def parse_args(argv=None):
     args.models = list(dict.fromkeys(args.models))
     if args.device.isdigit():
         args.device = f"cuda:{args.device}"
+    args.project_dir = args.project_dir.expanduser().resolve()
+    _resolve_semantic_evaluator_paths(args)
+    if args.semantic_evaluator_checkpoint is None:
+        parser.error(
+            "--semantic-evaluator-checkpoint or SEMANTIC_EVALUATOR_CHECKPOINT_PATH "
+            "is required; the generator checkpoint is never used automatically"
+        )
     for field in ("project_dir", "dataset_path", "lenscraft_checkpoint", "lenscraft_config", "clatr_checkpoint", "output_dir", "split_manifest"):
         value = getattr(args, field)
         if value is not None:
             setattr(args, field, value.expanduser().resolve())
     return args
+
+
+def _resolve_semantic_evaluator_paths(args):
+    """CLI wins over environment, which wins over the project's .env file."""
+    project_env = None
+    for field, variable in (
+        ("semantic_evaluator_checkpoint", "SEMANTIC_EVALUATOR_CHECKPOINT_PATH"),
+        ("semantic_evaluator_config", "SEMANTIC_EVALUATOR_CONFIG_PATH"),
+    ):
+        supplied = getattr(args, field)
+        if supplied is not None:
+            setattr(args, field, supplied.expanduser().resolve())
+            continue
+        value = os.environ.get(variable)
+        if value is None and (args.project_dir / ".env").is_file():
+            if project_env is None:
+                from dotenv import dotenv_values
+
+                project_env = dotenv_values(args.project_dir / ".env")
+            value = project_env.get(variable)
+        if value not in (None, "", "None"):
+            path = Path(value).expanduser()
+            if not path.is_absolute():
+                path = args.project_dir / path
+            setattr(args, field, path.resolve())
 
 
 def _chunk_sizes(count):
@@ -97,8 +139,12 @@ def build_command(args, model):
         "+eval_set=pilot", "caption_top1_metric=false", "tsne=false",
         "baseline_norm_ablation=true", "clatr_backend=native",
         _override("clatr_native_checkpoint_path", args.clatr_checkpoint),
-        _override("ref_model.inference.checkpoint_path", args.lenscraft_checkpoint),
-        _override("ref_model.inference.config", args.lenscraft_config),
+        _override("ref_model.inference.checkpoint_path", args.semantic_evaluator_checkpoint),
+        (
+            _override("ref_model.inference.config", args.semantic_evaluator_config)
+            if args.semantic_evaluator_config is not None
+            else "ref_model.inference.config=null"
+        ),
         _override("device", args.device), _override("output_dir", run_dir),
         _override("trajectory_cache_dir", args.output_dir / "trajectory_cache"),
         _override("hydra.run.dir", run_dir / "hydra"), "hydra.job.chdir=true",
@@ -125,7 +171,14 @@ def preflight(args):
     sys.path.insert(0, str(args.project_dir / "src"))
     from data.simulation.metadata import resolve_dataset_root
 
-    for path in (args.lenscraft_checkpoint, args.lenscraft_config, args.clatr_checkpoint, args.project_dir / "src/test.py"):
+    required_files = [
+        args.lenscraft_checkpoint, args.lenscraft_config,
+        args.semantic_evaluator_checkpoint, args.clatr_checkpoint,
+        args.project_dir / "src/test.py",
+    ]
+    if args.semantic_evaluator_config is not None:
+        required_files.append(args.semantic_evaluator_config)
+    for path in required_files:
         if not path.is_file():
             raise ValueError(f"Required file does not exist: {path}")
     training_config = OmegaConf.load(args.lenscraft_config)
@@ -187,13 +240,17 @@ def save_summary(args, selection, results):
         "FCD uses 256-dimensional features: this small sample has singular covariance and is insufficient for a stable model ranking.",
         "Native input/output frame counts differ by model; the evaluator converts trajectories for reference-model and CLaTr metrics.",
         "The shared prompt_generation row uses each baseline's normalized mode. Raw and LensCraft-initialized variants remain separate in the full metrics JSON.",
-        "clip_score uses LensCraft's encoder and is not an independent assessment; native CLaTr metrics use the supplied evaluation checkpoint.",
+        "clip_score uses the same separately loaded, frozen LensCraft semantic evaluator for every model; native CLaTr metrics use their separate supplied checkpoint.",
         "Any GenDoP fallback trajectories are counted from warnings and remain included in its metrics.",
     ]
     payload = {"label": args.label, "sample_count": args.samples, "selection": selection,
-               "clatr_checkpoint": str(args.clatr_checkpoint), "results": results, "caveats": caveats}
+               "clatr_checkpoint": str(args.clatr_checkpoint),
+               "semantic_evaluator_checkpoint": str(args.semantic_evaluator_checkpoint),
+               "semantic_evaluator_config": str(args.semantic_evaluator_config) if args.semantic_evaluator_config else None,
+               "results": results, "caveats": caveats}
     write_json(args.output_dir / "summary.json", payload)
-    lines = [f"Pilot evaluation: {args.label}", "", f"Samples: {args.samples}; native CLaTr: `{args.clatr_checkpoint}`.", "",
+    lines = [f"Pilot evaluation: {args.label}", "", f"Samples: {args.samples}; native CLaTr: `{args.clatr_checkpoint}`.",
+             f"Fixed semantic evaluator: `{args.semantic_evaluator_checkpoint}`.", "",
              "| Model | Status | CLaTr score ↑ | FCD ↓ | Precision ↑ | Recall ↑ | Density ↑ | Coverage ↑ | Clip score ↑ |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for model in args.models:
@@ -225,6 +282,8 @@ def main(argv=None):
     environment.update({"SIMULATION_DATA_PATH": str(args.dataset_path),
                         "TEST_CHECKPOINT_PATH": str(args.lenscraft_checkpoint),
                         "TEST_CONFIG_PATH": str(args.lenscraft_config),
+                        "SEMANTIC_EVALUATOR_CHECKPOINT_PATH": str(args.semantic_evaluator_checkpoint),
+                        "SEMANTIC_EVALUATOR_CONFIG_PATH": str(args.semantic_evaluator_config) if args.semantic_evaluator_config else "",
                         "CLATR_NATIVE_CHECKPOINT_PATH": str(args.clatr_checkpoint),
                         "PYTHONUNBUFFERED": "1", "HYDRA_FULL_ERROR": "1"})
     # Keep inherited baseline paths and cache paths absolute when Hydra changes
@@ -240,8 +299,11 @@ def main(argv=None):
         "label": args.label, "created_at": datetime.now(timezone.utc).isoformat(),
         "project_dir": str(args.project_dir), "python": sys.executable,
         "cuda_visible_devices": environment.get("CUDA_VISIBLE_DEVICES"), "device": args.device,
-        "checkpoints": {"lenscraft": _file_record(args.lenscraft_checkpoint), "native_clatr": _file_record(args.clatr_checkpoint)},
+        "checkpoints": {"lenscraft": _file_record(args.lenscraft_checkpoint),
+                        "semantic_evaluator": _file_record(args.semantic_evaluator_checkpoint),
+                        "native_clatr": _file_record(args.clatr_checkpoint)},
         "lenscraft_config": _file_record(args.lenscraft_config), "selection": selection,
+        "semantic_evaluator_config": _file_record(args.semantic_evaluator_config) if args.semantic_evaluator_config else None,
         "baseline_inputs": {key: environment.get(key) for key in (
             "CCDM_CHECKPOINT_PATH", "CCDM_DATA_DIR", "DIRECTOR_PROJECT_DIR",
             "ET_DATA_DIR", "ET_CIN_LANG_PATH", "GENDOP_CHECKPOINT_PATH")},
@@ -279,7 +341,10 @@ def main(argv=None):
                 raise RuntimeError("Missing or non-finite native CLaTr comparison metrics")
             if not all(math.isfinite(value) for value in shared.values()):
                 raise RuntimeError("Non-finite supplementary comparison metric")
-            result.update(status="complete", prompt_generation=shared, metrics_path=str(files[0]))
+            result.update(
+                status="complete", prompt_generation=shared, metrics_path=str(files[0]),
+                evaluation_provenance=metrics_payload.get("evaluation_provenance", {}),
+            )
         except Exception as error:
             result["error"] = str(error)
         result["elapsed_seconds"] = round(time.monotonic() - start, 3)

@@ -2,12 +2,12 @@
 # Stage 3/3: evaluate all 4 models (LensCraft, CCDM, E.T., GenDoP) with
 # src/test.py and print a summary.
 #
-# Baselines (CCDM / E.T. / GenDoP) use the trained LensCraft checkpoint as
-# ref_model via TEST_CHECKPOINT_PATH; CCDM and E.T. auto-download their own
-# pretrained weights on first run.
+# All models use a separate fixed semantic evaluator selected through
+# SEMANTIC_EVALUATOR_CHECKPOINT_PATH. TEST_CHECKPOINT_PATH selects the
+# LensCraft generator; CCDM and E.T. load their own pretrained weights.
 #
-# Requires TEST_CHECKPOINT_PATH and CLATR_NATIVE_CHECKPOINT_PATH to be set
-# (exported by train_lenscraft.sh / train_clatr.sh, or set manually).
+# Requires TEST_CHECKPOINT_PATH, SEMANTIC_EVALUATOR_CHECKPOINT_PATH and
+# CLATR_NATIVE_CHECKPOINT_PATH. Keep semantic evaluator weights fixed across runs.
 set -uo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 

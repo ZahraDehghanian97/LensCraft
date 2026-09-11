@@ -11,7 +11,7 @@ from typing import Any
 import torch
 
 
-TRAJECTORY_CACHE_VERSION = 5
+TRAJECTORY_CACHE_VERSION = 6
 # Old E.T. evaluations restarted the same latent seeds in every batch.
 # Only E.T.'s cache key changes when its generation protocol changes.
 ET_GENERATION_SEED_VERSION = 2
@@ -224,8 +224,8 @@ def configured_input_provenance(
             if isinstance(inference, Mapping):
                 sections.append(("training.model.inference", inference))
 
-    # Baseline trajectories can use the LensCraft reference checkpoint for
-    # initial-position alignment.  For LensCraft evaluation it is not loaded.
+    # Baseline trajectories can use the fixed reference for initial-position
+    # alignment. LensCraft generation is independent of semantic scoring.
     if model_type != "simulation":
         reference = config.get("ref_model")
         if isinstance(reference, Mapping):
@@ -262,6 +262,7 @@ def build_trajectory_cache_key(
     cache_config.pop("trajectory_cache", None)
     cache_config.pop("trajectory_cache_dir", None)
     source = {
+        "cacheVersion": TRAJECTORY_CACHE_VERSION,
         "config": cache_config,
         "inputProvenance": configured_input_provenance(
             cache_config, resolve_path=resolve_path
@@ -345,6 +346,13 @@ def validate_cached_metric_batch(
             item.get("trajectory"), f"{metric_item} trajectory",
             expected_sequence_length,
         )
+        for key in ("source_mask", "padding_mask"):
+            mask = item.get(key)
+            if (not torch.is_tensor(mask) or mask.dtype != torch.bool
+                    or mask.shape != (batch_size, expected_sequence_length)):
+                raise ValueError(f"{metric_item} {key} must match its trajectory")
+        if (item["padding_mask"] & ~item["source_mask"]).any():
+            raise ValueError(f"{metric_item} exposes padded source frames")
         features = item.get("encoder_features")
         if features is None:
             if require_encoder_features:

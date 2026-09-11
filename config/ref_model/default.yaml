@@ -3,6 +3,8 @@ data_format:
   seq_length: 30
 
 
+# Fixed evaluator architecture. These defaults must not inherit the generator's
+# training settings; SEMANTIC_EVALUATOR_CONFIG_PATH can supply a saved schema.
 module:
   _target_: models.camera_trajectory_model.LensCraft
   input_dim: 6
@@ -12,13 +14,15 @@ module:
   num_decoder_layers: 4
   dim_feedforward: 2048
   dropout_rate: 0.3
-  seq_length: ${training.model.data_format.seq_length}
-  latent_dim: ${clip.latent_dim}
-  use_merged_memory: ${training.use_merged_memory}
+  seq_length: 30
+  latent_dim: 512
+  use_merged_memory: false
   denormalize_memory: false
 
+clip:
+  model_name: clip-vit-base-patch32
+  latent_dim: 512
 
 inference:
-  checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH}
-  config: ${oc.env:TEST_CONFIG_PATH,None}
-  clip_embeddings_cache: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
+  checkpoint_path: ${oc.env:SEMANTIC_EVALUATOR_CHECKPOINT_PATH,null}
+  config: ${oc.env:SEMANTIC_EVALUATOR_CONFIG_PATH,null}

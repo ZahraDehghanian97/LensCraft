@@ -128,6 +128,10 @@ def main(cfg: DictConfig) -> None:
             dataset_type,
             model_type,
             seq_length=cfg.training.model.data_format.seq_length,
+            num_keyframes=cfg.get("num_keyframes", 4),
+            keyframe_sample_seeds=[
+                int(cfg.get("seed", 42)) + i for i in range(batch_size)
+            ],
         )
 
     result = _build_inference_result(

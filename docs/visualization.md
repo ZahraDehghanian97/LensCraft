@@ -252,3 +252,8 @@ Run the visualizer on that server with `--port 8080`, then open
 The former standalone trajectory viewers and their dedicated Hydra configs
 have been removed. For training curves, use `src/plot_losses.py` or
 `src/plot_clatr_losses.py`; evaluation's t-SNE helpers remain available.
+# Quantitative evaluation
+
+For fixed semantic evaluators, sparse keyframe sweeps, and measured pose/framing
+errors, see [evaluation.md](evaluation.md). The evaluation cache records the
+actual constraints; figure selection alone is not a quantitative keyframe test.

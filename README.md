@@ -1,5 +1,9 @@
 # LensCraft
 
+Evaluation uses a separately configured, frozen semantic evaluator and reports
+sparse keyframe sweeps with independent geometry/framing metrics. See
+[evaluation configuration and metric definitions](docs/evaluation.md).
+
 This project implements an autoencoder model for camera trajectories using a multi-task architecture. The model learns to reconstruct camera movements based on subject information and initial trajectory data. In addition to producing accurate trajectory reconstructions, it generates embeddings for movement types, easing functions, camera angles, and shot types. These generated embeddings are designed to be aligned with CLIP (Contrastive Language-Image Pre-training) embeddings, allowing for better integration with language-based interfaces and multi-modal applications.
 
 ## Model Architecture

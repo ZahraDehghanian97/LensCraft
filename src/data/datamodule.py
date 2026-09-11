@@ -18,6 +18,8 @@ def compact_simulation_collate_fn(batch):
         "simulation_instruction_parameters",
         "cinematography_prompt_parameters",
         "original_frame_count",
+        "camera_intrinsics",
+        "simulation_normalized",
     ):
         result.pop(key, None)
     return result

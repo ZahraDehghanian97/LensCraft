@@ -16,6 +16,19 @@ trajectory_cache_dir: ${oc.env:TEST_TRAJECTORY_CACHE_DIR,.cache/test_trajectorie
 caption_top1_metric: false
 baseline_norm_ablation: true
 
+# Each K uses the same per-sample ordering; smaller sets are subsets of larger ones.
+keyframes:
+  counts: [1, 2, 4, 8, 26]
+  num_keyframes: 4
+  seed: 42
+
+geometry_metrics:
+  enabled: true
+  # Simulation exports provide focal length (mm) and aspect ratio per frame.
+  # Other datasets require an explicit shared projection to report framing.
+  vertical_fov_deg: null
+  aspect_ratio: null
+
 clatr_backend: native
 clatr_native_checkpoint_path: ${oc.env:CLATR_NATIVE_CHECKPOINT_PATH,null}
 clatr_checkpoint_path: ${oc.env:CLATR_CHECKPOINT_PATH,null}

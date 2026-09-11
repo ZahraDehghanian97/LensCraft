@@ -21,19 +21,18 @@ from data.simulation.utils import (
 from models.factory import load_model, model_type_from_cfg as _model_type_from_cfg
 
 from testing.metrics.callback import MetricCallback
-from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
-from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
 from testing.baseline_modes import (
     BASELINE_ITEMS,
     NORM_ITEM,
 )
 from testing.process import test_batch
+from testing.keyframes import DEFAULT_KEYFRAME_COUNTS, keyframe_mode, validate_keyframe_counts
+from testing.evaluator import load_semantic_evaluator, identify_clatr_evaluator
 from testing.trajectory_cache import (
     TRAJECTORY_CACHE_VERSION,
     build_trajectory_cache_key,
     validate_cached_metric_batch,
 )
-from utils.load_lens_craft import load_lens_craft_model
 from visualization.utils import (
     tSNE_visualize_embeddings,
     tSNE_visualize_embeddings_by_class_type,
@@ -100,10 +99,8 @@ def _load_trajectory_cache(
                 batch,
                 required_metric_items,
                 model_type=model_type,
-                require_encoder_features=(
-                    model_type == "lens_craft"
-                    and bool(cfg.get("caption_top1_metric", False))
-                ),
+                # Semantic features are recomputed by the frozen evaluator.
+                require_encoder_features=False,
                 expected_token_count=expected_token_count,
                 expected_embedding_dim=expected_embedding_dim,
                 expected_sequence_length=int(cfg.training.model.data_format.seq_length),
@@ -133,6 +130,8 @@ def _save_trajectory_cache(cfg: DictConfig, cache_path: Path, batches: list) -> 
 def _build_native_clatr_extractor(
     cfg: DictConfig, device: torch.device
 ) -> NativeCLaTrFeatureExtractor:
+    from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
+
     checkpoint_path = (
         cfg.get("clatr_native_checkpoint_path", None)
         or os.environ.get("CLATR_NATIVE_CHECKPOINT_PATH")
@@ -148,18 +147,22 @@ def _build_native_clatr_extractor(
         )
 
     logger.info("Using native CLaTr backend (checkpoint: %s)", checkpoint_path)
-    return NativeCLaTrFeatureExtractor(
+    extractor = NativeCLaTrFeatureExtractor(
         checkpoint_path=checkpoint_path,
         device=device,
         clip_model_name=cfg.clip.model_name
         if cfg.clip.model_name.startswith("openai/")
         else f"openai/{cfg.clip.model_name}",
     )
+    identify_clatr_evaluator(extractor, checkpoint_path, "native")
+    return extractor
 
 
 def _build_et_clatr_extractor(
     cfg: DictConfig, device: torch.device
 ) -> CLaTrFeatureExtractor:
+    from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
+
     director_project_dir = os.environ.get("DIRECTOR_PROJECT_DIR")
     if director_project_dir is None:
         raise EnvironmentError(
@@ -185,12 +188,14 @@ def _build_et_clatr_extractor(
     )
 
     logger.info("Using E.T. CLaTr backend (checkpoint: %s)", checkpoint_path)
-    return CLaTrFeatureExtractor(
+    extractor = CLaTrFeatureExtractor(
         project_config_dir=project_config,
         dataset_dir=et_data_dir,
         checkpoint_path=checkpoint_path,
         device=device,
     )
+    identify_clatr_evaluator(extractor, checkpoint_path, "et")
+    return extractor
 
 
 def _build_clatr_extractor(cfg: DictConfig, device: torch.device):
@@ -241,16 +246,7 @@ def _load_eval_models(
     model_type: str,
     device: torch.device,
 ):
-    if model_type == "lens_craft":
-        model = load_model(cfg, model_type, device)
-        return model, model
-
-    ref_model = load_lens_craft_model(
-        model_module=cfg.ref_model.module,
-        model_inference=cfg.ref_model.inference,
-        device=device,
-    )
-
+    ref_model = load_semantic_evaluator(cfg.ref_model, device, input_clip=cfg.clip)
     model = load_model(cfg, model_type, device)
     return model, ref_model
 
@@ -271,21 +267,22 @@ def _load_clip_embeddings(cfg: DictConfig, model_type: str):
 
 
 def _select_metric_items(
-    model_type: str, dataset_type: str, norm_ablation: bool
+    model_type: str, dataset_type: str, norm_ablation: bool,
+    keyframe_counts=DEFAULT_KEYFRAME_COUNTS,
 ) -> list[str]:
     if model_type in BASELINE_MODELS:
         if norm_ablation:
             return list(BASELINE_ITEMS)
         return [NORM_ITEM]
+    counts = validate_keyframe_counts(keyframe_counts)
+    items = ["reconstruction"]
     if dataset_type in CAPTIONED_DATASETS:
-        return [
-            "reconstruction",
-            "key_framing",
-            "prompt_generation",
-            "key_framing+prompt",
-            "hybrid_generation",
-        ]
-    return ["reconstruction", "key_framing"]
+        items += ["prompt_generation", "hybrid_generation"]
+    for count in counts:
+        items.append(keyframe_mode("key_framing", count))
+        if dataset_type in CAPTIONED_DATASETS:
+            items.append(keyframe_mode("key_framing+prompt", count))
+    return items
 
 
 def _run_evaluation(
@@ -326,6 +323,12 @@ def _run_evaluation(
                 clatr_extractor=clatr_extractor,
                 cached_outputs=(cached_batches[bi] if cached_batches is not None else None),
                 generation_seeds=generation_seeds,
+                num_keyframes=cfg.get("keyframes", {}).get("num_keyframes", 4),
+                keyframe_sample_seeds=[
+                    (int(cfg.get("keyframes", {}).get("seed", 42)) + index) % (2**32)
+                    for index in range(sample_offset, sample_offset + sample_count)
+                ],
+                geometry_settings=cfg.get("geometry_metrics", {}),
             )
             sample_offset += sample_count
             if generated_batches is not None:
@@ -412,6 +415,7 @@ def _write_metrics_json(
     boot_std: dict,
     model_type: str,
     dataset_type: str,
+    evaluation_provenance: dict | None = None,
 ) -> None:
     try:
         import json
@@ -434,11 +438,29 @@ def _write_metrics_json(
             "et_type": et_type,
             "clatr_backend": cfg.get("clatr_backend", "native"),
             "prdc_recall_version": 2,
+            "keyframe_protocol": {
+                "counts": list(cfg.get("keyframes", {}).get("counts", DEFAULT_KEYFRAME_COUNTS)),
+                "seed": cfg.get("keyframes", {}).get("seed", 42),
+                "sampling": "nested per-sample permutations of valid frames",
+                "count_policy": "min(requested K, valid frame count)",
+            },
+            "geometry_protocol": {
+                "enabled": cfg.get("geometry_metrics", {}).get("enabled", True),
+                "position_units": "dataset world units",
+                "rotation_units": "degrees (SO(3) geodesic)",
+                "aggregation": "valid-frame weighted mean; counts accompany metrics",
+                "projection": "shared ground-truth focal length/aspect; no predicted lens",
+                "film_gauge_mm": 35.0,
+                "near_clip": 0.1,
+                "vertical_fov_deg": cfg.get("geometry_metrics", {}).get("vertical_fov_deg"),
+                "aspect_ratio": cfg.get("geometry_metrics", {}).get("aspect_ratio"),
+            },
             "set": cfg.get("eval_set", None),
             "variant": cfg.get("variant", None),
             "allowed_movement_types": allowed_movement_types,
             "metrics": metrics,
             "bootstrap_std": boot_std,
+            "evaluation_provenance": evaluation_provenance or {},
         }
 
         tag = model_type
@@ -474,7 +496,7 @@ def _make_tsne_plots(
     dataset_type: str,
     test_dataloader,
 ) -> None:
-    save_dir = os.path.dirname(os.path.dirname(cfg.ref_model.inference.config))
+    save_dir = cfg.output_dir
     features_save_dir = os.path.join(save_dir, "features")
     os.makedirs(features_save_dir, exist_ok=True)
     features_save_path = os.path.join(
@@ -559,7 +581,10 @@ def main(cfg: DictConfig) -> None:
         num_cams=1, device=device, clip_embeddings=clip_embeddings
     )
     clatr_extractor = _build_clatr_extractor(cfg, device)
-    metric_items = _select_metric_items(model_type, dataset_type, norm_ablation)
+    metric_items = _select_metric_items(
+        model_type, dataset_type, norm_ablation,
+        cfg.get("keyframes", {}).get("counts", DEFAULT_KEYFRAME_COUNTS),
+    )
 
     _run_evaluation(
         cfg, ref_model, model, metric_callback, clatr_extractor,
@@ -571,7 +596,13 @@ def main(cfg: DictConfig) -> None:
     metric_features = _collect_metric_features(cfg, metric_callback, metric_items)
     metrics = _compute_and_log_metrics(cfg, metric_callback, metric_items, boot_std)
 
-    _write_metrics_json(cfg, metrics, boot_std, model_type, dataset_type)
+    _write_metrics_json(
+        cfg, metrics, boot_std, model_type, dataset_type,
+        evaluation_provenance={
+            "semantic_evaluator": ref_model.evaluation_provenance,
+            "clatr_evaluator": clatr_extractor.evaluation_provenance,
+        },
+    )
 
     if cfg.tsne:
         _make_tsne_plots(

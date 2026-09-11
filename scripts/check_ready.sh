@@ -83,6 +83,8 @@ check_file ET_CIN_LANG_PATH
 opt_file CCDM_CHECKPOINT_PATH   # only for training/model=ccdm baseline
 opt_file GENDOP_CHECKPOINT_PATH # only for training/model=gendop baseline
 opt_file TEST_CHECKPOINT_PATH   # only for src/test.py
+opt_file SEMANTIC_EVALUATOR_CHECKPOINT_PATH # required for semantic evaluation
+opt_file SEMANTIC_EVALUATOR_CONFIG_PATH     # optional fixed evaluator architecture
 
 echo "== writable output / cache dirs =="
 for v in OUTPUT_DIR CLIP_EMBEDDINGS_CACHE_DIR LOG_DIR; do

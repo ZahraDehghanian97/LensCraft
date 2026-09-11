@@ -17,6 +17,7 @@ from testing.baseline_modes import (
     NORM_LENSCRAFT_INIT_ITEM,
     place_trajectory_at_first_position,
 )
+from testing.keyframes import parse_keyframe_mode
 from utils.device import move_batch_to_device
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
@@ -358,6 +359,54 @@ def _update_generation_metrics(
             prompt_embedding,
             prompt_none_mask,
         )
+        if (metric_callback.clip_embeddings is not None
+                and "cinematography_prompt_parameters" in batch):
+            parameter_batch = batch["cinematography_prompt_parameters"]
+            if "simulation_instruction_parameters" in batch:
+                parameter_batch = [high + low for high, low in zip(
+                    parameter_batch, batch["simulation_instruction_parameters"]
+                )]
+            metric_callback.update_caption_top1(
+                metric_item, gen_embedding.permute(1, 0, 2).detach(),
+                [parameters[:gen_embedding.shape[0]] for parameters in parameter_batch],
+            )
+
+
+def _update_geometry_metrics(callback, item, generated, view, batch,
+                             *, generated_padding_mask=None, known_mask=None,
+                             settings=None, generated_is_normalized=None):
+    settings = settings or {}
+    if not settings.get("enabled", True):
+        return
+    target, subject, volume, padding = view
+    generated, _, _, generated_padding = convert_to_target(
+        "simulation", "simulation", generated,
+        padding_mask=generated_padding_mask, target_len=target.shape[1],
+        need_denormal=False, need_normal=False,
+    )
+    valid = ~padding
+    if generated_padding is not None:
+        valid = valid & ~generated_padding
+    target_is_normalized = batch.get("simulation_normalized", True)
+    if generated_is_normalized is None:
+        generated_is_normalized = target_is_normalized
+    if generated_is_normalized:
+        generated, _, _ = SimulationDataset.normalize_item(generated, None, None, False)
+    if target_is_normalized:
+        target, subject, volume = SimulationDataset.normalize_item(target, subject, volume, False)
+    intrinsics = batch.get("camera_intrinsics")
+    reference = batch.get("simulation_reference")
+    if reference is not None and reference["camera_trajectory"].shape[1] == target.shape[1]:
+        intrinsics = reference.get("camera_intrinsics")
+    if intrinsics is not None and intrinsics.shape[1] != target.shape[1]:
+        # Do not pair a lens sample with an unrelated resampled camera pose.
+        intrinsics = None
+    callback.update_geometry_metrics(
+        item, generated, target, valid_mask=valid, known_mask=known_mask,
+        subject_trajectory=subject, subject_dimensions=volume, intrinsics=intrinsics,
+        vertical_fov_deg=(settings.get("vertical_fov_deg") if intrinsics is None else None),
+        aspect_ratio=(settings.get("aspect_ratio") if intrinsics is None else None),
+    )
 
 
 def test_batch(
@@ -373,6 +422,9 @@ def test_batch(
     clatr_extractor=None,
     cached_outputs: Optional[Dict[str, Any]] = None,
     generation_seeds=None,
+    num_keyframes=4,
+    keyframe_sample_seeds=None,
+    geometry_settings=None,
 ) -> Dict[str, Any]:
     batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
@@ -442,6 +494,14 @@ def test_batch(
                 batch,
                 generated_padding_mask=variant_padding_masks.get(metric_item),
             )
+            _update_geometry_metrics(
+                metric_callback, metric_item, sim_generated_trajectory,
+                (sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume,
+                 sim_padding_mask), batch,
+                generated_padding_mask=variant_padding_masks.get(metric_item),
+                settings=geometry_settings,
+                generated_is_normalized=metric_item != NO_NORM_ITEM,
+            )
         return {
             "trajectories": {
                 item: trajectory.detach().cpu()
@@ -456,45 +516,62 @@ def test_batch(
     if model_type != "lens_craft":
         raise ValueError(f"Unsupported model_type: {model_type}")
 
-    key_framing_padding_mask = build_keyframing_mask(
-        batch_size, device, sim_camera_trajectory.shape[1]
+    # Generation and keyframe constraints belong to the tested model's grid;
+    # the independent semantic evaluator keeps its own fixed temporal view.
+    generation_view = to_simulation_format(
+        batch, dataset_type, target_len=model.decoder.seq_length
     )
+    camera, subject, volume, padding = generation_view
+    masks_by_count = {}
     generated_outputs: Dict[str, Any] = {"items": {}}
 
     for metric_item in metric_items:
+        generation_mode, count = parse_keyframe_mode(metric_item, num_keyframes)
         caption_embedding = (
             structured_conditioning_from_batch(batch)
             if dataset_type in ("simulation", "et")
             else None
         )
-        memory_teacher_forcing_ratio = MEMORY_TEACHER_FORCING_BY_MODE[metric_item]
-
-        source_mask = (
-            key_framing_padding_mask | sim_padding_mask
-            if metric_item in ("key_framing", "key_framing+prompt")
-            else sim_padding_mask
-        )
+        memory_teacher_forcing_ratio = MEMORY_TEACHER_FORCING_BY_MODE[generation_mode]
+        if count is not None and count not in masks_by_count:
+            masks_by_count[count] = build_keyframing_mask(
+                batch_size, device, camera.shape[1], num_keyframes=count,
+                padding_mask=padding, sample_seeds=keyframe_sample_seeds,
+            )
+        source_mask = masks_by_count[count] if count is not None else padding
 
         if cached_outputs is None:
-            ref_output = ref_model.generate_camera_trajectory(
-                subject_trajectory=sim_subject_trajectory,
-                subject_volume=sim_subject_volume,
-                camera_trajectory=sim_camera_trajectory,
+            model_output = model.generate_camera_trajectory(
+                subject_trajectory=subject,
+                subject_volume=volume,
+                camera_trajectory=camera,
                 src_key_mask=source_mask,
-                padding_mask=sim_padding_mask,
+                padding_mask=padding,
                 memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
                 caption_embedding=caption_embedding,
             )
-            sim_generated_trajectory = ref_output["reconstructed"]
+            sim_generated_trajectory = model_output["reconstructed"]
         else:
             item_output = cached_outputs["items"][metric_item]
             sim_generated_trajectory = item_output["trajectory"].to(device)
-            ref_output = None
+            cached_mask = item_output["source_mask"].to(device)
+            if not torch.equal(item_output["padding_mask"].to(device), padding):
+                raise ValueError(f"{metric_item}: cached padding differs from the input sequence")
+            if (padding & ~cached_mask).any():
+                raise ValueError(f"{metric_item}: cached keyframes include padding")
+            if count is not None and not torch.equal(
+                (~cached_mask).sum(dim=1), (~padding).sum(dim=1).clamp(max=count)
+            ):
+                raise ValueError(f"{metric_item}: cached keyframe count differs from requested K")
+            if count is not None and keyframe_sample_seeds is not None and not torch.equal(cached_mask, source_mask):
+                raise ValueError(f"{metric_item}: cached keyframes differ from the requested sampling protocol")
+            source_mask = cached_mask
 
         if cached_outputs is None:
             generated_outputs["items"][metric_item] = {
                 "trajectory": sim_generated_trajectory.detach().cpu(),
-                "encoder_features": None,
+                "source_mask": source_mask.detach().cpu(),
+                "padding_mask": padding.detach().cpu(),
             }
 
         _update_generation_metrics(
@@ -509,37 +586,14 @@ def test_batch(
             clatr_extractor,
             ref_model,
             batch,
-            generated_padding_mask=sim_padding_mask,
+            generated_padding_mask=padding,
         )
-
-        if (
-            metric_callback.clip_embeddings is not None
-            and "cinematography_prompt_parameters" in batch
-        ):
-            if ref_output is not None:
-                encoder_features = ref_output["embeddings"][
-                    : ref_model.memory_tokens_count, ...
-                ]
-                encoder_features = encoder_features.permute(1, 0, 2).detach()
-                generated_outputs["items"][metric_item]["encoder_features"] = (
-                    encoder_features.cpu()
-                )
-            else:
-                encoder_features = item_output["encoder_features"].to(device)
-            parameter_batch = batch["cinematography_prompt_parameters"]
-            if "simulation_instruction_parameters" in batch:
-                parameter_batch = [
-                    cinematography + simulation
-                    for cinematography, simulation in zip(
-                        parameter_batch,
-                        batch["simulation_instruction_parameters"],
-                    )
-                ]
-            metric_callback.update_caption_top1(
-                metric_item,
-                encoder_features,
-                parameter_batch,
-            )
+        _update_geometry_metrics(
+            metric_callback, metric_item, sim_generated_trajectory, generation_view,
+            batch, generated_padding_mask=padding,
+            known_mask=(~source_mask if count is not None else None),
+            settings=geometry_settings,
+        )
 
     if cached_outputs is not None:
         return cached_outputs

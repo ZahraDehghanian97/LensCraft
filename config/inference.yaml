@@ -7,3 +7,6 @@ defaults:
 
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 device: cuda
+
+# Absolute number of visible, valid camera frames in keyframing modes.
+num_keyframes: 4

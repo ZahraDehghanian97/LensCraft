@@ -6,6 +6,7 @@ from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import structured_conditioning_from_batch
 from data.sim_format import (
     SIM_SEQ_LENGTH,
+    NUM_VISIBLE_KEYFRAMES,
     MEMORY_TEACHER_FORCING_BY_MODE,
     build_keyframing_mask,
     to_simulation_format,
@@ -16,7 +17,9 @@ _KEYFRAMING_MODES = {"key_framing", "key_framing+prompt"}
 
 
 def inference_batch(model, batch, device, dataset_type="simulation",
-                    model_type="lens_craft", seq_length=SIM_SEQ_LENGTH):
+                    model_type="lens_craft", seq_length=SIM_SEQ_LENGTH,
+                    num_keyframes=NUM_VISIBLE_KEYFRAMES,
+                    keyframe_sample_seeds=None):
     batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
 
@@ -80,7 +83,10 @@ def inference_batch(model, batch, device, dataset_type="simulation",
                 sim_camera, sim_subject, sim_volume, sim_padding, None)
 
     keyframing_mask = build_keyframing_mask(
-        batch_size, device, sim_camera.shape[1]
+        batch_size, device, sim_camera.shape[1],
+        num_keyframes=num_keyframes,
+        padding_mask=sim_padding,
+        sample_seeds=keyframe_sample_seeds,
     )
 
     results = {}
@@ -92,7 +98,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         # suppressed output timesteps. Real temporal padding must still be
         # hidden from both paths, including in keyframing modes.
         source_mask = (
-            keyframing_mask | sim_padding
+            keyframing_mask
             if mode in _KEYFRAMING_MODES
             else sim_padding
         )
