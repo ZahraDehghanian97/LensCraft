@@ -7,3 +7,5 @@ num_workers: 8
 val_size: 0.2
 test_size: 0.2
 batch_size: 128
+# Train/validation only for simulation; disabled automatically for contrastive loss.
+compact_batches: true

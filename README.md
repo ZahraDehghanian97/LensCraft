@@ -312,6 +312,20 @@ Long training jobs are best run inside `tmux`/`screen` so they survive disconnec
 
 ## Training
 
+Simulation training uses compact batches by default to avoid transferring unused
+prompt metadata through DataLoader workers and onto the GPU. To disable them:
+
+```bash
+python src/train.py data.compact_batches=false
+```
+
+The model inputs are preserved, and test batches still include full metadata.
+Training keeps full batches when contrastive loss is enabled because that loss
+uses the metadata. Mask sampling and CLIP loss computation are vectorized to
+reduce CPU/GPU synchronization. The masking distribution and exact mask counts
+are preserved, but the random sequence differs from the previous per-sample
+implementation, so resumed runs are not bit-for-bit identical to that version.
+
 The training process includes:
 1. Data augmentation (masking and adding noise to input trajectories)
 2. Single-pass (single-step) decoding: the decoder reconstructs the full

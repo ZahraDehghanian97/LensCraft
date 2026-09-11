@@ -8,8 +8,23 @@ from data.et.dataset import collate_fn as et_collate_fn
 from data.ccdm.dataset import collate_fn as ccdm_collate_fn
 
 
+def compact_simulation_collate_fn(batch):
+    """Keep model inputs while dropping metadata before worker transfer/pinning."""
+    result = collate_fn(batch)
+    for key in (
+        "raw_prompt",
+        "raw_instruction",
+        "text_prompts",
+        "simulation_instruction_parameters",
+        "cinematography_prompt_parameters",
+        "original_frame_count",
+    ):
+        result.pop(key, None)
+    return result
+
+
 class CameraTrajectoryDataModule(L.LightningDataModule):
-    def __init__(self, dataset_config, batch_size, num_workers=None, val_size=0.1, test_size=0.1, split_seed=42):
+    def __init__(self, dataset_config, batch_size, num_workers=None, val_size=0.1, test_size=0.1, split_seed=42, compact_batches=False):
         super().__init__()
         self.dataset_config = dataset_config
         self.batch_size = batch_size
@@ -28,6 +43,12 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         else:
             self.dataset_mode = 'simulation'
             self.collate_fn = collate_fn
+
+        self.train_val_collate_fn = (
+            compact_simulation_collate_fn
+            if compact_batches and self.dataset_mode == 'simulation'
+            else self.collate_fn
+        )
 
     def setup(self, stage=None):
         full_dataset = hydra.utils.instantiate(self.dataset_config)
@@ -50,7 +71,7 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            collate_fn=self.collate_fn,
+            collate_fn=self.train_val_collate_fn,
             pin_memory=True,
             persistent_workers=True if self.num_workers > 0 else False,
             shuffle=True
@@ -61,7 +82,7 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            collate_fn=self.collate_fn,
+            collate_fn=self.train_val_collate_fn,
             pin_memory=True,
             persistent_workers=True if self.num_workers > 0 else False,
         )

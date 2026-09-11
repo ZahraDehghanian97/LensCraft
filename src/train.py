@@ -22,6 +22,16 @@ logger = logging.getLogger(__name__)
 torch.set_float32_matmul_precision("high")
 
 
+def _compact_batches_enabled(cfg: DictConfig) -> bool:
+    enabled = bool(getattr(cfg.data, "compact_batches", False))
+    if enabled and OmegaConf.select(
+        cfg, "training.loss_module.losses_list.contrastive", default=0
+    ):
+        logger.info("Keeping full batches because contrastive loss requires metadata")
+        return False
+    return enabled
+
+
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def main(cfg: DictConfig):
     GlobalHydra.instance().clear()
@@ -48,7 +58,8 @@ def main(cfg: DictConfig):
             batch_size=cfg.data.batch_size,
             num_workers=cfg.data.num_workers,
             val_size=cfg.data.val_size,
-            test_size=cfg.data.test_size
+            test_size=cfg.data.test_size,
+            compact_batches=_compact_batches_enabled(cfg),
         )
 
     model = instantiate(cfg.training.model.module)

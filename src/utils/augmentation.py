@@ -25,18 +25,18 @@ def apply_mask_and_noise(data, valid_len=None, mask_ratio=0.0, noise_std=0.0, de
         padded_mask = torch.bernoulli(torch.full(
             (batch_size, seq_len), 1 - mask_ratio, device=device)).bool()
     else:
-        padded_mask = torch.arange(seq_len, device=device)[
-            None, :] < valid_len[:, None]
+        positions = torch.arange(seq_len, device=device)[None, :]
+        padded_mask = positions < valid_len[:, None]
 
         if mask_ratio > 0:
-            for i in range(batch_size):
-                valid_length = valid_len[i]
-
-                num_masks = int(valid_length.item() * mask_ratio)
-
-                mask_indices = torch.randperm(
-                    valid_length, device=device)[:num_masks]
-                padded_mask[i, mask_indices] = False
+            num_masks = (valid_len.to(torch.float64) * mask_ratio).to(torch.long)
+            random_keys = torch.rand((batch_size, seq_len), device=device)
+            random_keys.masked_fill_(~padded_mask, float('inf'))
+            random_order = random_keys.argsort(dim=1)
+            selected = torch.zeros_like(padded_mask).scatter_(
+                1, random_order, positions < num_masks[:, None]
+            )
+            padded_mask = padded_mask & ~selected
 
     noisy_data = data.clone()
     if noise_std > 0:
