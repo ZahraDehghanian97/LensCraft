@@ -284,6 +284,18 @@ OPENAI_API_KEY=
 
 ## Usage
 
+For interactive trajectory comparisons, visible input keyframes, and paper
+figures, use the [qualitative visualizer](docs/visualization.md):
+
+```bash
+pip install -r requirements-visualization.txt
+python src/visualization.py --demo
+```
+
+The demo and portable saved-result viewer run on CPU. To generate real model outputs,
+configure the datasets and checkpoints described below and in the visualizer
+guide.
+
 Train with the default (simulation) dataset:
 ```bash
 python src/train.py

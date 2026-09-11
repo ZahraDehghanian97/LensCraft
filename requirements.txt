@@ -29,6 +29,7 @@ pandas==2.2.3
 fvcore==0.1.5.post20221221
 bitsandbytes==0.45.2
 rerun==1.0.30
+viser>=1.1,<2
 git+https://github.com/openai/CLIP.git
 
 openai

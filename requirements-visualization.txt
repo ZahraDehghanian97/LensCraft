@@ -1,0 +1,6 @@
+# CPU-only dependencies for the demo, saved results, and publication exports.
+# Dataset inference additionally needs the project/model dependencies.
+numpy>=1.26,<3
+matplotlib>=3.8,<4
+pillow>=10,<13
+viser>=1.1,<2
