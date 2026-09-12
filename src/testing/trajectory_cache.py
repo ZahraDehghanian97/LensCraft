@@ -16,6 +16,9 @@ TRAJECTORY_CACHE_VERSION = 6
 # Only E.T.'s cache key changes when its generation protocol changes.
 ET_GENERATION_SEED_VERSION = 2
 
+LENSCRAFT_GENERATION_VERSION = 2
+_LENSCRAFT_FORMATS = frozenset({"simulation", "lens_craft"})
+
 _PATH_INPUT_KEYS = frozenset(
     {
         "cache_file",
@@ -208,6 +211,7 @@ def configured_input_provenance(
     """Return provenance for inputs that can change generated trajectories."""
 
     sections: list[tuple[str, Any]] = []
+    lenscraft_models: list[tuple[str, Mapping[str, Any]]] = []
     data = config.get("data")
     if isinstance(data, Mapping):
         sections.append(("data", data))
@@ -223,17 +227,62 @@ def configured_input_provenance(
             inference = model.get("inference")
             if isinstance(inference, Mapping):
                 sections.append(("training.model.inference", inference))
+            if model_type in _LENSCRAFT_FORMATS:
+                lenscraft_models.append(("training.model", model))
 
     # Baseline trajectories can use the fixed reference for initial-position
     # alignment. LensCraft generation is independent of semantic scoring.
-    if model_type != "simulation":
+    if model_type not in _LENSCRAFT_FORMATS:
         reference = config.get("ref_model")
         if isinstance(reference, Mapping):
+            lenscraft_models.append(("ref_model", reference))
             inference = reference.get("inference")
             if isinstance(inference, Mapping):
                 sections.append(("ref_model.inference", inference))
 
     provenance = {}
+    vocabulary_labels = set()
+    for model_prefix, model in lenscraft_models:
+        module = model.get("module")
+        inference = model.get("inference", {})
+        if not isinstance(inference, Mapping):
+            inference = {}
+        normalization = inference.get("camera_memory_normalization")
+        if normalization == "vocabulary":
+            vocabulary_labels.add(f"{model_prefix}.inference.clip_embeddings_cache")
+        saved_path = inference.get("config")
+        # Loading a saved architecture also restores its norm recipe. The YAML
+        # fingerprint alone cannot detect replacement of a vocabulary referenced
+        # by that recipe, particularly when it differs from today's defaults.
+        module_prefix = f"{model_prefix}.module"
+        if saved_path and str(saved_path) not in ("None", "none", "null"):
+            try:
+                resolved_path = Path(resolve_path(str(saved_path)))
+                if resolved_path.is_file():
+                    from omegaconf import OmegaConf
+
+                    saved = OmegaConf.load(resolved_path)
+                    saved_module = OmegaConf.select(saved, "training.model.module")
+                    if saved_module is None:
+                        saved_module = OmegaConf.select(saved, "ref_model.module")
+                    if saved_module is not None:
+                        # An explicit inference override discards the archived
+                        # recipe before resolving it, just as the loader does.
+                        if normalization is not None and "camera_memory_norms" in saved_module.keys():
+                            del saved_module["camera_memory_norms"]
+                        module = OmegaConf.to_container(saved_module, resolve=True)
+                        module_prefix = f"{model_prefix}.inference.config.module"
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                provenance[f"{module_prefix}.savedConfig"] = {
+                    "configuredPath": str(saved_path),
+                    "resolutionError": type(error).__name__,
+                }
+        if isinstance(module, Mapping):
+            module = dict(module)
+            if normalization is not None:
+                module.pop("camera_memory_norms", None)
+            sections.append((module_prefix, module))
+
     for section_prefix, section in sections:
         for label, raw_path, include_globs in _iter_configured_input_paths(
             section, section_prefix
@@ -243,6 +292,13 @@ def configured_input_provenance(
                 provenance[label] = stat_path_provenance(
                     resolved, include_globs=include_globs
                 )
+                if (label in vocabulary_labels or
+                        (".camera_memory_norms." in label and label.endswith(".cache_file"))):
+                    # CLIP validates this sidecar before deciding whether its
+                    # cached vocabulary must be rebuilt.
+                    provenance[f"{label}.metadata"] = stat_path_provenance(
+                        f"{resolved}.meta.json"
+                    )
             except (OSError, RuntimeError, TypeError, ValueError) as error:
                 provenance[label] = {
                     "configuredPath": str(raw_path),
@@ -273,6 +329,8 @@ def build_trajectory_cache_key(
     )
     if model_type == "et":
         source["etGenerationSeedVersion"] = ET_GENERATION_SEED_VERSION
+    if model_type in _LENSCRAFT_FORMATS or model_type is None:
+        source["lenscraftGenerationVersion"] = LENSCRAFT_GENERATION_VERSION
     canonical = json.dumps(
         source, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")

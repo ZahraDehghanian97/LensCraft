@@ -15,8 +15,15 @@ module:
   latent_dim: ${clip.latent_dim}
   use_merged_memory: ${training.use_merged_memory}
   denormalize_memory: false
+  camera_memory_norms:
+    _target_: data.simulation.memory_norms.vocabulary_memory_norms
+    clip_embeddings: ${training.loss_module.clip_embeddings}
+    embedding_dim: ${clip.latent_dim}
 
 inference:
   checkpoint_path: ${oc.env:TEST_CHECKPOINT_PATH}
   config: ${oc.env:TEST_CONFIG_PATH,None}
   clip_embeddings_cache: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
+  # Applies to restored legacy configs too; use none to reproduce raw memory.
+  camera_memory_normalization: vocabulary
+  clip_model_name: ${clip.model_name}

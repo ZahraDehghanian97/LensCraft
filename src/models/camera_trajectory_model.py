@@ -33,6 +33,7 @@ class LensCraft(nn.Module):
         latent_dim: int = 512,
         use_merged_memory: bool = False,
         denormalize_memory: bool = False,
+        camera_memory_norms=None,
     ):
         super(LensCraft, self).__init__()
 
@@ -40,20 +41,8 @@ class LensCraft(nn.Module):
         self.decoder_output_dim = self.pos_dim + 9   # 3 pos + 9D (svd9d) rotation matrix
 
         self.num_query_tokens = cinematography_struct_size + simulation_struct_size
-        # Every serialized setup/dynamic/constraint token participates in
-        # decoding. Previously the decoder saw only the ten high-level prompt
-        # tokens, so booleans and speed limits could be reconstructed by the
-        # encoder loss but had no effect on generation.
         self.memory_tokens_count = self.num_query_tokens
 
-        # Transformer cross-attention treats its memory as an unordered set
-        # unless the token's slot is encoded in the value itself.  Structured
-        # fields reuse value embeddings (all booleans share enabled/disabled,
-        # and initial/final setup fields share enum vocabularies), so raw CLIP
-        # tokens cannot tell the decoder which field a value belongs to.  A
-        # deterministic, non-persistent slot code preserves that identity while
-        # keeping old checkpoints loadable (the query-count change still
-        # requires the expected schema migration).
         slot_position = torch.arange(self.num_query_tokens, dtype=torch.float32)
         slot_frequency = torch.exp(
             torch.arange(0, latent_dim, 2, dtype=torch.float32)
@@ -102,6 +91,8 @@ class LensCraft(nn.Module):
 
         self.use_merged_memory = use_merged_memory
         self.denormalize_memory = denormalize_memory
+        self.register_buffer("camera_memory_norms", None, persistent=False)
+        self.set_camera_memory_norms(camera_memory_norms)
         self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
         if self.denormalize_memory:
             self.embedding_means, self.embedding_stds = self.load_means_and_stds()
@@ -113,6 +104,38 @@ class LensCraft(nn.Module):
                 self.memory_feature_types.append("boolean")
             else:
                 self.memory_feature_types.append(value_type.__name__)
+
+    def set_camera_memory_norms(self, norms):
+        """Configure camera-to-decoder calibration; None restores raw memory."""
+        if norms is None:
+            self.camera_memory_norms = None
+            return
+        if self.use_merged_memory or self.denormalize_memory:
+            raise ValueError(
+                "Camera memory calibration requires unmerged, non-denormalized memory; "
+                "use camera_memory_norms=null and inference.camera_memory_normalization=none "
+                "for legacy merged/denormalized checkpoints"
+            )
+        norms = torch.as_tensor(norms, dtype=torch.float32,
+                                device=self.structured_slot_encoding.device).detach().clone()
+        if (norms.shape != (self.num_query_tokens,)
+                or not torch.isfinite(norms).all() or (norms <= 0).any()):
+            raise ValueError(
+                f"camera_memory_norms must contain {self.num_query_tokens} finite positive values"
+            )
+        self.camera_memory_norms = norms
+
+    def _calibrate_camera_memory(self, memory):
+        if self.camera_memory_norms is None:
+            return memory
+        if memory.ndim != 3 or memory.shape[0] != self.num_query_tokens:
+            raise ValueError("Camera memory calibration requires every structured token")
+        values = memory.float()
+        lengths = values.norm(dim=-1, keepdim=True)
+        calibrated = values / lengths.clamp_min(1e-6)
+        calibrated = calibrated * self.camera_memory_norms.float()[:, None, None]
+        calibrated = torch.where(lengths > 1e-6, calibrated, torch.zeros_like(calibrated))
+        return calibrated.to(dtype=memory.dtype)
 
     def _euler6_to_mat12(self, traj6: torch.Tensor) -> torch.Tensor:
         pos = traj6[..., :3]
@@ -178,6 +201,9 @@ class LensCraft(nn.Module):
                 # the statistics of the serialized value.
                 memory = self._add_structured_slot_identity(memory)
             return self._apply_memory_mask(memory, mask_memory_prob)
+
+        if caption_embedding is None or teacher_forcing_ratio < 1.0:
+            camera_embedding = self._calibrate_camera_memory(camera_embedding)
 
         if self.use_merged_memory:
             memory = self._merge_token_memory(camera_embedding)

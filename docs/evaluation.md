@@ -47,6 +47,40 @@ For standalone inference:
 python src/inference.py num_keyframes=4
 ```
 
+### Camera-memory calibration
+
+The default unmerged LensCraft model calibrates encoder token magnitudes to the
+fixed conditioning vocabulary before mixing with caption memory and adding slot
+identity. Categorical targets are mean vocabulary vector norms; numeric Fourier
+targets are `sqrt(embedding_dim / 2)`. No per-sample caption values or presence
+mask are used to determine these scales. Encoder outputs used for semantic and
+cycle alignment remain raw, and caption-only generation is unchanged.
+
+This is enabled for default training and for inference/test, including loading
+an older saved training config. The scales are derived configuration, so legacy
+checkpoint weights still load strictly. Keep `CLIP_EMBEDDINGS_CACHE_DIR` and
+`clip.model_name` consistent with the training vocabulary. The separate merged
+`training=multi` configuration retains its original behavior; applying this
+calibration to merged or denormalized memory fails explicitly.
+
+To reproduce the original uncalibrated generation, use:
+
+```bash
+python src/test.py training.model.inference.camera_memory_normalization=none output_dir=test_results_raw
+```
+
+To evaluate calibrated generation in a separate output directory:
+
+```bash
+python src/test.py training.model.inference.camera_memory_normalization=vocabulary output_dir=test_results_calibrated
+```
+
+For an explicitly uncalibrated new training run, set
+`training.model.module.camera_memory_norms=null`; inference has its own explicit
+override above. Calibration changes no teacher-forcing schedule and does not
+enforce exact keyframe poses. Remaining camera-only errors require separate
+validation and, if needed, changes to training or pose conditioning.
+
 The default is **four visible valid frames**, independent of clip length.
 Evaluation emits separate modes such as `key_framing_k1` and
 `key_framing+prompt_k1`, through K=26. Given the same per-sample seed and valid
@@ -136,6 +170,15 @@ Cache version 6 invalidates results from the former 26/30 default and old
 generator/reference coupling. Replay verifies masks against requested K,
 padding, and deterministic sampling, then recomputes semantic and geometric
 metrics. It never reuses ablated-encoder semantic features.
+
+LensCraft additionally versions its generation protocol for camera-memory
+calibration. Cache identity includes the normalization setting, active
+vocabulary/metadata files, and relevant saved configuration inputs. Calibration
+changes therefore cannot replay the former raw-memory trajectories. Metrics JSON
+records the actual applied per-slot scales under `generation_provenance`;
+semantic/CLaTr evaluator identities remain separate. Use separate result/run
+directories when comparing raw and calibrated generation, and do not resume a
+paper run created from an older source/configuration manifest.
 
 Historical tables must be regenerated with the fixed evaluator and the chosen
 keyframe protocol before being compared to these results.

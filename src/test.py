@@ -417,6 +417,7 @@ def _write_metrics_json(
     dataset_type: str,
     evaluation_provenance: dict | None = None,
     test_sample_counts: dict | None = None,
+    generation_provenance: dict | None = None,
 ) -> None:
     try:
         import json
@@ -468,6 +469,7 @@ def _write_metrics_json(
             "metrics": metrics,
             "bootstrap_std": boot_std,
             "evaluation_provenance": evaluation_provenance or {},
+            "generation_provenance": generation_provenance or {},
         }
 
         tag = model_type
@@ -623,6 +625,17 @@ def main(cfg: DictConfig) -> None:
             "fractional_holdout": data_module.fractional_test_sample_count,
             "cohort": len(data_module.test_dataset),
         },
+        generation_provenance=(
+            {
+                "camera_memory_normalization": (
+                    "fixed_per_slot" if model.camera_memory_norms is not None else "none"
+                ),
+                "camera_memory_norms": (
+                    model.camera_memory_norms.detach().cpu().tolist()
+                    if model.camera_memory_norms is not None else None
+                ),
+            } if model_type == "lens_craft" else None
+        ),
     )
 
     if cfg.tsne:

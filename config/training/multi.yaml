@@ -6,12 +6,14 @@ defaults:
   - lr_scheduler: root_warmup_cosine
   - clip_weights@loss_module.clip_weights: default
 
+model:
+  module:
+    camera_memory_norms: null
+  inference:
+    camera_memory_normalization: none
+
 loss_module:
   _target_: training.losses.losses.CameraTrajectoryLoss
-  # CameraTrajectoryLoss now receives one coefficient per objective term.
-  # Keep the simulation half of multi-dataset training on the same objective
-  # scale as the default trainer; the outer sim/CCDM weights are applied by
-  # MultiDatasetTrainer.
   losses_list:
     clip:             1000
     first_frame:      2
