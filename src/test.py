@@ -416,6 +416,7 @@ def _write_metrics_json(
     model_type: str,
     dataset_type: str,
     evaluation_provenance: dict | None = None,
+    test_sample_counts: dict | None = None,
 ) -> None:
     try:
         import json
@@ -458,6 +459,12 @@ def _write_metrics_json(
             "set": cfg.get("eval_set", None),
             "variant": cfg.get("variant", None),
             "allowed_movement_types": allowed_movement_types,
+            "test_movement_types": (
+                OmegaConf.to_container(cfg.test_movement_types, resolve=True)
+                if cfg.get("test_movement_types") is not None else None
+            ),
+            "test_fraction": cfg.get("test_fraction", 1.0),
+            "test_sample_counts": test_sample_counts or {},
             "metrics": metrics,
             "bootstrap_std": boot_std,
             "evaluation_provenance": evaluation_provenance or {},
@@ -561,8 +568,17 @@ def main(cfg: DictConfig) -> None:
         num_workers=cfg.data.num_workers,
         val_size=cfg.data.val_size,
         test_size=cfg.data.test_size,
+        test_movement_types=cfg.get("test_movement_types"),
+        test_fraction=cfg.get("test_fraction", 1.0),
     )
     data_module.setup()
+    logger.info(
+        "Test samples: %d original holdout, %d after test_fraction=%s, %d in movement cohort",
+        data_module.original_test_sample_count,
+        data_module.fractional_test_sample_count,
+        cfg.get("test_fraction", 1.0),
+        len(data_module.test_dataset),
+    )
     dataset_type: DatasetType = resolve_dataset_type(cfg.data.dataset.config["_target_"])
     test_dataloader = data_module.test_dataloader()
 
@@ -601,6 +617,11 @@ def main(cfg: DictConfig) -> None:
         evaluation_provenance={
             "semantic_evaluator": ref_model.evaluation_provenance,
             "clatr_evaluator": clatr_extractor.evaluation_provenance,
+        },
+        test_sample_counts={
+            "original_holdout": data_module.original_test_sample_count,
+            "fractional_holdout": data_module.fractional_test_sample_count,
+            "cohort": len(data_module.test_dataset),
         },
     )
 

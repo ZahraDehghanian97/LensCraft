@@ -9,6 +9,10 @@ defaults:
 output_dir: ${oc.env:TEST_OUTPUT_DIR,./test_results}
 device: cuda
 tsne: false
+# Filter only the held-out split, preserving the full training/validation inventory.
+test_movement_types: null
+# Select this fraction of the shuffled holdout before movement filtering.
+test_fraction: 1.0
 
 trajectory_cache: true
 trajectory_cache_dir: ${oc.env:TEST_TRAJECTORY_CACHE_DIR,.cache/test_trajectories}
