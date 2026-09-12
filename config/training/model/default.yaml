@@ -15,6 +15,8 @@ module:
   latent_dim: ${clip.latent_dim}
   use_merged_memory: ${training.use_merged_memory}
   denormalize_memory: false
+  # Experimental direct pose/time/presence queries; requires training/finetuning.
+  keyframe_pose_conditioning: false
   camera_memory_norms:
     _target_: data.simulation.memory_norms.vocabulary_memory_norms
     clip_embeddings: ${training.loss_module.clip_embeddings}

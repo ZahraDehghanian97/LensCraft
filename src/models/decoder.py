@@ -11,6 +11,12 @@ class Decoder(nn.Module):
         self.seq_length = seq_length
         self.pos_encoder = PositionalEncoding(latent_dim)
         self.embedding = nn.Linear(output_dim, latent_dim)
+        presence = torch.ones(latent_dim)
+        presence[1::2] = -1
+        self.register_buffer(
+            "known_pose_presence_encoding", presence / latent_dim ** 0.5,
+            persistent=False,
+        )
 
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=latent_dim, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout_rate)
@@ -19,8 +25,10 @@ class Decoder(nn.Module):
 
         self.output_projection = nn.Linear(latent_dim, output_dim)
 
-    def prepare_decoder_inputs_with_positioning(self, decoder_input, subject_embedding, tgt_key_padding_mask=None):
+    def prepare_decoder_inputs_with_positioning(self, decoder_input, subject_embedding, tgt_key_padding_mask=None, known_pose_mask=None):
         embedded = self.embedding(decoder_input)
+        if known_pose_mask is not None:
+            embedded = embedded + known_pose_mask.unsqueeze(-1).to(embedded.dtype) * self.known_pose_presence_encoding.to(embedded)
         embedded = torch.cat([subject_embedding, embedded], dim=1)
         embedded = self.pos_encoder(embedded)
         embedded = embedded.transpose(0, 1)
@@ -33,12 +41,28 @@ class Decoder(nn.Module):
 
         return embedded, tgt_key_padding_mask
 
-    def single_step_decode(self, memory, subject_embedding, tgt_key_padding_mask=None):
+    def single_step_decode(self, memory, subject_embedding, tgt_key_padding_mask=None, known_camera_poses=None, known_pose_mask=None):
         decoder_input = torch.zeros(
             memory.shape[1], self.seq_length, self.output_dim, device=memory.device)
 
+        if known_camera_poses is not None or known_pose_mask is not None:
+            if known_camera_poses is None or known_pose_mask is None:
+                raise ValueError("known_camera_poses and known_pose_mask must be supplied together")
+            if known_camera_poses.shape != decoder_input.shape:
+                raise ValueError(f"known_camera_poses must have shape {tuple(decoder_input.shape)}")
+            if known_pose_mask.shape != decoder_input.shape[:2]:
+                raise ValueError(f"known_pose_mask must have shape {tuple(decoder_input.shape[:2])}")
+            known_pose_mask = known_pose_mask.to(device=memory.device, dtype=torch.bool)
+            if tgt_key_padding_mask is not None:
+                known_pose_mask = known_pose_mask & ~tgt_key_padding_mask.to(device=memory.device, dtype=torch.bool)
+            decoder_input = known_camera_poses.to(
+                device=memory.device, dtype=self.embedding.weight.dtype
+            ).masked_fill(~known_pose_mask.unsqueeze(-1), 0)
+            if not torch.isfinite(decoder_input).all():
+                raise ValueError("Visible camera poses must contain only finite values")
+
         embedded, tgt_key_padding_mask = self.prepare_decoder_inputs_with_positioning(
-            decoder_input, subject_embedding, tgt_key_padding_mask)
+            decoder_input, subject_embedding, tgt_key_padding_mask, known_pose_mask)
 
         output = self.transformer_decoder(
             tgt=embedded, memory=memory, tgt_key_padding_mask=tgt_key_padding_mask)
@@ -86,10 +110,12 @@ class Decoder(nn.Module):
 
         return output_trajectory
 
-    def forward(self, memory, subject_embedding, decode_mode='single_step', target=None, teacher_forcing_ratio=0.0, tgt_key_padding_mask=None, feedback_transform=None):
+    def forward(self, memory, subject_embedding, decode_mode='single_step', target=None, teacher_forcing_ratio=0.0, tgt_key_padding_mask=None, feedback_transform=None, known_camera_poses=None, known_pose_mask=None):
         if decode_mode == 'autoregressive':
+            if known_camera_poses is not None or known_pose_mask is not None:
+                raise ValueError("Keyframe pose conditioning currently supports only decode_mode='single_step'")
             return self.autoregressive_decode(memory, subject_embedding, target, teacher_forcing_ratio, tgt_key_padding_mask, feedback_transform)
         elif decode_mode == 'single_step':
-            return self.single_step_decode(memory, subject_embedding, tgt_key_padding_mask)
+            return self.single_step_decode(memory, subject_embedding, tgt_key_padding_mask, known_camera_poses, known_pose_mask)
         else:
             raise ValueError(f"Unknown decode_mode: {decode_mode}")

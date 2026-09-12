@@ -14,6 +14,8 @@ _OPTIONAL_TRAINING_FIELDS = (
     "use_cycle_consistency",
     "sim_weight",
     "ccdm_weight",
+    "conditioning",
+    "validation_conditioning",
 )
 
 
@@ -102,3 +104,15 @@ def finite_validation_loss(value: Any) -> float:
     if not math.isfinite(result):
         raise RuntimeError(f"Validation loss is not finite: {result}")
     return result
+
+
+def checkpoint_monitor(requested: str, training_config: Any) -> str:
+    """Select the same objective for checkpointing, stopping and sweep return."""
+    if requested != 'auto':
+        if not isinstance(requested, str) or not requested:
+            raise ValueError('checkpoint_monitor must be auto or a logged metric name')
+        return requested
+    validation = _config_value(training_config, 'validation_conditioning')
+    enabled = _config_value(validation, 'enabled') if validation is not _MISSING and validation is not None else False
+    # A present partial configuration uses ConditioningValidation's defaults.
+    return 'val_conditioning_score' if enabled is _MISSING or enabled else 'val_loss'

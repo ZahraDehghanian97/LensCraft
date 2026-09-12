@@ -627,6 +627,7 @@ def main(cfg: DictConfig) -> None:
         },
         generation_provenance=(
             {
+                "keyframe_pose_conditioning": model.keyframe_pose_conditioning,
                 "camera_memory_normalization": (
                     "fixed_per_slot" if model.camera_memory_norms is not None else "none"
                 ),

@@ -15,6 +15,8 @@ loss_module:
     speed:            80     # τ  (L_speed)
     rotation_absolute: 2    # all-frame orientation after SO(3) projection
     rotation_raw:      1    # raw matrices toward proper target rotations
+    keyframe_position: 4   # mean error on supplied valid poses only
+    keyframe_rotation: 2  # SO(3) chordal error on supplied valid poses only
     cycle:            100      # ς  (L_cycle)
     # contrastive:      5
   rotation_weight: 1.0       # scales every rotation term relative to position
@@ -33,12 +35,33 @@ noise:
   initial_std: 1.0
   final_std: 0.0
 
+# Sample one mode per batch. Every family stays active throughout training;
+# keyframe modes use clean supplied frames and the same K values as evaluation.
+conditioning:
+  enabled: true
+  mode_weights:
+    prompt_generation: 1.0
+    reconstruction: 1.0
+    key_framing: 1.0
+    key_framing+prompt: 1.0
+  keyframe_counts: [1, 2, 4, 8, 26]
+
+# Extra mode validation uses a deterministic prefix of the validation loader.
+# Prompt val_loss still covers the full configured validation loader.
+validation_conditioning:
+  enabled: true
+  keyframe_counts: [1, 2, 4, 8, 26]
+  max_batches: 4
+  seed: 42
+  known_pose_weight: 1.0
+
 mask:
   initial_ratio: 0.1
   final_ratio: 0.8
   memory_ratio: 0.0
 
 teacher_forcing_schedule:
+  # Legacy schedule: used only when conditioning.enabled=false.
   memory_initial_ratio: 0.7
   memory_final_ratio: 1.0
   trajectory_initial_ratio: 1.0

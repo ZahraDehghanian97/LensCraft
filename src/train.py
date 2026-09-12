@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import hydra
 from hydra.core.global_hydra import GlobalHydra
 from hydra.utils import instantiate, get_class
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 import lightning as L
 import torch
 from data.datamodule import CameraTrajectoryDataModule
@@ -13,7 +13,9 @@ from data.multi_dataset_module import MultiDatasetModule
 from training.module_factory import (
     build_lightning_init_kwargs,
     finite_validation_loss,
+    checkpoint_monitor,
 )
+from utils.checkpoint import load_checkpoint
 
 load_dotenv()
 
@@ -40,6 +42,15 @@ def main(cfg: DictConfig):
 
     L.seed_everything(cfg.seed)
 
+    monitor = checkpoint_monitor(cfg.get('checkpoint_monitor', 'auto'), cfg.training)
+    with open_dict(cfg):
+        cfg.checkpoint_monitor = monitor
+    initial_checkpoint = cfg.get('initialize_from_checkpoint')
+    resume_checkpoint = cfg.get('resume_checkpoint')
+    empty = (None, '', 'None', 'null')
+    if initial_checkpoint not in empty and resume_checkpoint not in empty:
+        raise ValueError('initialize_from_checkpoint and resume_checkpoint are mutually exclusive')
+
     use_multi_dataset = cfg.data.use_multi_dataset if hasattr(cfg.data, 'use_multi_dataset') else False
 
     if use_multi_dataset:
@@ -63,13 +74,15 @@ def main(cfg: DictConfig):
         )
 
     model = instantiate(cfg.training.model.module)
+    if initial_checkpoint not in empty:
+        model = load_checkpoint(hydra.utils.to_absolute_path(os.path.expanduser(str(initial_checkpoint))), model, torch.device('cpu'))
+        logger.info('Initialized weights for a new run from %s; optimizer and epoch start fresh', initial_checkpoint)
 
     optimizer = instantiate(cfg.training.optimizer)
     lr_scheduler = instantiate(cfg.training.lr_scheduler)
 
     LightningModuleClass = get_class(cfg.training._target_)
 
-    resume_checkpoint = getattr(cfg, "resume_checkpoint", None)
     checkpoint_path = None
     if resume_checkpoint not in (None, "", "None", "null"):
         checkpoint_path = str(resume_checkpoint)
@@ -120,21 +133,21 @@ def main(cfg: DictConfig):
         logger.exception("Error during training: %s", e)
         raise
 
-    validation_loss = trainer.callback_metrics.get("val_loss")
+    validation_loss = trainer.callback_metrics.get(monitor)
     if validation_loss is None:
-        validation_loss = trainer.callback_metrics.get("val_loss_epoch")
+        validation_loss = trainer.callback_metrics.get(f'{monitor}_epoch')
     if validation_loss is None:
         validation_results = trainer.validate(
             lightning_model, datamodule=data_module, verbose=False
         )
         if validation_results:
-            validation_loss = validation_results[0].get("val_loss")
+            validation_loss = validation_results[0].get(monitor)
             if validation_loss is None:
-                validation_loss = validation_results[0].get("val_loss_epoch")
+                validation_loss = validation_results[0].get(f'{monitor}_epoch')
 
     validation_loss = finite_validation_loss(validation_loss)
 
-    logger.info("Sweep objective val_loss: %.8f", validation_loss)
+    logger.info("Sweep objective %s: %.8f", monitor, validation_loss)
     return validation_loss
 
 

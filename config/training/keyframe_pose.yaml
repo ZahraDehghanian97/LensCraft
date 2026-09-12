@@ -1,0 +1,8 @@
+# Optional architecture ablation. Train/fine-tune before judging its quality.
+defaults:
+  - default
+  - _self_
+
+model:
+  module:
+    keyframe_pose_conditioning: true

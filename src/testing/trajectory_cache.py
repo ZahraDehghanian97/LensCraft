@@ -257,7 +257,7 @@ def configured_input_provenance(
         module_prefix = f"{model_prefix}.module"
         if saved_path and str(saved_path) not in ("None", "none", "null"):
             try:
-                resolved_path = Path(resolve_path(str(saved_path)))
+                resolved_path = Path(resolve_path(os.path.expanduser(str(saved_path))))
                 if resolved_path.is_file():
                     from omegaconf import OmegaConf
 
@@ -288,7 +288,9 @@ def configured_input_provenance(
             section, section_prefix
         ):
             try:
-                resolved = resolve_path(str(raw_path))
+                # Match the model loader: a relative-path resolver would
+                # otherwise turn ~/bank.pkl into <cwd>/~/bank.pkl.
+                resolved = resolve_path(os.path.expanduser(str(raw_path)))
                 provenance[label] = stat_path_provenance(
                     resolved, include_globs=include_globs
                 )

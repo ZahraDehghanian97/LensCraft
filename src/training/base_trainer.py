@@ -5,6 +5,7 @@ import lightning as L
 import torch
 
 from utils.augmentation import apply_mask_and_noise, linear_increase
+from training.conditioning import ConditioningPolicy, prepare_conditioning
 
 
 @dataclass
@@ -39,7 +40,8 @@ class BaseTrainer(L.LightningModule):
         compile_mode: str = "default",
         compile_enabled: bool = True,
         use_merged_memory: bool = True,
-        moving_avg_window: int = 10
+        moving_avg_window: int = 10,
+        conditioning: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -53,6 +55,7 @@ class BaseTrainer(L.LightningModule):
         self.compiled = not compile_enabled
         self.loss_module = loss_module
         self.use_merged_memory = use_merged_memory
+        self.conditioning = ConditioningPolicy(**dict(conditioning)) if conditioning is not None else None
 
         self.moving_avg_window = moving_avg_window
         self.metric_history = {"ff": [], "sp": [], "re": [], "cl": [], "cy": [], "co": []}
@@ -103,11 +106,18 @@ class BaseTrainer(L.LightningModule):
         tgt_key_padding_mask: Optional[torch.Tensor],
         is_training: bool = False,
         decode_mode: str = 'single_step',
-        compute_cycle_embeddings: bool = False
+        compute_cycle_embeddings: bool = False,
+        conditioning_mode: Optional[str] = None,
+        keyframe_count: Optional[int] = None,
+        keyframe_sample_seeds=None,
     ) -> Dict[str, torch.Tensor]:
         ratios = self._calculate_schedule_parameters()
 
-        if not is_training and caption_embedding is None:
+        if is_training and conditioning_mode is None and self.conditioning is not None and self.conditioning.enabled:
+            conditioning_mode, keyframe_count = self.conditioning.sample()
+
+        if (caption_embedding is None and (conditioning_mode in ('prompt_generation', 'key_framing+prompt')
+                or (not is_training and conditioning_mode is None))):
             raise ValueError(
                 "Validation/test require caption embeddings for the "
                 "caption-only conditioning path"
@@ -118,7 +128,12 @@ class BaseTrainer(L.LightningModule):
             if tgt_key_padding_mask is not None else None
         )
 
-        if is_training:
+        if conditioning_mode is not None:
+            model_input, src_key_mask, known_mask, memory_ratio = prepare_conditioning(
+                camera_trajectory, tgt_key_padding_mask, conditioning_mode,
+                keyframe_count, keyframe_sample_seeds,
+            )
+        elif is_training:
             model_input, src_key_mask = apply_mask_and_noise(
                 camera_trajectory,
                 valid_len,
@@ -133,34 +148,41 @@ class BaseTrainer(L.LightningModule):
             model_input = camera_trajectory
             src_key_mask = tgt_key_padding_mask
 
+        if conditioning_mode is None:
+            memory_ratio = ratios['memory_teacher_forcing_ratio'] if is_training else 1.0
+            known_mask = torch.zeros(camera_trajectory.shape[:2], dtype=torch.bool, device=camera_trajectory.device)
+
         output = self.model(
             src=model_input,
             subject_trajectory=subject_trajectory,
             subject_volume=subject_volume,
             tgt_key_padding_mask=tgt_key_padding_mask,
             src_key_mask=src_key_mask,
-            target=camera_trajectory,
+            target=camera_trajectory if is_training and conditioning_mode is None else None,
             caption_embedding=caption_embedding,
             # Evaluation must measure the caption-conditioned generator, not
             # a moving blend with an encoding of the ground-truth trajectory.
             # A fixed ratio of one makes validation/test leakage-free and
             # comparable across epochs and Optuna trials.
-            memory_teacher_forcing_ratio=(
-                ratios['memory_teacher_forcing_ratio']
-                if is_training else 1.0
-            ),
+            memory_teacher_forcing_ratio=memory_ratio,
             trajectory_teacher_forcing_ratio=(
                 ratios['trajectory_teacher_forcing_ratio']
-                if is_training else 0.0
+                if is_training and conditioning_mode is None else 0.0
             ),
             mask_memory_prob=(
-                ratios['memory_mask_ratio'] if is_training else 0.0
+                ratios['memory_mask_ratio'] if is_training and conditioning_mode is None else 0.0
             ),
             decode_mode=decode_mode
         )
+        output['known_mask'] = known_mask
+        output['conditioning_mode'] = conditioning_mode or 'scheduled'
+        output['keyframe_count'] = keyframe_count
 
         if compute_cycle_embeddings:
-            if is_training:
+            if conditioning_mode is not None:
+                cycle_key_mask = src_key_mask
+                cycle_input = output['reconstructed'].masked_fill(cycle_key_mask[..., None], 0)
+            elif is_training:
                 cycle_input, cycle_key_mask = apply_mask_and_noise(
                     output["reconstructed"],
                     valid_len,

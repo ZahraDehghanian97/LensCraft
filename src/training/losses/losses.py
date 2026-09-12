@@ -10,6 +10,7 @@ from utils.pytorch3d_transform import euler_angles_to_matrix, symmetric_orthogon
 TRAJECTORY_LOSS_KEYS = (
     "first_frame", "relative", "speed", "rotation_absolute", "rotation_raw"
 )
+KEYFRAME_LOSS_KEYS = ("keyframe_position", "keyframe_rotation")
 
 
 class CameraTrajectoryLoss:
@@ -62,7 +63,8 @@ class CameraTrajectoryLoss:
         self.encoder_loss_function = encoder_loss_function
         self.rotation_weight = rotation_weight
 
-    def __call__(self, model_output, camera_trajectory, clip_target, batch, tgt_key_padding_mask=None):
+    def __call__(self, model_output, camera_trajectory, clip_target, batch,
+                 tgt_key_padding_mask=None, known_mask=None):
         clip_pred = model_output['embeddings']
         cycle_embeddings = model_output.get('cycle_embeddings', None)
 
@@ -78,6 +80,7 @@ class CameraTrajectoryLoss:
             cycle_embeddings,
             tgt_key_padding_mask=tgt_key_padding_mask,
             projected_pred=model_output.get('reconstructed_rot_matrix'),
+            known_mask=(model_output.get('known_mask') if known_mask is None else known_mask),
         )
 
     def _euler_traj_to_matrix(self, traj6):
@@ -90,6 +93,7 @@ class CameraTrajectoryLoss:
     def compute_total_loss(
         self, trajectory_pred, trajectory_target, clip_pred, clip_target, batch,
         cycle_embeddings=None, tgt_key_padding_mask=None, projected_pred=None,
+        known_mask=None,
     ):
         loss_dict = dict()
 
@@ -122,11 +126,13 @@ class CameraTrajectoryLoss:
             loss_dict["cycle"] = trajectory_pred.new_zeros(())
 
 
-        if any(self.losses_list.get(key, 0) for key in TRAJECTORY_LOSS_KEYS):
+        if any(self.losses_list.get(key, 0)
+               for key in TRAJECTORY_LOSS_KEYS + KEYFRAME_LOSS_KEYS):
             loss_dict.update(self.compute_trajectory_losses(
                 trajectory_pred, trajectory_target,
                 tgt_key_padding_mask=tgt_key_padding_mask,
                 projected_pred=projected_pred,
+                known_mask=known_mask,
             ))
 
 
@@ -148,6 +154,7 @@ class CameraTrajectoryLoss:
 
     def compute_trajectory_losses(
         self, pred, target, tgt_key_padding_mask=None, projected_pred=None,
+        known_mask=None,
     ):
         """Return geometry objectives for raw 12-D (position + matrix) outputs.
 
@@ -156,6 +163,14 @@ class CameraTrajectoryLoss:
         cancels in (Q R_i).T @ (Q R_j). Absolute supervision anchors every
         emitted frame, and the raw target term keeps the head near proper
         rotations even when the SO(3) projection is ambiguous.
+
+        ``known_mask`` marks supplied poses, independently of temporal padding.
+        Keyframe terms average over those valid poses only. The rotation term
+        is the mean squared chordal distance between proper SO(3) matrices,
+        ``8 sin(theta / 2)^2 / 9``, scaled by ``rotation_weight``. This avoids
+        the endpoint derivatives of acos; evaluation reports geodesic degrees.
+        These terms are opt-in through losses_list, so old configurations retain
+        their original total objective.
         """
         if pred.ndim != 3 or pred.shape[-1] != 12 or pred.shape != target.shape:
             raise ValueError("Expected matching (batch, frames, 12) trajectories")
@@ -169,6 +184,13 @@ class CameraTrajectoryLoss:
             if tgt_key_padding_mask.shape != pred.shape[:2]:
                 raise ValueError("Padding mask must match (batch, frames)")
             valid = ~tgt_key_padding_mask.to(device=pred.device, dtype=torch.bool)
+        if known_mask is None:
+            known_valid = torch.zeros_like(valid)
+        else:
+            if (not torch.is_tensor(known_mask) or known_mask.dtype != torch.bool
+                    or known_mask.shape != pred.shape[:2]):
+                raise ValueError("known_mask must be a boolean (batch, frames) tensor")
+            known_valid = known_mask.to(device=pred.device) & valid
 
         # Float casts alone do not prevent autocast from reducing precision
         # again in the relative/speed matrix products.
@@ -236,6 +258,8 @@ class CameraTrajectoryLoss:
                 ),
                 "rotation_absolute": rotation_error(R_pred, R_tgt, valid),
                 "rotation_raw": rotation_error(raw_rot, R_tgt, valid),
+                "keyframe_position": position_error(p_pred, p_tgt, known_valid),
+                "keyframe_rotation": rotation_error(R_pred, R_tgt, known_valid),
             }
 
     def compute_trajectory_loss(

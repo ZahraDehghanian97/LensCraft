@@ -10,17 +10,19 @@ defaults:
 seed: 42
 patience: 20
 resume_checkpoint: None
+initialize_from_checkpoint: null
+checkpoint_monitor: auto
 
 callbacks:
   early_stopping:
     _target_: lightning.pytorch.callbacks.EarlyStopping
-    monitor: val_loss
+    monitor: ${checkpoint_monitor}
     patience: ${patience}
     mode: min
   val_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
-    monitor: val_loss
-    filename: best-val-model-{epoch:03d}-{val_loss:.3f}
+    monitor: ${checkpoint_monitor}
+    filename: best-val-model-{epoch:03d}-{${checkpoint_monitor}:.3f}
     save_top_k: 1
     mode: min
   train_checkpoint:

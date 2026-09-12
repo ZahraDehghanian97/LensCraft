@@ -34,6 +34,7 @@ class LensCraft(nn.Module):
         use_merged_memory: bool = False,
         denormalize_memory: bool = False,
         camera_memory_norms=None,
+        keyframe_pose_conditioning: bool = False,
     ):
         super(LensCraft, self).__init__()
 
@@ -91,6 +92,7 @@ class LensCraft(nn.Module):
 
         self.use_merged_memory = use_merged_memory
         self.denormalize_memory = denormalize_memory
+        self.keyframe_pose_conditioning = keyframe_pose_conditioning
         self.register_buffer("camera_memory_norms", None, persistent=False)
         self.set_camera_memory_norms(camera_memory_norms)
         self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
@@ -157,6 +159,29 @@ class LensCraft(nn.Module):
         if target is None:
             return None
         return self._euler6_to_mat12(target)
+
+    def _known_camera_pose_inputs(self, src, camera_source_mask, caption_embedding, memory_ratio):
+        """Expose only supplied visible camera poses to the optional query path."""
+        if not self.keyframe_pose_conditioning or (
+            caption_embedding is not None and memory_ratio >= 1.0
+        ):
+            return {}
+        known_mask = torch.ones(src.shape[:2], device=src.device, dtype=torch.bool)
+        if camera_source_mask is not None:
+            if camera_source_mask.shape != src.shape[:2]:
+                raise ValueError("Camera source mask must match the source batch and frame dimensions")
+            known_mask = ~camera_source_mask.to(device=src.device, dtype=torch.bool)
+        # Sanitize BEFORE rotation conversion as hidden poses may contain NaN.
+        supplied = src.masked_fill(~known_mask.unsqueeze(-1), 0)
+        poses = self._euler6_to_mat12(supplied).masked_fill(~known_mask.unsqueeze(-1), 0)
+        return {"known_camera_poses": poses, "known_pose_mask": known_mask}
+
+    def _validate_pose_decode_mode(self, decode_mode):
+        if self.keyframe_pose_conditioning and decode_mode != "single_step":
+            raise ValueError(
+                "keyframe_pose_conditioning currently supports only decode_mode='single_step'; "
+                "disable the experiment for autoregressive decoding"
+            )
 
     def _prepare_subject_inputs(
         self, reference, subject_trajectory, subject_volume
@@ -315,9 +340,14 @@ class LensCraft(nn.Module):
         mask_memory_prob: float = 0.0,
         decode_mode: str = 'single_step',
     ) -> Dict[str, torch.Tensor]:
+        self._validate_pose_decode_mode(decode_mode)
         subject_trajectory, subject_volume = self._prepare_subject_inputs(
             src, subject_trajectory, subject_volume
         )
+        if self.keyframe_pose_conditioning and tgt_key_padding_mask is not None:
+            subject_trajectory = subject_trajectory.masked_fill(
+                tgt_key_padding_mask.to(device=subject_trajectory.device, dtype=torch.bool).unsqueeze(-1), 0
+            )
         subject_trajectory_embedding = self.subject_trajectory_projection(
             subject_trajectory
         )
@@ -341,8 +371,16 @@ class LensCraft(nn.Module):
                 ) | padding_mask
             )
 
+        pose_inputs = self._known_camera_pose_inputs(
+            src, camera_source_mask, caption_embedding, memory_teacher_forcing_ratio
+        )
+        encoder_src = src
+        if self.keyframe_pose_conditioning and camera_source_mask is not None:
+            encoder_src = src.masked_fill(
+                camera_source_mask.to(device=src.device, dtype=torch.bool).unsqueeze(-1), 0
+            )
         camera_embedding = self.encoder(
-            src,
+            encoder_src,
             subject_embedding,
             camera_source_mask,
             subject_key_padding_mask=tgt_key_padding_mask,
@@ -359,10 +397,11 @@ class LensCraft(nn.Module):
             memory=memory,
             subject_embedding=subject_embedding,
             decode_mode=decode_mode,
-            target=self._encode_target_for_decoder(target),
+            target=(None if self.keyframe_pose_conditioning else self._encode_target_for_decoder(target)),
             teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
             tgt_key_padding_mask=tgt_key_padding_mask,
             feedback_transform=self._project_svd9d,
+            **pose_inputs,
         )
         reconstructed, recon_matrix = self._finalize_trajectory(reconstructed_raw)
 
@@ -376,6 +415,10 @@ class LensCraft(nn.Module):
 
         if self.use_merged_memory:
             output['cls_embedding'] = memory[0]
+        if self.keyframe_pose_conditioning:
+            output['known_pose_mask'] = pose_inputs.get(
+                'known_pose_mask', torch.zeros(src.shape[:2], device=src.device, dtype=torch.bool)
+            )
 
         return output
 
@@ -391,6 +434,7 @@ class LensCraft(nn.Module):
         padding_mask: Optional[torch.Tensor] = None,
         decode_mode: str = 'single_step'
     ) -> Dict[str, torch.Tensor]:
+        self._validate_pose_decode_mode(decode_mode)
         with torch.no_grad():
             device = next(self.parameters()).device
 
@@ -444,6 +488,10 @@ class LensCraft(nn.Module):
 
             # If there is no camera trajectory, use only the decoder
             else:
+                if self.keyframe_pose_conditioning and padding_mask is not None:
+                    subject_trajectory = subject_trajectory.masked_fill(
+                        padding_mask.to(dtype=torch.bool).unsqueeze(-1), 0
+                    )
                 subject_trajectory_embedding = self.subject_trajectory_projection(
                     subject_trajectory
                 )
@@ -469,11 +517,16 @@ class LensCraft(nn.Module):
                 )
                 reconstructed, recon_matrix = self._finalize_trajectory(reconstructed_raw)
 
-                return {
+                output = {
                     'reconstructed': reconstructed,
                     'reconstructed_raw_matrix': reconstructed_raw,
                     'reconstructed_rot_matrix': recon_matrix,
                 }
+                if self.keyframe_pose_conditioning:
+                    output['known_pose_mask'] = torch.zeros(
+                        reconstructed.shape[:2], device=reconstructed.device, dtype=torch.bool
+                    )
+                return output
 
 
     def embed_trajectory(

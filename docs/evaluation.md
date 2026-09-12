@@ -77,9 +77,95 @@ python src/test.py training.model.inference.camera_memory_normalization=vocabula
 
 For an explicitly uncalibrated new training run, set
 `training.model.module.camera_memory_norms=null`; inference has its own explicit
-override above. Calibration changes no teacher-forcing schedule and does not
-enforce exact keyframe poses. Remaining camera-only errors require separate
-validation and, if needed, changes to training or pose conditioning.
+override above. Calibration itself does not enforce exact keyframe poses.
+
+### Training and validation of conditioning modes
+
+Default simulation training now samples one of four families per batch:
+`prompt_generation`, `reconstruction`, `key_framing`, and `key_framing+prompt`.
+Their default weights are equal and stay active throughout training. Keyframe
+batches sample K uniformly from `[1,2,4,8,26]`, capped by valid sequence length.
+Observed frames are clean; unobserved camera values are zeroed and masked.
+Caption-memory ratios are respectively 1, 0, 0, and 0.5. Explicit mode training
+uses no trajectory teacher forcing or memory dropout. The former noise/mask/text
+ratio schedules apply only when `training.conditioning.enabled=false` (or when
+loading a legacy trainer config without this policy).
+
+The loss receives the actual `known_mask`. `keyframe_position` is the mean of
+`||Δposition||²/3` over known valid frames; `keyframe_rotation` is the mean of
+`||R−R_target||²_F/9` over the same frames, multiplied by `rotation_weight`.
+Their default coefficients are 4 and 2 and
+are configurable. An empty known set contributes a differentiable zero; hidden
+and padded frames do not enter these terms. Existing whole-trajectory losses
+continue to supervise motion between supplied poses. The new coefficients and
+equal mode probabilities are explicit starting settings, not tuned optima.
+
+Validation still computes prompt `val_loss` over the configured validation
+loader. In addition, a deterministic prefix (default first four batches per
+rank) evaluates prompt, reconstruction and both keyframe modes at every
+configured K. All components of `val_conditioning_score`, including prompt,
+use this same prefix; the full-loader prompt `val_loss` remains separate.
+Dedicated sampling seeds keep these masks fixed across epochs without changing
+training RNG. Set `training.validation_conditioning.max_batches` to control
+cost. Changing batch size/rank layout changes that prefix; use the same setup
+for model comparisons. Distributed totals aggregate sums/counts before means.
+
+Metrics under `val_conditioning/<mode>/` report normalized position error,
+SO(3) angle in degrees, known/hidden frame errors, adjacent position-step error,
+and step error across known/hidden boundaries, with eligibility counts. These
+position values use model-normalized coordinates, unlike the denormalized world
+units in final paper evaluation. A step error is displacement residual per
+sampled frame, not physical speed. Nonfinite valid poses fail validation.
+
+`checkpoint_monitor=auto` selects `val_conditioning_score` whenever this extra
+validation is enabled; otherwise it selects legacy `val_loss`. Checkpointing,
+early stopping and the returned sweep objective use the same selected metric.
+The score averages four equally weighted families. Each case contributes
+`mean_position_error_normalized + mean_rotation_error_deg/180`; keyframe cases
+also add `known_pose_weight * (known_position_error_normalized +
+known_rotation_error_deg/180)` (default weight 1). K cases are averaged within
+their family first, so adding K values does not multiply that family's weight.
+The score is a declared selection criterion, not CLaTr or a physical-unit sum.
+The independent CLaTr evaluator remains fixed for paper evaluation.
+
+The merged `training=multi` configuration retains its legacy training/validation
+policy. To reproduce the previous default trainer policy explicitly, disable
+both `training.conditioning.enabled` and `training.validation_conditioning.enabled`;
+`checkpoint_monitor=auto` then chooses `val_loss`.
+
+### Fine-tuning and optional direct pose inputs
+
+Use `initialize_from_checkpoint` to start a new optimizer/schedule/epoch history
+from existing model weights. `resume_checkpoint` restores an interrupted run's
+optimizer and epoch state instead; the two arguments cannot be combined.
+For a short, separately named fine-tuning experiment after setting the dataset
+and vocabulary environment variables:
+
+```bash
+python src/train.py 'initialize_from_checkpoint="/path/to/generator.ckpt"' trainer.max_epochs=20 training.optimizer.lr=0.00001 'training.lr_scheduler.base_lr=[0.00003]' hydra.run.dir=outputs/keyframe_finetune
+```
+
+An optional architecture ablation passes visible poses, frame positions and
+presence markers directly into single-step decoder queries:
+
+```bash
+python src/train.py training=keyframe_pose 'initialize_from_checkpoint="/path/to/generator.ckpt"' trainer.max_epochs=20 training.optimizer.lr=0.00001 'training.lr_scheduler.base_lr=[0.00003]' hydra.run.dir=outputs/keyframe_pose_finetune
+```
+
+Keep both layers of quotation around the checkpoint override when its filename
+contains `=` (as in `best-val-model-epoch=099-val_loss=19.684.ckpt`).
+
+`training=keyframe_pose` enables `training.model.module.keyframe_pose_conditioning`; the
+default is false. It reuses the existing pose-input projection and adds a fixed
+presence code, so strict legacy weight loading remains possible. Masked/padded
+source values and target trajectories do not enter this path. Caption-only
+generation disables pose inputs. Predictions are not hard-copied from supplied
+poses; evaluate both supplied-frame error and boundary smoothness. This option
+currently supports only `single_step` and requires training/fine-tuning before
+judging quality. When evaluating its checkpoint, point `TEST_CONFIG_PATH` at
+that run's saved config so the pose-conditioning flag is restored.
+
+Neither command above is started automatically by editing the configuration.
 
 The default is **four visible valid frames**, independent of clip length.
 Evaluation emits separate modes such as `key_framing_k1` and
