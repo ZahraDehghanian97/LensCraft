@@ -1,7 +1,5 @@
 import torch
 
-from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
-from data.convertor.convertor import convert_to_target
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import structured_conditioning_from_batch
 from data.sim_format import (
@@ -11,6 +9,7 @@ from data.sim_format import (
     build_keyframing_mask,
     to_simulation_format,
 )
+from generation import generate_baseline_trajectory, generate_lenscraft_trajectory
 from utils.device import move_batch_to_device
 
 _KEYFRAMING_MODES = {"key_framing", "key_framing+prompt"}
@@ -28,43 +27,15 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         if dataset_type in ("simulation", "et") else None
     )
 
-    sim_camera, sim_subject, sim_volume, sim_padding = to_simulation_format(
+    view = to_simulation_format(
         batch, dataset_type, target_len=seq_length
     )
+    sim_camera, sim_subject, sim_volume, sim_padding = view
 
     if model_type in ("ccdm", "et", "gendop"):
-        et_scene_origin = et_scene_scale = None
-        if model_type == "et" and dataset_type in ("simulation", "lens_craft"):
-            aligned_camera, aligned_subject, aligned_volume, et_scene_origin, et_scene_scale = (
-                recenter_rescale_sim(
-                    batch["camera_trajectory"], batch["subject_trajectory"],
-                    batch["subject_volume"],
-                )
-            )
-            trajectory, subject_trajectory, _, padding_mask = convert_to_target(
-                "simulation", "et",
-                aligned_camera, aligned_subject, aligned_volume,
-                batch["padding_mask"], seq_length,
-                need_denormal=False,
-            )
-        else:
-            trajectory, subject_trajectory, _, padding_mask = convert_to_target(
-                dataset_type, model_type,
-                batch["camera_trajectory"], batch["subject_trajectory"],
-                batch["subject_volume"], batch["padding_mask"], seq_length,
-            )
-        generated = model.generate_using_text(
-            batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
-        )
-        gen_padding_mask = None if model_type in ("ccdm", "gendop") else padding_mask
-        sim_generated, *_ = convert_to_target(
-            model_type, "simulation", generated, None, None,
-            gen_padding_mask, generated.shape[1],
-            valid_target_len=(
-                (~gen_padding_mask).sum(dim=1)
-                if gen_padding_mask is not None else None
-            ),
-            need_denormal=False, need_normal=False,
+        sim_generated, _ = generate_baseline_trajectory(
+            model, batch, dataset_type, model_type, seq_length,
+            align_et_scene=(model_type == "et" and dataset_type in ("simulation", "lens_craft")),
         )
         if sim_camera.shape[1] != sim_generated.shape[1]:
             sim_camera, sim_subject, sim_volume, sim_padding = to_simulation_format(
@@ -75,10 +46,6 @@ def inference_batch(model, batch, device, dataset_type="simulation",
                 sim_camera, sim_subject, None, False
             )
             sim_generated[..., :3] += subject_denorm[..., :3]
-        if et_scene_origin is not None:
-            sim_generated = undo_recenter_rescale(
-                sim_generated, et_scene_origin, et_scene_scale
-            )
         return ({"prompt_generation": sim_generated},
                 sim_camera, sim_subject, sim_volume, sim_padding, None)
 
@@ -112,14 +79,8 @@ def inference_batch(model, batch, device, dataset_type="simulation",
                         for idx in batch["random_prompt_index"]]
             mode_caption = torch.stack(shuffled, dim=1).to(device)
 
-        results[mode] = model.generate_camera_trajectory(
-            subject_trajectory=sim_subject,
-            subject_volume=sim_volume,
-            camera_trajectory=sim_camera,
-            src_key_mask=source_mask,
-            padding_mask=sim_padding,
-            memory_teacher_forcing_ratio=MEMORY_TEACHER_FORCING_BY_MODE[mode],
-            caption_embedding=mode_caption,
-        )["reconstructed"]
+        results[mode] = generate_lenscraft_trajectory(
+            model, view, source_mask, mode_caption, MEMORY_TEACHER_FORCING_BY_MODE[mode],
+        )
 
     return results, sim_camera, sim_subject, sim_volume, sim_padding, keyframing_mask

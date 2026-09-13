@@ -41,27 +41,35 @@ class CameraTrajectoryLoss:
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.embedding_means = load_clip_means()
-
-        self.contrastive_loss = ContrastiveLoss(
-            clip_embeddings=clip_embeddings,
-            device=self.device,
-            embedding_means=self.embedding_means,
-            get_embedding_name_func=clip_embedding_name
-        )
-
+        self.embedding_means = None
+        self.contrastive_loss = None
         self.contrastive_loss_version = contrastive_loss_version
-        if self.contrastive_loss_version == 1:
-            self.compute_contrastive_loss = self.contrastive_loss.compute_v1
-        elif self.contrastive_loss_version == 2:
-            self.compute_contrastive_loss = self.contrastive_loss.compute_v2
-        elif self.contrastive_loss_version == 3:
-            self.compute_contrastive_loss = self.contrastive_loss.compute_v3
-        else:
-            raise ValueError(f"Contrastive loss version should be 1 or 2, you passed {self.contrastive_loss_version}")
+        if self.contrastive_loss_version not in (1, 2, 3):
+            raise ValueError(f"Contrastive loss version should be 1, 2 or 3, you passed {self.contrastive_loss_version}")
+        if self.losses_list.get("contrastive", 0):
+            self._initialize_contrastive_loss()
 
         self.encoder_loss_function = encoder_loss_function
         self.rotation_weight = rotation_weight
+
+    def _initialize_contrastive_loss(self):
+        self.embedding_means = load_clip_means()
+        self.contrastive_loss = ContrastiveLoss(
+            clip_embeddings=self.clip_embeddings,
+            device=self.device,
+            embedding_means=self.embedding_means,
+            get_embedding_name_func=clip_embedding_name,
+        )
+        self._compute_contrastive = {
+            1: self.contrastive_loss.compute_v1,
+            2: self.contrastive_loss.compute_v2,
+            3: self.contrastive_loss.compute_v3,
+        }[self.contrastive_loss_version]
+
+    def compute_contrastive_loss(self, clip_pred, clip_target, batch):
+        if self.contrastive_loss is None:
+            self._initialize_contrastive_loss()
+        return self._compute_contrastive(clip_pred, clip_target, batch)
 
     def __call__(self, model_output, camera_trajectory, clip_target, batch,
                  tgt_key_padding_mask=None, known_mask=None):

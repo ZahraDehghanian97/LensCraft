@@ -106,39 +106,16 @@ def _cache_has_current_vocabulary(
     )
 
 
-def _statistics_match_embeddings(
-    embeddings: Dict[str, Any],
-    means: Any,
-    stds: Any,
-    embedding_dimension: int,
-) -> bool:
-    """Validate cached moments against every current cached embedding."""
-
-    if not isinstance(means, dict) or not isinstance(stds, dict):
+def _statistics_match(cached: Any, expected: dict) -> bool:
+    if not isinstance(cached, dict) or set(cached) != set(expected):
         return False
-    expected_types = set(embeddings)
-    if set(means) != expected_types or set(stds) != expected_types:
-        return False
-
     try:
-        expected_means = calc_embedding_mean(embeddings, embedding_dimension)
-        expected_stds = calc_embedding_std(
-            embeddings, expected_means, embedding_dimension
-        )
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        return False
-
-    try:
-        for parameter_type in expected_types:
-            cached_mean = _as_numpy_vector(means[parameter_type])
-            cached_std = _as_numpy_vector(stds[parameter_type])
+        for key, expected_vector in expected.items():
+            vector = _as_numpy_vector(cached[key])
             if (
-                cached_mean.shape != (embedding_dimension,)
-                or cached_std.shape != (embedding_dimension,)
-                or not np.isfinite(cached_mean).all()
-                or not np.isfinite(cached_std).all()
-                or not np.allclose(cached_mean, expected_means[parameter_type])
-                or not np.allclose(cached_std, expected_stds[parameter_type])
+                vector.shape != expected_vector.shape
+                or not np.isfinite(vector).all()
+                or not np.allclose(vector, expected_vector)
             ):
                 return False
     except (RuntimeError, TypeError, ValueError):
@@ -231,7 +208,6 @@ def initialize_all_clip_embeddings(
         os.makedirs(cache_dir, exist_ok=True)
         
     embeddings = None
-    embeddings_rebuilt = False
     try:
         with open(cache_file, 'rb') as f:
             print(f"Loading CLIP embeddings from cache: {cache_file}")
@@ -250,8 +226,8 @@ def initialize_all_clip_embeddings(
     except (FileNotFoundError, pickle.UnpicklingError, EOFError):
         embeddings = None
 
-    if embeddings is None:
-        embeddings_rebuilt = True
+    embeddings_rebuilt = embeddings is None
+    if embeddings_rebuilt:
         print("Generating new CLIP embeddings...")
 
         embedder = _create_clip_embedder(clip_model_name, chunk_size)
@@ -297,24 +273,23 @@ def initialize_all_clip_embeddings(
 
         print(f"Saved CLIP embeddings to cache: {cache_file}")
 
-    means = None
-    stds = None
+    # Normal mode already writes freshly computed statistics while normalizing.
+    if embedding_mode == "normal":
+        return normalize_embeddings(embeddings, embedding_dimension)
+
+    means = calc_embedding_mean(embeddings, embedding_dimension)
+    stds = calc_embedding_std(embeddings, means, embedding_dimension)
     if not embeddings_rebuilt:
         try:
             with open("embedding_means.pkl", "rb") as file:
-                means = pickle.load(file)
+                cached_means = pickle.load(file)
             with open("embedding_stds.pkl", "rb") as file:
-                stds = pickle.load(file)
+                cached_stds = pickle.load(file)
         except (OSError, pickle.UnpicklingError, EOFError):
-            means = None
-            stds = None
-    if embeddings_rebuilt or not _statistics_match_embeddings(
-        embeddings, means, stds, embedding_dimension
-    ):
-        generate_mean_stds(embeddings, embedding_dimension)
+            cached_means = cached_stds = None
+        if _statistics_match(cached_means, means) and _statistics_match(cached_stds, stds):
+            return embeddings
 
-    if embedding_mode == "default":
-        return embeddings
-    if embedding_mode == "normal":
-        return normalize_embeddings(embeddings, embedding_dimension)
-    raise AssertionError("embedding_mode validation and dispatch disagree")
+    # Reuse the moments computed for validation when a sidecar needs replacing.
+    save_means_and_stds(means, stds)
+    return embeddings

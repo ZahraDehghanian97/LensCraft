@@ -4,14 +4,13 @@ import logging
 from dotenv import load_dotenv
 import hydra
 from hydra.core.global_hydra import GlobalHydra
-from hydra.utils import instantiate, get_class
+from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf, open_dict
 import lightning as L
 import torch
 from data.datamodule import CameraTrajectoryDataModule
 from data.multi_dataset_module import MultiDatasetModule
 from training.module_factory import (
-    build_lightning_init_kwargs,
     finite_validation_loss,
     checkpoint_monitor,
 )
@@ -81,41 +80,24 @@ def main(cfg: DictConfig):
     optimizer = instantiate(cfg.training.optimizer)
     lr_scheduler = instantiate(cfg.training.lr_scheduler)
 
-    LightningModuleClass = get_class(cfg.training._target_)
-
     checkpoint_path = None
-    if resume_checkpoint not in (None, "", "None", "null"):
+    if resume_checkpoint not in empty:
         checkpoint_path = str(resume_checkpoint)
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
-        logger.info(f"Loading model from checkpoint: {checkpoint_path}")
+        logger.info("Resuming training from checkpoint: %s", checkpoint_path)
 
-        loss_module = instantiate(cfg.training.loss_module)
-        init_kwargs = build_lightning_init_kwargs(
-            LightningModuleClass,
-            cfg.training,
-            model=model,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            loss_module=loss_module,
-            compile_mode=cfg.compile.mode,
-            compile_enabled=cfg.compile.enabled,
-            dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
-        )
-        lightning_model = LightningModuleClass.load_from_checkpoint(
-            checkpoint_path, map_location="cpu", **init_kwargs
-        )
-        logger.info("Checkpoint loaded successfully")
-    else:
-        lightning_model = instantiate(
-            cfg.training,
-            model=model,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            compile_mode=cfg.compile.mode,
-            compile_enabled=cfg.compile.enabled,
-            dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
-        )
+    # Keep current training options in both cases; fit restores all checkpoint
+    # state after setup, including any torch.compile wrapping of the model.
+    lightning_model = instantiate(
+        cfg.training,
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        compile_mode=cfg.compile.mode,
+        compile_enabled=cfg.compile.enabled,
+        dataset_mode=getattr(data_module, 'dataset_mode', 'simulation'),
+    )
 
     callbacks = [instantiate(cb_conf) for cb_conf in cfg.callbacks.values()]
 

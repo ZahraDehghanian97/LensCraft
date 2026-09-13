@@ -2,7 +2,6 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
-from data.convertor.alignment import recenter_rescale_sim, undo_recenter_rescale
 from data.convertor.convertor import convert_to_target
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import structured_conditioning_from_batch
@@ -11,6 +10,7 @@ from data.sim_format import (
     build_keyframing_mask,
     to_simulation_format,
 )
+from generation import generate_baseline_trajectory, generate_lenscraft_trajectory
 from testing.baseline_modes import (
     NO_NORM_ITEM,
     NORM_ITEM,
@@ -86,26 +86,6 @@ def _align_structured_metric_target(
     )
 
 
-def _to_sim_space(model_type: str, generated: torch.Tensor,
-                  gen_padding_mask: Optional[torch.Tensor]) -> torch.Tensor:
-    sim_generated, *_ = convert_to_target(
-        model_type,
-        "simulation",
-        generated,
-        None,
-        None,
-        gen_padding_mask,
-        generated.shape[1],
-        valid_target_len=(
-            (~gen_padding_mask).sum(dim=1)
-            if gen_padding_mask is not None else None
-        ),
-        need_denormal=False,
-        need_normal=False,
-    )
-    return sim_generated
-
-
 def _lenscraft_first_position(
     ref_model,
     batch: Dict[str, Any],
@@ -175,32 +155,10 @@ def _generate_baseline_variants(
 
     if et_on_sim:
         if need_norm:
-            (
-                aligned_camera,
-                aligned_subject,
-                aligned_volume,
-                et_scene_origin,
-                et_scene_scale,
-            ) = recenter_rescale_sim(
-                batch["camera_trajectory"],
-                batch["subject_trajectory"],
-                batch["subject_volume"],
+            sim_gen, pad_n = generate_baseline_trajectory(
+                model, batch, dataset_type, model_type, seq_length,
+                align_et_scene=True, **generation_kwargs,
             )
-            traj_n, subj_n, _, pad_n = convert_to_target(
-                "simulation",
-                "et",
-                aligned_camera,
-                aligned_subject,
-                aligned_volume,
-                batch["padding_mask"],
-                seq_length,
-                need_denormal=False,
-            )
-            gen_norm = model.generate_using_text(
-                batch["text_prompts"], subj_n, traj_n, pad_n, **generation_kwargs
-            )
-            sim_gen = _to_sim_space("et", gen_norm, pad_n)
-            sim_gen = undo_recenter_rescale(sim_gen, et_scene_origin, et_scene_scale)
             sim_gen, _, _ = SimulationDataset.normalize_item(sim_gen, None, None, True)
             normalized_trajectory = sim_gen
             if want_norm:
@@ -208,19 +166,9 @@ def _generate_baseline_variants(
                 record_padding(NORM_ITEM, pad_n, normalized_trajectory)
 
         if want_no_norm:
-            traj_r, subj_r, _, pad_r = convert_to_target(
-                "simulation",
-                "et",
-                batch["camera_trajectory"],
-                batch["subject_trajectory"],
-                batch["subject_volume"],
-                batch["padding_mask"],
-                seq_length,
+            sim_gen, pad_r = generate_baseline_trajectory(
+                model, batch, "simulation", model_type, seq_length, **generation_kwargs,
             )
-            gen_raw = model.generate_using_text(
-                batch["text_prompts"], subj_r, traj_r, pad_r, **generation_kwargs
-            )
-            sim_gen = _to_sim_space("et", gen_raw, pad_r)
             variant_trajectories[NO_NORM_ITEM] = sim_gen
             record_padding(NO_NORM_ITEM, pad_r, sim_gen)
 
@@ -239,27 +187,9 @@ def _generate_baseline_variants(
 
         return variant_trajectories
 
-    (
-        trajectory,
-        subject_trajectory,
-        subject_volume,
-        padding_mask,
-    ) = convert_to_target(
-        dataset_type,
-        model_type,
-        batch["camera_trajectory"],
-        batch["subject_trajectory"],
-        batch["subject_volume"],
-        batch["padding_mask"],
-        seq_length,
+    sim_generated, gen_padding_mask = generate_baseline_trajectory(
+        model, batch, dataset_type, model_type, seq_length, **generation_kwargs,
     )
-    generated = model.generate_using_text(
-        batch["text_prompts"], subject_trajectory, trajectory, padding_mask,
-        **generation_kwargs,
-    )
-
-    gen_padding_mask = None if model_type in ("ccdm", "gendop") else padding_mask
-    sim_generated = _to_sim_space(model_type, generated, gen_padding_mask)
 
     if need_norm:
         aligned = sim_generated.clone()
@@ -541,16 +471,9 @@ def test_batch(
         source_mask = masks_by_count[count] if count is not None else padding
 
         if cached_outputs is None:
-            model_output = model.generate_camera_trajectory(
-                subject_trajectory=subject,
-                subject_volume=volume,
-                camera_trajectory=camera,
-                src_key_mask=source_mask,
-                padding_mask=padding,
-                memory_teacher_forcing_ratio=memory_teacher_forcing_ratio,
-                caption_embedding=caption_embedding,
+            sim_generated_trajectory = generate_lenscraft_trajectory(
+                model, generation_view, source_mask, caption_embedding, memory_teacher_forcing_ratio,
             )
-            sim_generated_trajectory = model_output["reconstructed"]
         else:
             item_output = cached_outputs["items"][metric_item]
             sim_generated_trajectory = item_output["trajectory"].to(device)
