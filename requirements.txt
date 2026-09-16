@@ -33,5 +33,6 @@ viser>=1.1,<2
 git+https://github.com/openai/CLIP.git
 
 openai
+pydantic>=2,<3
 ema_pytorch
 hydra-joblib-launcher==1.2.0
