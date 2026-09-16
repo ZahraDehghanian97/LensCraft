@@ -543,8 +543,27 @@ def run_models(sample, models=("lens_craft",), mode="prompt_generation", keyfram
     return repository.generate(sample, models, mode, keyframes, seed=seed, device=device)
 
 
-def make_demo() -> ComparisonSample:
-    """Deterministic illustrative paths, explicitly marked as synthetic examples."""
+def _demo_look_at(positions, targets):
+    """OpenCV camera-to-world poses looking at a target in the Y-up scene."""
+    forward = targets - positions
+    forward /= np.linalg.norm(forward, axis=1, keepdims=True)
+    right = np.cross(forward, [0, 1, 0])
+    right /= np.linalg.norm(right, axis=1, keepdims=True)
+    down = np.cross(forward, right)
+    poses = np.tile(np.eye(4, dtype=np.float32), (len(positions), 1, 1))
+    poses[:, :3, :3] = np.stack((right, down, forward), axis=-1)
+    poses[:, :3, 3] = positions
+    return poses
+
+
+def make_demo(subject_mode: str | None = None) -> ComparisonSample:
+    """Return a synthetic example; no argument preserves the original walking orbit.
+
+    Use ``subject_mode="static"`` or ``"dynamic"`` for the first example in the
+    corresponding collection, or :func:`make_demo_suite` for all movements.
+    """
+    if subject_mode is not None:
+        return make_demo_suite(subject_mode)[0]
     count = 60
     time = np.linspace(0, 1, count)
     subject = np.tile(np.eye(4, dtype=np.float32), (count, 1, 1))
@@ -553,15 +572,7 @@ def make_demo() -> ComparisonSample:
     position = subject[:, :3, 3] + np.column_stack((4 * np.sin(angle), 1.1 + 0.35 * time, 4 * np.cos(angle)))
 
     def look_at(positions):
-        forward = subject[:, :3, 3] - positions
-        forward /= np.linalg.norm(forward, axis=1, keepdims=True)
-        right = np.cross(forward, [0, 1, 0])
-        right /= np.linalg.norm(right, axis=1, keepdims=True)
-        down = np.cross(forward, right)
-        poses = np.tile(np.eye(4, dtype=np.float32), (count, 1, 1))
-        poses[:, :3, :3] = np.stack((right, down, forward), axis=-1)
-        poses[:, :3, 3] = positions
-        return poses
+        return _demo_look_at(positions, subject[:, :3, 3])
 
     variants = {"GT": look_at(position), "Demo A": look_at(position + np.column_stack((0.08 * np.sin(3 * np.pi * time), 0.05 * np.sin(np.pi * time), 0.06 * time))),
                 "Demo B": look_at(position + np.column_stack((0.7 * time, 0.3 * np.sin(time * np.pi), -0.5 * time)))}
@@ -569,3 +580,93 @@ def make_demo() -> ComparisonSample:
         subject, np.array([0.5, 1.7, 0.35]), [0, 20, 40, 59],
         {"demo": True, "notice": "Synthetic illustration — these paths are not model predictions.",
          "keyframe_source": "GT", "keyframes_illustrative": True})
+
+
+def make_demo_suite(subject_mode: str = "static") -> list[ComparisonSample]:
+    """Build deterministic static- or moving-subject camera examples using NumPy.
+
+    Every sample contains a reference and two illustrative alternatives, never
+    model predictions. Pan and tilt rotate a fixed camera; the other static
+    examples move the camera while aiming at a fully stationary subject.
+    Dynamic examples keep camera and subject poses on the same timeline.
+    """
+    if subject_mode not in ("static", "dynamic"):
+        raise ValueError("Demo subject mode must be static or dynamic.")
+    time = np.linspace(0, 1, 60)
+    zero = np.zeros_like(time)
+    one = np.ones_like(time)
+    descriptions = {
+        "static": {
+            "orbit": "Orbit around a stationary subject at a constant height.",
+            "dolly": "Dolly forward toward a stationary subject.",
+            "truck": "Truck sideways while keeping a stationary subject in view.",
+            "crane": "Raise the camera while aiming down toward a stationary subject.",
+            "pan": "Pan horizontally across a stationary subject from a fixed camera position.",
+            "tilt": "Tilt vertically across a stationary subject from a fixed camera position.",
+            "spiral": "Spiral inward and upward around a stationary subject.",
+        },
+        "dynamic": {
+            "tracking": "Track beside a subject walking in a straight line.",
+            "curved-follow": "Follow behind a subject walking along a curved path.",
+            "walking-orbit": "Orbit around a walking subject while gradually rising.",
+        },
+    }
+    samples = []
+    for motion, prompt in descriptions[subject_mode].items():
+        subject = np.tile(np.eye(4, dtype=np.float32), (len(time), 1, 1))
+        subject[:, 1, 3] = 0.85
+        if subject_mode == "dynamic":
+            if motion == "curved-follow":
+                heading = -0.85 + 1.7 * time
+                subject[:, 0, 3] = 3 * np.sin(heading)
+                subject[:, 2, 3] = 2 * np.cos(heading)
+            else:
+                subject[:, 0, 3] = (4 if motion == "tracking" else 2) * (time - 0.5)
+                if motion == "walking-orbit":
+                    subject[:, 2, 3] = 0.25 * np.sin(time * np.pi)
+            velocity = np.gradient(subject[:, :3, 3], axis=0)
+            yaw = np.arctan2(velocity[:, 0], velocity[:, 2])
+            subject[:, 0, 0] = subject[:, 2, 2] = np.cos(yaw)
+            subject[:, 0, 2] = np.sin(yaw)
+            subject[:, 2, 0] = -np.sin(yaw)
+        center = subject[:, :3, 3]
+        trajectories = {}
+        for name, variation in (("GT", 0.0), ("Demo A", 0.12), ("Demo B", 0.55)):
+            progress = time + variation * 0.12 * np.sin(np.pi * time)
+            targets = center.copy()
+            if motion == "orbit":
+                angle = -1 + 2 * progress
+                radius = 4 + variation
+                offset = np.column_stack((radius * np.sin(angle), 1.1 * one, radius * np.cos(angle)))
+            elif motion == "dolly":
+                offset = np.column_stack((zero, 1.1 * one, 6 - (3 - variation) * progress))
+            elif motion == "truck":
+                offset = np.column_stack((-3 + 6 * progress, 1.1 * one, (4 + variation) * one))
+            elif motion == "crane":
+                offset = np.column_stack((-2.5 * one, 0.4 + (3 - variation) * progress, 3.5 * one))
+            elif motion in ("pan", "tilt"):
+                offset = np.column_stack((zero, 1.1 * one, 4.2 * one))
+                targets[:, 0 if motion == "pan" else 1] += (2 * progress - 1) * (1.4 + variation)
+            elif motion == "spiral":
+                angle = -1 + 2.4 * progress
+                radius = 4.8 - (1.9 - variation) * progress
+                offset = np.column_stack((radius * np.sin(angle), 0.5 + 1.7 * progress, radius * np.cos(angle)))
+            elif motion == "tracking":
+                offset = np.column_stack(((-0.6 - variation) * one, 1.1 * one, (4 + variation) * one))
+            elif motion == "curved-follow":
+                forward = velocity / np.linalg.norm(velocity, axis=1, keepdims=True)
+                offset = -(3.4 + variation) * forward
+                offset[:, 1] = 1.2
+            else:  # walking-orbit
+                angle = -0.6 + 1.6 * progress
+                radius = 4 + variation
+                offset = np.column_stack((radius * np.sin(angle), 1.1 + 0.35 * progress, radius * np.cos(angle)))
+            trajectories[name] = _demo_look_at(center + offset, targets)
+        samples.append(ComparisonSample(
+            f"demo-{subject_mode}-{motion}", "demo", prompt, trajectories,
+            subject, np.array([0.5, 1.7, 0.35]), [0, 20, 40, 59],
+            {"demo": True, "subject_mode": subject_mode, "motion": motion,
+             "notice": "Synthetic illustration — these paths are not model predictions.",
+             "keyframe_source": "GT", "keyframes_illustrative": True},
+        ))
+    return samples

@@ -25,6 +25,8 @@ GOLD = "#c89524"
 INK = "#253044"
 MUTED = "#687487"
 SUBJECT = "#a4afbc"
+SUBJECT_ACTIVE = "#53697d"
+TIMELINE_TIMES = (0., .25, .5, .75, 1.)
 _COLORS = ("#386bb5", "#b06490", "#238b86", "#dd8549", "#8872b2", "#a28551")
 _EDGES = ((0, 1), (0, 2), (0, 4), (1, 3), (1, 5), (2, 3),
           (2, 6), (3, 7), (4, 5), (4, 6), (5, 7), (6, 7))
@@ -189,8 +191,7 @@ def _draw_frustums(ax: Any, poses: np.ndarray, scale: float, color: str,
     ax.add_collection3d(Line3DCollection(lines, colors=color, linewidths=linewidth, alpha=alpha))
 
 
-def _draw_context(ax: Any, sample: Any, bounds: np.ndarray) -> None:
-    subject = getattr(sample, "subject", None)
+def _draw_ground(ax: Any, sample: Any, bounds: np.ndarray) -> None:
     corners = _subject_corners(sample)
     ground = float(bounds[1, 0] + .05 * np.ptp(bounds[1]))
     if corners is not None:
@@ -202,6 +203,12 @@ def _draw_context(ax: Any, sample: Any, bounds: np.ndarray) -> None:
     grid += [np.array([[xlim[0], z, ground], [xlim[1], z, ground]])
              for z in np.linspace(*zlim, 7)]
     ax.add_collection3d(Line3DCollection(grid, colors="#e5e9ee", linewidths=.45, alpha=.8))
+
+
+def _draw_context(ax: Any, sample: Any, bounds: np.ndarray) -> None:
+    subject = getattr(sample, "subject", None)
+    corners = _subject_corners(sample)
+    _draw_ground(ax, sample, bounds)
     if subject is None:
         return
     positions = _poses(subject, "Subject")[:, :3, 3]
@@ -221,9 +228,7 @@ def _draw_context(ax: Any, sample: Any, bounds: np.ndarray) -> None:
                                             colors=SUBJECT, linewidths=.65, alpha=.75 if i == 0 else .4))
 
 
-def _draw_panel(ax: Any, sample: Any, method: str | None, color: str,
-                bounds: np.ndarray, *, show_keyframes: bool, elev: float,
-                azim: float, camera_count: int) -> dict[str, Any]:
+def _setup_axes(ax: Any, bounds: np.ndarray, elev: float, azim: float) -> None:
     ax.set_proj_type("ortho")
     ax.view_init(elev=elev, azim=azim)
     ax.set_xlim(*bounds[0])
@@ -231,6 +236,12 @@ def _draw_panel(ax: Any, sample: Any, method: str | None, color: str,
     ax.set_zlim(*bounds[1])
     ax.set_box_aspect(np.ptp(bounds, axis=1)[[0, 2, 1]], zoom=1.28)
     ax.set_axis_off()
+
+
+def _draw_panel(ax: Any, sample: Any, method: str | None, color: str,
+                bounds: np.ndarray, *, show_keyframes: bool, elev: float,
+                azim: float, camera_count: int) -> dict[str, Any]:
+    _setup_axes(ax, bounds, elev, azim)
     _draw_context(ax, sample, bounds)
     scale = float(np.ptp(bounds, axis=1).max()) * .045
     record: dict[str, Any] = {"method": method, "bounds_world_xyz": bounds.tolist()}
@@ -285,11 +296,186 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _time_indices(count: int) -> list[int]:
+    """Use the same normalized clip timeline as interactive playback."""
+    return [round(time * (count - 1)) for time in TIMELINE_TIMES]
+
+
+def _draw_subject_pose(ax: Any, poses: np.ndarray, corners: np.ndarray | None,
+                       index: int, *, active: bool) -> None:
+    color = SUBJECT_ACTIVE if active else SUBJECT
+    if corners is None:
+        artist = ax.scatter(*_xyz(poses[index, :3, 3]), color=color,
+                            s=48 if active else 22, marker="s", depthshade=False,
+                            alpha=1. if active else .18)
+        artist.set_gid("subject:active" if active else "subject:ghost")
+        return
+    box = _xyz(corners[index])
+    faces = Poly3DCollection([box[list(face)] for face in _FACES],
+                             facecolors=color, alpha=.42 if active else .035,
+                             edgecolors="none")
+    faces.set_gid("subject:active" if active else "subject:ghost")
+    ax.add_collection3d(faces)
+    ax.add_collection3d(Line3DCollection([box[[a, b]] for a, b in _EDGES],
+                        colors=color, linewidths=1.3 if active else .6,
+                        alpha=1. if active else .18))
+
+
+def _draw_snapshot(ax: Any, sample: Any, method: str, bounds: np.ndarray,
+                   column: int, *, show_keyframes: bool, elev: float,
+                   azim: float) -> dict[str, Any]:
+    _setup_axes(ax, bounds, elev, azim)
+    _draw_ground(ax, sample, bounds)
+    time = TIMELINE_TIMES[column]
+    subject = _poses(sample.subject, "Subject")
+    subject_indices = _time_indices(len(subject))
+    subject_index = subject_indices[column]
+    ghost_subject = sorted(set(subject_indices).difference({subject_index}))
+    corners = _subject_corners(sample)
+    ax.plot(*_xyz(subject[:, :3, 3]).T, color=SUBJECT_ACTIVE, lw=1.,
+            ls=(0, (3, 3)), alpha=.22)
+    for index in ghost_subject:
+        _draw_subject_pose(ax, subject, corners, index, active=False)
+    _draw_subject_pose(ax, subject, corners, subject_index, active=True)
+    record = {"method": method, "time_fraction": time,
+              "bounds_world_xyz": bounds.tolist(), "subject_frame_index": subject_index,
+              "subject_frame_count": len(subject), "ghost_subject_indices": ghost_subject,
+              "subject_pose": subject[subject_index].tolist()}
+    scale = float(np.ptp(bounds, axis=1).max()) * .045
+    color = method_color(method)
+    trajectory = sample.trajectories.get(method)
+    if trajectory is None:
+        ax.text2D(.5, .48, "No output", transform=ax.transAxes, ha="center", color=MUTED, fontsize=10)
+        record.update(camera_frame_index=None, ghost_camera_indices=[])
+    else:
+        poses = _poses(trajectory, method)
+        camera_indices = _time_indices(len(poses))
+        camera_index = camera_indices[column]
+        ghosts = sorted(set(camera_indices).difference({camera_index}))
+        path, = ax.plot(*_xyz(poses[:, :3, 3]).T, color=color, lw=1.4, alpha=.18)
+        path.set_gid(f"trajectory:{sample.sample_id}:{method}:context")
+        if ghosts:
+            _draw_frustums(ax, poses[ghosts], scale, color, alpha=.16, linewidth=.7)
+        _draw_frustums(ax, poses[[camera_index]], scale, color, alpha=1., linewidth=1.8)
+        ax.collections[-1].set_gid("camera:active")
+        point = poses[camera_index, :3, 3]
+        ax.scatter(*_xyz(point), s=24, color=color, edgecolors="white", linewidths=.6,
+                   alpha=1., depthshade=False)
+        # Show the actual optical axis, including when a model misses its subject.
+        direction = np.stack((point, point + poses[camera_index, :3, 2] * scale * 2.8))
+        ax.plot(*_xyz(direction).T, color=color, lw=1., ls=(0, (2, 2)), alpha=.85)
+        record.update(frame_count=len(poses), camera_frame_index=camera_index,
+                      camera_indices=camera_indices, ghost_camera_indices=ghosts,
+                      camera_pose=poses[camera_index].tolist(),
+                      pose_sha256=hashlib.sha256(poses.astype("<f8").tobytes()).hexdigest())
+    indices, constraints, source = keyframe_constraints(sample, method) if show_keyframes else ([], None, None)
+    if constraints is not None:
+        # Constraints remain context; they must not compete with the current time.
+        _draw_frustums(ax, constraints, scale * 1.1, GOLD, alpha=.28, linewidth=.75)
+    record.update(keyframe_indices=indices, keyframe_source=source)
+    return record
+
+
+def _build_dynamic_figure(samples: Sequence[Any], methods: Sequence[str], *,
+                          show_keyframes: bool, elev: float, azim: float,
+                          title: str | None) -> Figure:
+    sample_methods = [[method for method in methods if method in sample.trajectories] for sample in samples]
+    for sample, available in zip(samples, sample_methods):
+        if getattr(sample, "subject", None) is None:
+            raise ValueError(f"Dynamic figures require subject poses for sample '{sample.sample_id}'.")
+        if not available:
+            raise ValueError(f"No selected trajectories for sample '{sample.sample_id}'.")
+    width = 17.
+    prompt_lines = [textwrap.wrap(" ".join(str(sample.prompt).split()), width=170,
+                                break_long_words=False, break_on_hyphens=False) or ["No text prompt"]
+                    for sample in samples]
+    row_height = 3.05
+    group_heights = [.62 + .18 * len(lines) + row_height * len(available)
+                     for lines, available in zip(prompt_lines, sample_methods)]
+    top, bottom = (.70 if title else .18), .66
+    height = top + sum(group_heights) + bottom
+    fig = Figure(figsize=(width, height), facecolor="white")
+    FigureCanvasAgg(fig)
+    if title:
+        fig.text(.035, 1 - .26 / height, title, ha="left", va="top", fontsize=15,
+                 fontweight="bold", color=INK)
+    records = []
+    cursor = height - top
+    for sample_number, (sample, lines, group_height, available) in enumerate(zip(samples, prompt_lines, group_heights, sample_methods)):
+        label = f"{sample_number + 1:02d}   {sample.dataset} / {sample.sample_id}"
+        if (getattr(sample, "metadata", {}) or {}).get("demo"):
+            label += "   ·   Illustrative demo"
+        fig.text(.035, (cursor - .10) / height, label, va="top", fontsize=8., color=MUTED)
+        fig.text(.035, (cursor - .33) / height, "\n".join(lines), va="top", fontsize=10.5,
+                 linespacing=1.35, color=INK)
+        bounds = scene_bounds(sample, methods, show_keyframes=show_keyframes)
+        row_top = cursor - .62 - .18 * len(lines)
+        rows = []
+        for row, method in enumerate(available):
+            heading = method_label(method)
+            fig.text(.037, (row_top - .06) / height, heading, va="top", fontsize=10.5,
+                     fontweight="bold", color=method_color(method))
+            panels = []
+            for column, time in enumerate(TIMELINE_TIMES):
+                left = .025 + column * .95 / 5
+                ax = fig.add_axes([left, (row_top - row_height + .05) / height,
+                                   .95 / 5, (row_height - .75) / height], projection="3d")
+                panel = _draw_snapshot(ax, sample, method, bounds, column,
+                                       show_keyframes=show_keyframes, elev=elev, azim=azim)
+                for artist_index, artist in enumerate(ax.get_children()):
+                    if artist.get_gid():
+                        artist.set_gid(f"snapshot:{sample_number}:{row}:{column}:{artist_index}:{artist.get_gid()}")
+                camera_frame = panel["camera_frame_index"]
+                camera_label = "unavailable" if camera_frame is None else f"{camera_frame}/{panel['frame_count'] - 1}"
+                fig.text(left + .095, (row_top - .32) / height, f"{time:.0%}", ha="center", va="top",
+                         fontsize=10, fontweight="bold", color=INK)
+                fig.text(left + .095, (row_top - .54) / height,
+                         f"Camera {camera_label}  ·  Subject {panel['subject_frame_index']}/{panel['subject_frame_count'] - 1}",
+                         ha="center", va="top", fontsize=6.8, color=MUTED)
+                panels.append(panel)
+            rows.append({"method": method, "panels": panels})
+            row_top -= row_height
+            if row < len(available) - 1:
+                fig.add_artist(Line2D([.035, .965], [row_top / height] * 2,
+                                     transform=fig.transFigure, color="#edf0f3", lw=.5))
+        subject = _poses(sample.subject, "Subject")
+        records.append({"sample_id": str(sample.sample_id), "dataset": str(sample.dataset),
+                        "prompt": str(sample.prompt), "metadata": _json_safe(getattr(sample, "metadata", {})),
+                        "bounds_world_xyz": bounds.tolist(),
+                        "subject_pose_sha256": hashlib.sha256(subject.astype("<f8").tobytes()).hexdigest(),
+                        "rows": rows})
+        cursor -= group_height
+        if sample_number < len(samples) - 1:
+            fig.add_artist(Line2D([.035, .965], [cursor / height] * 2,
+                                 transform=fig.transFigure, color="#d6dce4", lw=.8))
+    handles = [Line2D([], [], color=_COLORS[0], lw=1.8, marker="o", markersize=4, label="Current camera / viewing direction"),
+               Line2D([], [], color=SUBJECT_ACTIVE, marker="s", lw=0, markersize=6, label="Current subject"),
+               Line2D([], [], color=MUTED, alpha=.25, marker="s", lw=1, markersize=5, label="Past / future poses")]
+    if show_keyframes and any(keyframe_constraints(sample, method)[1] is not None for sample in samples for method in methods):
+        handles.append(Line2D([], [], color=GOLD, lw=1, alpha=.5, label="Input constraint"))
+    fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(.5, .25 / height),
+               ncol=len(handles), frameon=False, fontsize=8, labelcolor=MUTED,
+               handlelength=1.5, columnspacing=1.8)
+    fig.text(.5, .13 / height,
+             "Five moments of normalized clip time · nearest recorded frames (zero based) · shared scale and view across all models and times per sample",
+             ha="center", va="center", fontsize=6.7, color=MUTED)
+    fig._lenscraft_metadata = {  # type: ignore[attr-defined]
+        "schema_version": 1, "figure_mode": "dynamic",
+        "coordinate_convention": "OpenCV camera-to-world; world +Y up",
+        "projection": "orthographic", "view": {"elev": elev, "azim": azim},
+        "methods": list(methods), "show_keyframes": show_keyframes, "include_input": False,
+        "time_fractions": list(TIMELINE_TIMES), "time_sampling": "nearest recorded frame at normalized clip time",
+        "title": title, "path_interpolation": "none",
+        "matplotlib_version": matplotlib.__version__, "samples": records,
+    }
+    return fig
+
+
 def build_figure(samples: Any, *, methods: Sequence[str] | None = None,
                  show_keyframes: bool = True, include_input: bool = True,
                  elev: float = 24., azim: float = -58., camera_count: int = 6,
-                 title: str | None = None) -> Figure:
-    """Build an editable Matplotlib figure, with one sample per row.
+                 title: str | None = None, figure_mode: str = "static") -> Figure:
+    """Build a static comparison or five-column dynamic-subject timeline.
 
     The optional input column displays only actual conditioning poses and the
     subject. Gold markers in each conditioned output column remain at its
@@ -303,6 +489,11 @@ def build_figure(samples: Any, *, methods: Sequence[str] | None = None,
         raise ValueError("camera_count must be a non-negative integer.")
     if not math.isfinite(elev) or not math.isfinite(azim):
         raise ValueError("View angles must be finite.")
+    if figure_mode not in {"static", "dynamic"}:
+        raise ValueError("figure_mode must be 'static' or 'dynamic'.")
+    if figure_mode == "dynamic":
+        return _build_dynamic_figure(samples, methods, show_keyframes=show_keyframes,
+                                     elev=elev, azim=azim, title=title)
     columns: list[str | None] = ([None] if include_input else []) + methods
     width = max(4., 3.35 * len(columns))
     prompt_width = max(28, int((width - .8) * 14))
@@ -373,7 +564,7 @@ def build_figure(samples: Any, *, methods: Sequence[str] | None = None,
     fig.text(.5, .12 / height, "Shared scale and view within each row · camera-to-world poses · input labels use frame indices",
              ha="center", va="center", fontsize=6.7, color=MUTED)
     fig._lenscraft_metadata = {  # type: ignore[attr-defined]
-        "schema_version": 1, "coordinate_convention": "OpenCV camera-to-world; world +Y up",
+        "schema_version": 1, "figure_mode": "static", "coordinate_convention": "OpenCV camera-to-world; world +Y up",
         "projection": "orthographic", "view": {"elev": elev, "azim": azim},
         "methods": methods, "show_keyframes": show_keyframes, "include_input": include_input,
         "camera_count": camera_count, "title": title, "path_interpolation": "none",
@@ -396,7 +587,7 @@ def export_figure(samples: Any, path: str | Path, *, methods: Sequence[str] | No
                   show_keyframes: bool = True, include_input: bool = True,
                   elev: float = 24., azim: float = -58., dpi: int = 300,
                   formats: Sequence[str] = ("pdf", "svg", "png"), camera_count: int = 6,
-                  title: str | None = None) -> dict[str, Path]:
+                  title: str | None = None, figure_mode: str = "static") -> dict[str, Path]:
     """Save vector PDF/SVG and a high-resolution PNG with a JSON provenance file.
 
     A path with a supported suffix exports that format; a suffixless path
@@ -418,7 +609,7 @@ def export_figure(samples: Any, path: str | Path, *, methods: Sequence[str] | No
         raise ValueError("Choose one or more export formats from pdf, svg, png.")
     figure = build_figure(samples, methods=methods, show_keyframes=show_keyframes,
                           include_input=include_input, elev=elev, azim=azim,
-                          camera_count=camera_count, title=title)
+                          camera_count=camera_count, title=title, figure_mode=figure_mode)
     destination.parent.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
     # Font embedding keeps PDF text editable and glyphs portable. SVG text is

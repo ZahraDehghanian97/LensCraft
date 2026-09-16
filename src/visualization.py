@@ -10,6 +10,7 @@ def parser() -> argparse.ArgumentParser:
     cli = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     source = cli.add_mutually_exclusive_group()
     source.add_argument("--demo", action="store_true", help="Synthetic example; no checkpoints needed")
+    source.add_argument("--demo-suite", action="store_true", help="All synthetic motion examples for the selected figure mode")
     source.add_argument("--dataset", choices=("simulation", "et", "ccdm"))
     source.add_argument("--results", nargs="+", type=Path, help="Saved comparisons or inference_result.json files")
     cli.add_argument("--split", choices=("train", "val", "test", "all"), default="test")
@@ -25,6 +26,8 @@ def parser() -> argparse.ArgumentParser:
     cli.add_argument("--host", default="127.0.0.1")
     cli.add_argument("--port", type=int, default=8080)
     cli.add_argument("--export", type=Path, help="Figure path; no suffix exports PNG/PDF/SVG plus metadata")
+    cli.add_argument("--figure-mode", choices=("static", "dynamic"), default="static",
+                     help="Static: methods as columns; dynamic: models as rows and five time columns")
     cli.add_argument("--headless", action="store_true", help="Export without starting a browser server")
     cli.add_argument("--save-result", type=Path, help="Save a reusable comparison bundle")
     cli.add_argument("--dpi", type=int, default=300)
@@ -46,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         cli.error("Figure metadata and comparison data need different paths; use --save-result NAME.bundle.json")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     logging.getLogger("fontTools").setLevel(logging.WARNING)
-    from visualization.data import VisualizationRepository, load_result, make_demo, save_result
+    from visualization.data import VisualizationRepository, load_result, make_demo, make_demo_suite, save_result
     try:
         keyframes = sorted(set(int(v.strip()) for v in args.keyframes.split(",") if v.strip())) or None
         repository = VisualizationRepository(overrides=args.override, device=args.device, seed=args.seed)
@@ -59,8 +62,10 @@ def main(argv: list[str] | None = None) -> int:
             samples = [sample]
         elif args.results:
             samples = [load_result(path, index=args.sample) for path in args.results]
+        elif args.demo_suite:
+            samples = make_demo_suite(subject_mode=args.figure_mode)
         else:
-            samples = [make_demo()]
+            samples = [make_demo(subject_mode=args.figure_mode)]
         for sample in samples:
             if sample.metadata.get("errors"):
                 logging.warning("Unavailable model outputs: %s", sample.metadata["errors"])
@@ -68,12 +73,14 @@ def main(argv: list[str] | None = None) -> int:
             save_result(samples, args.save_result)
         if args.export:
             from visualization.export import export_figure
-            for kind, path in export_figure(samples, args.export, dpi=args.dpi).items():
+            for kind, path in export_figure(samples, args.export, dpi=args.dpi, figure_mode=args.figure_mode,
+                                          include_input=args.figure_mode == "static").items():
                 print(f"{kind}: {path}")
         if not args.headless:
             from visualization.app import VisualizationApp
             VisualizationApp(samples, repository=repository, host=args.host, port=args.port,
-                             output_dir=args.export.parent if args.export else Path("qualitative")).run()
+                             output_dir=args.export.parent if args.export else Path("qualitative"),
+                             figure_mode=args.figure_mode).run()
     except (ValueError, IndexError, OSError, ImportError, RuntimeError) as exc:
         cli.exit(1, f"Visualizer: {exc}\n")
     return 0

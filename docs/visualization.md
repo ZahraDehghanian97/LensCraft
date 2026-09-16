@@ -1,6 +1,6 @@
 # Qualitative comparison visualizer
 
-Run commands from the `LenseCraft/` project directory. The single entry point is
+Run commands from the `LensCraft/` project directory. The single entry point is
 `src/visualization.py`: use a browser to inspect camera trajectories, compare
 model outputs on one sample, and select the input keyframes for a paper figure.
 Viser provides the interactive 3D scene; publication exports use Matplotlib.
@@ -18,6 +18,22 @@ Open the address printed in the terminal. The demo contains synthetic example
 trajectories so you can try the controls and exports without PyTorch or a GPU.
 Its model labels are illustrative; the demo is not an experimental result.
 
+Use `--figure-mode static` for stationary-subject examples or
+`--figure-mode dynamic` for a moving subject. Add `--demo-suite` instead of
+`--demo` to open the complete set of examples for that figure type:
+
+```bash
+python src/visualization.py --demo-suite --figure-mode static
+python src/visualization.py --demo-suite --figure-mode dynamic
+```
+
+The static suite includes orbit, dolly, truck, crane, pan, tilt, and spiral
+camera motions. The dynamic suite covers straight tracking, curved following,
+and orbiting a walking subject. All suite outputs are synthetic examples.
+In the browser, **Input → Synthetic motion demos → Subject type** chooses the
+suite; click **Load demo collection**, then select examples under
+**Saved results → Opened samples**.
+
 ## Browser workflow
 
 The browser has three tabs:
@@ -34,18 +50,21 @@ The browser has three tabs:
    are shown. Toggle **Subject and motion**, **Input keyframes**, and
    **Ground grid** as needed. **Fit view** frames the scene, and
    **Download viewport PNG** captures the current browser view.
-3. **Paper**: click **Add current sample to figure** to keep a sample as a row,
-   then load and add further samples. With no saved rows, the current sample
+3. **Paper**: choose **Static subject** or **Dynamic subject** in **Figure type**.
+   Click **Add current sample to figure** to keep a sample in the figure,
+   then load and add further samples. With no saved samples, the current sample
    is used. Choose a **Filename**, optional **Figure title**, **Elevation**,
    **Azimuth**, and **PNG resolution**. Click **Preview figure**, then
    **Export PNG + PDF + SVG** to save the files and download them as a ZIP.
    **Save comparison data** saves and downloads the complete portable bundle.
 
-Use **Separate input keyframe panel** in the Paper tab to include the input
-poses as their own column. Figure elevation and azimuth control the
+Use **Separate input keyframe panel** with **Static subject** to include the
+input poses as their own column. **Dynamic subject** always has five time
+columns; input keyframes can be overlaid without adding a column. Figure
+elevation and azimuth control the
 orthographic export view; the viewport PNG uses the interactive camera view.
 Exports go to `qualitative/` by default, or the directory of a CLI `--export`
-path. **Clear figure rows** starts a new figure collection.
+path. **Clear figure samples** starts a new figure collection.
 
 For saved data, use **Input → Saved results → Result file**, choose
 **Result index**, and click **Open result**. **Opened samples** returns to any
@@ -192,9 +211,21 @@ Export directly from a terminal, including on a machine without a display:
 # Test the publication layout with synthetic data.
 python src/visualization.py --demo --export qualitative/demo --headless
 
+# Export the stationary-subject suite with varied camera movements.
+python src/visualization.py --demo-suite --figure-mode static \
+  --export qualitative/static-movements --headless
+
+# Export the moving-subject suite as five-instant comparisons.
+python src/visualization.py --demo-suite --figure-mode dynamic \
+  --export qualitative/dynamic-moments --headless
+
 # Export a real, saved inference result.
 python src/visualization.py --results /path/to/comparison-bundle.json \
   --export qualitative/comparison --headless
+
+# Show a saved moving-subject sample at five times for every model.
+python src/visualization.py --results /path/to/moving-subject.bundle.json \
+  --figure-mode dynamic --export qualitative/moving-subject --headless
 
 # Compare several samples as separate rows in the same figure.
 python src/visualization.py \
@@ -215,14 +246,36 @@ Pass a filename such as `--export qualitative/comparison.pdf` to produce just
 that figure format and the JSON sidecar. Reusing an output path replaces its
 generated files. Raster export defaults to 300 DPI; use `--dpi 600` when needed.
 
-Each row compares one sample, with a separate input-keyframe panel and one
-panel per selected trajectory. All panels in a row share the same orthographic
-view and spatial bounds. Gold camera frustums mark the actual input poses;
-circles and diamonds mark trajectory starts and ends. The exporter connects
-the recorded positions without smoothing or independently rescaling methods.
+There are two figure types, selected with `--figure-mode` or **Figure type**:
 
-The JSON sidecar describes how the figure was made; it does not contain the
-complete trajectory arrays and is not an input to `--results`.
+| Figure type | Rows | Columns |
+| --- | --- | --- |
+| `static` (default) | One sample per row | One panel per selected trajectory, plus the optional input-keyframe panel |
+| `dynamic` | One row per sample and selected trajectory | Exactly five instants: 0%, 25%, 50%, 75%, and 100% of the clip |
+
+Static figures show the complete camera movement around a stationary subject.
+Circles and diamonds mark trajectory starts and ends. This preserves the
+original comparison layout.
+
+In each dynamic panel, the camera and subject at the current instant are
+highlighted together. Their other sampled positions, both before and after
+that instant, remain faintly visible to show the motion. Every method and all
+five instants for a sample use the same orthographic view and spatial bounds,
+so movement remains comparable across both time and models. Camera and subject
+tracks with different frame counts use the nearest recorded pose at each
+percentage of their own duration. No intermediate poses are synthesized; short
+tracks can therefore repeat a pose in adjacent columns. Dynamic export requires
+subject poses. A subject without dimensions is drawn as a position marker.
+
+Gold camera frustums mark actual input keyframes when enabled. Dynamic figures
+overlay these poses within the five time columns and never add a separate
+input column. Both figure types connect recorded positions without smoothing
+or independently rescaling methods.
+
+The JSON sidecar records the figure type and, for dynamic figures, the sampled
+times and camera/subject frame indices alongside the shared bounds. It describes
+how the figure was made; it does not contain the complete trajectory arrays and
+is not an input to `--results`.
 
 ## Configuration and remote use
 
@@ -257,3 +310,56 @@ have been removed. For training curves, use `src/plot_losses.py` or
 For fixed semantic evaluators, sparse keyframe sweeps, and measured pose/framing
 errors, see [evaluation.md](evaluation.md). The evaluation cache records the
 actual constraints; figure selection alone is not a quantitative keyframe test.
+
+## Build a gallery of paper candidates
+
+Export every saved sample as a separate candidate so figures can be compared
+and shortlisted before choosing the paper examples:
+
+```bash
+python scripts/export_paper_candidates.py \
+  --results /path/to/comparison-bundles/ \
+  --output-dir qualitative/paper-candidates
+```
+
+`--results` accepts several portable bundle files or directories. The exporter
+loads all samples, combines repeated copies of the same comparison, and keeps
+different model outputs or input keyframes as distinct candidates. It uses
+recorded poses and does not run inference. Synthetic demo bundles are rejected.
+
+Open `qualitative/paper-candidates/index.html` in a browser to view the gallery.
+Search prompts and sample identifiers, filter the candidates, and mark a
+shortlist for download. Each candidate links to its PNG preview, paper-ready
+PDF, editable SVG, provenance JSON, and portable comparison bundle. Static
+subjects use the comparison layout; moving subjects use one row per model and
+five time columns. Subject rotation also counts as motion.
+
+The default PNG resolution is 300 DPI; use `--dpi 600` for a higher-resolution
+final export. Use a new output directory for another collection, or explicitly
+pass `--overwrite` to regenerate an existing candidate gallery.
+
+To expand the real example pool from the completed paper evaluation, run the
+preparation script in the environment containing the frozen source, dataset,
+and saved trajectory caches:
+
+```bash
+python scripts/prepare_paper_candidates.py \
+  --project-dir /path/to/frozen/LensCraft \
+  --base-run-dir /path/to/completed-paper-run \
+  --output-dir /path/to/paper-candidate-bundles \
+  --per-cohort 12 --seed 42
+```
+
+This selects 12 static-subject and 12 dynamic-subject scenes from the measured
+held-out cohorts and reuses their saved model predictions. By default, each
+scene produces a prompt comparison and a four-keyframe comparison: 48 figure
+candidates from 24 distinct scenes. Use `--prompt-only` for just the 24 prompt
+comparisons, or `--keyframe-count` to select another cached keyframe setting.
+
+Selection is deterministic and cycles through recorded camera-motion types;
+it does not rank examples by model quality. `--seed` changes the candidate
+selection, while the measured evaluation split remains fixed. The resulting
+`bundles/` directory can be copied to a machine with only the visualization
+dependencies and passed to `export_paper_candidates.py` as above. The preparation
+manifest records source-cache hashes and the selection protocol. Increasing
+`--per-cohort` expands the selection without retraining or rerunning inference.

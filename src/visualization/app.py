@@ -11,13 +11,14 @@ from pathlib import Path
 
 import numpy as np
 
-from visualization.data import VisualizationRepository, load_result, save_result
+from visualization.data import VisualizationRepository, load_result, make_demo_suite, save_result
 from visualization.export import export_figure, keyframe_constraints, method_color, method_label, render_preview, scene_bounds
 
 LOGGER = logging.getLogger(__name__)
 MODEL_NAMES = {"lens_craft": "LensCraft", "et": "E.T.", "ccdm": "CCDM", "gendop": "GenDoP"}
 MODES = {"Text only": "prompt_generation", "Text + keyframes": "key_framing+prompt",
          "Keyframes only": "key_framing", "Reconstruction": "reconstruction"}
+FIGURE_MODES = {"Static subject": "static", "Dynamic subject": "dynamic"}
 
 
 def keyframe_numbers(value: str) -> list[int] | None:
@@ -36,7 +37,10 @@ def rgb(name: str) -> tuple[int, int, int]:
 
 
 class VisualizationApp:
-    def __init__(self, samples, *, repository=None, host="127.0.0.1", port=8080, output_dir=Path("qualitative")):
+    def __init__(self, samples, *, repository=None, host="127.0.0.1", port=8080, output_dir=Path("qualitative"),
+                 figure_mode="static"):
+        if figure_mode not in FIGURE_MODES.values():
+            raise ValueError("Figure mode must be 'static' or 'dynamic'.")
         import viser
         self.server = viser.ViserServer(host=host, port=port, label="LensCraft · Qualitative Studio")
         self.server.gui.configure_theme(control_layout="fixed", control_width="large", dark_mode=False,
@@ -55,7 +59,7 @@ class VisualizationApp:
         self.dynamic_handles = []
         self.center = np.zeros(3)
         self.extent = 5.0
-        self._make_controls()
+        self._make_controls(figure_mode)
         self._select(self.sample)
         self._fit(self.server.initial_camera)
 
@@ -63,13 +67,21 @@ class VisualizationApp:
         def connected(client):
             self._fit(client)
 
-    def _make_controls(self):
+    def _make_controls(self, figure_mode):
         gui = self.server.gui
         gui.add_markdown("# LensCraft\n**Qualitative Studio** · Explore, compare, compose.")
         self.status = gui.add_markdown("Ready")
         tabs = gui.add_tab_group()
         with tabs.add_tab("Input"):
             self.summary = gui.add_markdown("")
+            with gui.add_folder("Synthetic motion demos", expand_by_default=self.sample.dataset == "demo"):
+                self.demo_mode = gui.add_dropdown("Subject type", tuple(FIGURE_MODES),
+                                                   initial_value=next(label for label, value in FIGURE_MODES.items()
+                                                                      if value == figure_mode))
+                gui.add_button("Load demo collection").on_click(lambda _: self._action(self._load_demos))
+                gui.add_markdown("Explore camera movements with a static or moving subject. "
+                                 "Choose a loaded example under Saved results → Opened samples. "
+                                 "These are illustrative paths, not model results.")
             with gui.add_folder("Dataset", expand_by_default=True):
                 self.dataset = gui.add_dropdown("Dataset", ("simulation", "et", "ccdm"),
                                                 initial_value=self.sample.dataset if self.sample.dataset in ("simulation", "et", "ccdm") else "simulation")
@@ -112,13 +124,18 @@ class VisualizationApp:
             for control in (self.layout, self.show_subject, self.show_keyframes, self.show_grid, self.camera_count):
                 control.on_update(lambda _: self._redraw())
         with tabs.add_tab("Paper"):
-            gui.add_markdown("**Compose your figure**\nAdd samples as rows. Every method in a row uses the same view and scale.")
+            gui.add_markdown("**Compose your figure**")
+            self.figure_mode = gui.add_dropdown("Figure type", tuple(FIGURE_MODES),
+                                                initial_value=next(label for label, value in FIGURE_MODES.items()
+                                                                   if value == figure_mode))
+            self.figure_help = gui.add_markdown("")
             gui.add_button("Add current sample to figure", color="teal").on_click(lambda _: self._add_row())
-            gui.add_button("Clear figure rows").on_click(lambda _: self._clear_rows())
-            self.rows = gui.add_markdown("No saved rows. The current sample will be exported.")
+            gui.add_button("Clear figure samples").on_click(lambda _: self._clear_rows())
+            self.rows = gui.add_markdown("No saved samples. The current sample will be exported.")
             self.figure_name = gui.add_text("Filename", "comparison")
             self.figure_title = gui.add_text("Figure title", "")
             self.include_input = gui.add_checkbox("Separate input keyframe panel", initial_value=True)
+            self.figure_mode.on_update(lambda _: self._figure_mode_changed())
             self.elev = gui.add_slider("Elevation", min=-85, max=85, step=1, initial_value=24)
             self.azim = gui.add_slider("Azimuth", min=-180, max=180, step=1, initial_value=-58)
             self.dpi = gui.add_dropdown("PNG resolution", ("300", "600", "150"))
@@ -127,6 +144,7 @@ class VisualizationApp:
             gui.add_button("Export PNG + PDF + SVG", color="teal").on_click(lambda e: self._action(lambda: self._export(e.client)))
             gui.add_button("Save comparison data").on_click(lambda e: self._action(lambda: self._save(e.client)))
             self.export_info = gui.add_markdown(f"Output folder: `{self.output_dir.resolve()}`")
+            self._figure_mode_changed()
 
     @staticmethod
     def _sample_label(index, sample):
@@ -165,6 +183,18 @@ class VisualizationApp:
 
     def _load_result(self):
         self._remember(load_result(Path(self.result_path.value).expanduser(), index=int(self.result_index.value)))
+
+    def _load_demos(self):
+        demos = make_demo_suite(subject_mode=FIGURE_MODES[self.demo_mode.value])
+        first_index = len(self.samples)
+        self.samples.extend(demos)
+        self.syncing = True
+        self.opened.options = [self._sample_label(i, sample) for i, sample in enumerate(self.samples)]
+        self.opened.value = self.opened.options[first_index]
+        self.syncing = False
+        self.figure_mode.value = self.demo_mode.value
+        self._figure_mode_changed()
+        self._select(demos[0])
 
     def _remember(self, sample):
         self.samples.append(sample)
@@ -335,7 +365,21 @@ class VisualizationApp:
 
     def _clear_rows(self):
         self.collection.clear()
-        self.rows.content = "No saved rows. The current sample will be exported."
+        self.rows.content = "No saved samples. The current sample will be exported."
+
+    def _figure_mode_changed(self):
+        dynamic = FIGURE_MODES[self.figure_mode.value] == "dynamic"
+        self.include_input.visible = not dynamic
+        self.figure_help.content = (
+            "Each selected model becomes a row for each sample. The five columns show "
+            "**0%, 25%, 50%, 75%, and 100%** of the clip. The subject and camera at the current "
+            "time are emphasized; earlier and later positions are faded. All cells for a sample "
+            "share the same view and scale."
+            if dynamic else
+            "Add samples as rows, with one column per selected method. Show camera movements "
+            "around a static subject. Every method in a row uses the same view and scale."
+        )
+        self.preview.visible = False
 
     def _figure_options(self):
         names = self._visible()
@@ -343,7 +387,9 @@ class VisualizationApp:
             raise ValueError("Select at least one visible trajectory in Compare.")
         if self.collection:
             names = list(dict.fromkeys(name for row in self.collection for name in row.metadata["figure_methods"]))
-        return dict(methods=names, show_keyframes=self.show_keyframes.value, include_input=self.include_input.value,
+        figure_mode = FIGURE_MODES[self.figure_mode.value]
+        return dict(methods=names, show_keyframes=self.show_keyframes.value,
+                    include_input=self.include_input.value and figure_mode == "static", figure_mode=figure_mode,
                     elev=self.elev.value, azim=self.azim.value, camera_count=int(self.camera_count.value),
                     title=self.figure_title.value or None)
 
