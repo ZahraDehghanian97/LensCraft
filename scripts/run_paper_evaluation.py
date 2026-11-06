@@ -18,7 +18,11 @@ MODELS = ("lenscraft", "ccdm", "et", "gendop")
 LENGTHS = dict(zip(MODELS, (30, 300, 300, 30)))
 LEARNED_METRICS = ("clatr_score", "fcd", "precision", "recall", "density", "coverage", "clip_score")
 PATH_ENV = ("CCDM_CHECKPOINT_PATH", "CCDM_DATA_DIR", "DIRECTOR_PROJECT_DIR", "ET_DATA_DIR", "ET_CIN_LANG_PATH", "GENDOP_CHECKPOINT_PATH", "CLIP_EMBEDDINGS_CACHE_DIR")
-COHORTS = {"static": ["static"], "dynamic": ["circular", "zigzag", "linear", "spiral", "figureEight", "wave", "pendulum", "orbital", "bounce"]}
+# Static means an exact pose freeze; idle and turn-in-place still change poses.
+# This list is part of saved evaluation provenance and checked on resume.
+COHORTS = {"static": ["static"], "dynamic": ["circular", "zigzag", "linear", "spiral",
+    "figureEight", "wave", "pendulum", "orbital", "bounce",
+    "walk", "run", "wander", "stopStart", "sidestep", "backward", "turnInPlace", "idle"]}
 
 
 def parse_args(argv=None):

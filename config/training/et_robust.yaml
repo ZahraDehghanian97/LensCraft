@@ -1,0 +1,37 @@
+# Opt-in simulation fine-tuning for sparse text conditioning. No ET reference
+# cameras, annotations or test-derived mask bank are needed by this recipe.
+defaults:
+  - default
+  - _self_
+
+# Fine-tuning must not inherit the pretraining scheduler's 3e-4 peak rate.
+optimizer:
+  lr: 1.0e-5
+lr_scheduler: null
+
+model:
+  module:
+    caption_presence_conditioning: true
+
+validation_conditioning:
+  motion_score_weight: 1.0
+  rotation_baselines: true
+  caption_shuffle: true
+
+caption_missingness:
+  enabled: true
+  probability: 0.75
+  min_keep_ratio: 0.15
+  max_keep_ratio: 0.45
+  endpoint_drop_probability: 0.75
+  preserve_movement_type: true
+  fill: mean
+  # Optional JSON {field_names: [...], presence_masks: [[true, false, ...]]}.
+  # Use training annotations only; field order must match CLIP_PARAMETERS.
+  mask_bank_path: null
+
+validation_caption_missingness:
+  enabled: true
+  max_batches: 4
+  seed: 31415
+  score_weight: 1.0

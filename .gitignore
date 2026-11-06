@@ -46,6 +46,8 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+.pytest_cache/
+.ruff_cache/
 htmlcov/
 .tox/
 .coverage
@@ -78,9 +80,6 @@ docs/_build/
 # PyBuilder
 target/
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
 # pyenv
 .python-version
 
@@ -91,10 +90,7 @@ celerybeat-schedule
 *.sage.py
 
 # Environments
-.env
 .venv
-env/
-venv/
 ENV/
 env.bak/
 venv.bak/

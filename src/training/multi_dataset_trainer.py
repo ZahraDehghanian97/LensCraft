@@ -75,7 +75,8 @@ class MultiDatasetTrainer(BaseTrainer):
             tgt_key_padding_mask,
             is_training=(stage == "train"),
             decode_mode=self.decode_mode,
-            compute_cycle_embeddings=True
+            compute_cycle_embeddings=True,
+            caption_presence_mask=batch.get('prompt_none_mask'),
         )
 
         loss, loss_dict = self.loss_module(

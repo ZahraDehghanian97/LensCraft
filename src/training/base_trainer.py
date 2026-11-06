@@ -6,6 +6,7 @@ import torch
 
 from utils.augmentation import apply_mask_and_noise, linear_increase
 from training.conditioning import ConditioningPolicy, prepare_conditioning
+from training.caption_missingness import CaptionMissingness
 
 
 @dataclass
@@ -42,6 +43,7 @@ class BaseTrainer(L.LightningModule):
         use_merged_memory: bool = True,
         moving_avg_window: int = 10,
         conditioning: Optional[Dict[str, Any]] = None,
+        caption_missingness: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
 
@@ -56,6 +58,10 @@ class BaseTrainer(L.LightningModule):
         self.loss_module = loss_module
         self.use_merged_memory = use_merged_memory
         self.conditioning = ConditioningPolicy(**dict(conditioning)) if conditioning is not None else None
+        self.caption_missingness = (
+            CaptionMissingness(caption_missingness, getattr(loss_module, 'clip_embeddings', None))
+            if caption_missingness is not None and caption_missingness.get('enabled', True) else None
+        )
 
         self.moving_avg_window = moving_avg_window
         self.metric_history = {"ff": [], "sp": [], "re": [], "cl": [], "cy": [], "co": []}
@@ -110,6 +116,9 @@ class BaseTrainer(L.LightningModule):
         conditioning_mode: Optional[str] = None,
         keyframe_count: Optional[int] = None,
         keyframe_sample_seeds=None,
+        caption_presence_mask: Optional[torch.Tensor] = None,
+        caption_missingness_seeds=None,
+        force_caption_missingness: bool = False,
     ) -> Dict[str, torch.Tensor]:
         ratios = self._calculate_schedule_parameters()
 
@@ -152,6 +161,33 @@ class BaseTrainer(L.LightningModule):
             memory_ratio = ratios['memory_teacher_forcing_ratio'] if is_training else 1.0
             known_mask = torch.zeros(camera_trajectory.shape[:2], dtype=torch.bool, device=camera_trajectory.device)
 
+        decoder_caption = caption_embedding
+        effective_caption_mask = None
+        if caption_embedding is not None and caption_presence_mask is not None:
+            if (not torch.is_tensor(caption_presence_mask)
+                    or caption_presence_mask.dtype != torch.bool
+                    or caption_embedding.ndim != 3
+                    or caption_presence_mask.shape != (caption_embedding.shape[1], caption_embedding.shape[0])):
+                raise ValueError('Caption presence_mask must be boolean [batch, caption fields]')
+            effective_caption_mask = caption_presence_mask.to(caption_embedding.device)
+        if self.caption_missingness is not None and caption_embedding is not None and memory_ratio > 0:
+            if is_training or force_caption_missingness:
+                decoder_caption, effective_caption_mask = self.caption_missingness.apply(
+                    caption_embedding, effective_caption_mask,
+                    sample_seeds=caption_missingness_seeds,
+                    force=force_caption_missingness,
+                )
+
+        # Native ET missingness matters even without synthetic dropout. A
+        # caption-conditioned cycle must not match unsupplied constraints from
+        # the clean camera encoding. Camera-only reconstruction, however, has
+        # the camera's constraints available and keeps its full cycle target.
+        cycle_prompt_mask = effective_caption_mask if memory_ratio > 0 else None
+        caption_kwargs = (
+            {'caption_presence_mask': effective_caption_mask}
+            if decoder_caption is not None else {}
+        )
+
         output = self.model(
             src=model_input,
             subject_trajectory=subject_trajectory,
@@ -159,7 +195,7 @@ class BaseTrainer(L.LightningModule):
             tgt_key_padding_mask=tgt_key_padding_mask,
             src_key_mask=src_key_mask,
             target=camera_trajectory if is_training and conditioning_mode is None else None,
-            caption_embedding=caption_embedding,
+            caption_embedding=decoder_caption,
             # Evaluation must measure the caption-conditioned generator, not
             # a moving blend with an encoding of the ground-truth trajectory.
             # A fixed ratio of one makes validation/test leakage-free and
@@ -172,11 +208,16 @@ class BaseTrainer(L.LightningModule):
             mask_memory_prob=(
                 ratios['memory_mask_ratio'] if is_training and conditioning_mode is None else 0.0
             ),
-            decode_mode=decode_mode
+            decode_mode=decode_mode,
+            **caption_kwargs,
         )
         output['known_mask'] = known_mask
         output['conditioning_mode'] = conditioning_mode or 'scheduled'
         output['keyframe_count'] = keyframe_count
+        if cycle_prompt_mask is not None:
+            # Keep the caller's clean caption for encoder supervision, while
+            # cycle alignment only judges constraints available to the decoder.
+            output['cycle_prompt_mask'] = cycle_prompt_mask
 
         if compute_cycle_embeddings:
             if conditioning_mode is not None:

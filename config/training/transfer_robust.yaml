@@ -1,0 +1,20 @@
+# Simulation-only continuation. ET/CCDM inputs are mimicked using simulation
+# train examples; native evaluation cohorts never enter optimization/selection.
+defaults:
+  - et_robust
+  - _self_
+
+_target_: training.transfer_robust_trainer.TransferRobustTrainer
+
+domain_augmentation:
+  enabled: true
+  et_probability: 0.25
+  ccdm_probability: 0.25
+  fill: mean
+
+validation_domain_augmentation:
+  enabled: true
+  max_batches: 4
+  seed: 27182
+  keyframe_count: 4
+  score_weight: 1.0

@@ -50,15 +50,23 @@ class ConditioningValidation:
     max_batches: int = 4
     seed: int = 42
     known_pose_weight: float = 1.0
+    motion_score_weight: float = 0.0
+    rotation_baselines: bool = False
+    caption_shuffle: bool = False
 
     def __post_init__(self):
         self.keyframe_counts = validate_keyframe_counts(self.keyframe_counts)
-        if isinstance(self.max_batches, bool) or not isinstance(self.max_batches, Integral) or self.max_batches < 1:
-            raise ValueError('validation max_batches must be a positive integer')
+        if isinstance(self.max_batches, bool) or not isinstance(self.max_batches, Integral) or self.max_batches < 0:
+            raise ValueError('validation max_batches must be a nonnegative integer (0 means full validation)')
         if isinstance(self.seed, bool) or not isinstance(self.seed, Integral) or not 0 <= self.seed < 2**63:
             raise ValueError('validation seed must be an integer in [0, 2**63)')
         if not math.isfinite(self.known_pose_weight) or self.known_pose_weight < 0:
             raise ValueError('known_pose_weight must be finite and nonnegative')
+        if not math.isfinite(self.motion_score_weight) or self.motion_score_weight < 0:
+            raise ValueError('motion_score_weight must be finite and nonnegative')
+        for name in ('rotation_baselines', 'caption_shuffle'):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f'{name} must be boolean')
 
     def cases(self):
         yield 'prompt_generation', 'prompt_generation', None

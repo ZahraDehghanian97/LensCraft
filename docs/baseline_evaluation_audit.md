@@ -1,5 +1,21 @@
 # Baseline and dataset audit — 2026-09-11
 
+**September 18 correction:** the earlier CCDM audit did not check the subject
+heading convention across datasets. Native CCDM front/left are +Z/+X, whereas
+the simulation zero-heading subject uses -Z/-X. Translation alone therefore
+misplaced CCDM outputs on simulation data. The corrected normalized evaluation
+and inference rotate both camera position and orientation by
+`R_subject @ diag(-1, 1, -1)` before adding the subject position. Simulation-to-
+CCDM feature conversion applies the inverse transform. Native CCDM decoding
+synthesizes the matching subject heading. This uses the supplied subject poses,
+not reference camera poses, and preserves native scale and FOV assumptions.
+
+CCDM-related cache keys now include coordinate-frame version 2; annotation and
+cohort files also enter cache provenance. Older normalized CCDM scores and
+visualizations need rescoring. The September 18 review replays archived raw
+draws on the same 965 static and 1,035 dynamic simulation clips; original files
+remain preserved. See [CCDM evaluation](ccdm_evaluation.md) for run artifacts.
+
 This audit follows the LensCraft raw-matrix rotation loss correction. That
 failure does not transfer directly to the released CCDM, DIRECTOR/E.T., or
 GenDoP checkpoints: their native representations and objectives differ.

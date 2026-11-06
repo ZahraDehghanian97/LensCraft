@@ -154,6 +154,14 @@ SUBJECT_MOVEMENT_DESCRIPTIONS = {
     "pendulum": "swings back and forth like a pendulum",
     "orbital": "orbits around a center point",
     "bounce": "bounces while moving forward",
+    "walk": "walks forward along a straight path",
+    "run": "runs forward along a straight path",
+    "wander": "walks along a gently curving path",
+    "stopStart": "walks forward, pauses, then resumes walking",
+    "sidestep": "moves sideways while keeping the same facing direction",
+    "backward": "moves backward while continuing to face forward",
+    "turnInPlace": "turns in place",
+    "idle": "shifts weight subtly with small changes in facing direction",
 }
 
 DETAILED_SUBJECT_DESCRIPTIONS = {
@@ -167,6 +175,14 @@ DETAILED_SUBJECT_DESCRIPTIONS = {
     "pendulum": "swings in a pendulum motion",
     "orbital": "orbits in a tilted elliptical path",
     "bounce": "bounces rhythmically while progressing forward",
+    "walk": "walks forward along a straight path with subtle vertical body motion",
+    "run": "runs forward along a straight path with rhythmic vertical body motion",
+    "wander": "walks along a gently curving path while facing the direction of travel",
+    "stopStart": "walks forward, smoothly stops and pauses, then resumes walking",
+    "sidestep": "moves sideways while keeping the same facing direction",
+    "backward": "moves backward while continuing to face forward",
+    "turnInPlace": "smoothly changes facing direction without translating",
+    "idle": "sways subtly and changes facing direction while staying near the initial position",
 }
 
 SHOT_SIZE_DESCRIPTIONS = {
@@ -280,8 +296,10 @@ def extract_text_prompt(cin_params, subject_movement):
     movement_speed = movement.get("speed")
 
     camera_desc = CAMERA_MOVEMENT_DESCRIPTIONS.get(camera_movement_type, "moves")
-    subject_desc = SUBJECT_MOVEMENT_DESCRIPTIONS.get(subject_movement, "remains stationary")
-    detailed_subject_desc = DETAILED_SUBJECT_DESCRIPTIONS.get(subject_movement, "remains stationary")
+    # New or external motion labels must not turn a moving subject into a
+    # stationary training target. Only explicit static / absent motion is still.
+    subject_desc = SUBJECT_MOVEMENT_DESCRIPTIONS.get(subject_movement, "moves")
+    detailed_subject_desc = DETAILED_SUBJECT_DESCRIPTIONS.get(subject_movement, "moves")
     is_subject_stationary = subject_movement in ("static", None)
 
     setup_changes = [

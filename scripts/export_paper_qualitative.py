@@ -305,7 +305,8 @@ def run(args):
         with _generation_seed(42, device), torch.inference_mode():
             reconstructed = model.generate_camera_trajectory(subject_trajectory=subject, subject_volume=volume,
                 camera_trajectory=reversed_camera, src_key_mask=padding, padding_mask=padding,
-                memory_teacher_forcing_ratio=.5, caption_embedding=caption)["reconstructed"]
+                memory_teacher_forcing_ratio=.5, caption_embedding=caption,
+                caption_presence_mask=batch.get('prompt_none_mask'))["reconstructed"]
         generated.trajectories["Source (time-reversed GT)"] = _sim_standard(reversed_camera, normalized=True)[0][0][known.cpu().numpy()]
         generated.trajectories["lens_craft:conflicting_source+prompt"] = _sim_standard(reconstructed, normalized=True)[0][0][known.cpu().numpy()]
         generated.metadata.update(conflicting_prompt=True, source_transformation="reverse valid camera frames in time; original subject and original target prompt retained",

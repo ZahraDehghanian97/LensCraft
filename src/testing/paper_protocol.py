@@ -86,6 +86,7 @@ def install_random_keyframe_protocol(evaluator, cache_dir=None):
                 camera_trajectory=camera, src_key_mask=source_mask, padding_mask=padding,
                 memory_teacher_forcing_ratio=(0.0 if item == RANDOM_KEYFRAME_MODES[0] else 0.5),
                 caption_embedding=caption,
+                caption_presence_mask=batch.get('prompt_none_mask'),
             )["reconstructed"]
             _update_generation_metrics(
                 metric_callback, item, trajectory, reference[1], reference[2], reference[3],

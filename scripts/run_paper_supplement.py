@@ -180,7 +180,7 @@ def _timing_inputs(cfg, args):
         def generate():
             return model.generate_camera_trajectory(subject_trajectory=subject, subject_volume=volume,
                 camera_trajectory=None, padding_mask=padding, memory_teacher_forcing_ratio=1.0,
-                caption_embedding=caption)["reconstructed"]
+                caption_embedding=caption, caption_presence_mask=batch.get('prompt_none_mask'))["reconstructed"]
         if length_protocol["extrapolates_checkpoint_native_length"]:
             limitations.append(f"LensCraft generates {args.eff_frames} frames with unchanged weights trained at {length_protocol['checkpoint_native_frames']} frames; this is a length-extrapolation timing benchmark, not a quality evaluation at the trained length.")
         return generate, model, limitations, length_protocol

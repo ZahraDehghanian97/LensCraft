@@ -7,3 +7,6 @@ config:
   clip_model_name: ${clip.model_name}
   embedding_dim: ${clip.latent_dim}
   normalize: true
+  annotations_path: null
+  sample_indices_path: null
+  fill_none_with_mean: true

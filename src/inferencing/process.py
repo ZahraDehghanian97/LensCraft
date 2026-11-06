@@ -1,4 +1,5 @@
 import torch
+from data.ccdm.alignment import align_ccdm_to_subject
 
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import structured_conditioning_from_batch
@@ -24,7 +25,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
 
     caption_embedding = (
         structured_conditioning_from_batch(batch)
-        if dataset_type in ("simulation", "et") else None
+        if dataset_type in ("simulation", "et", "ccdm") else None
     )
 
     view = to_simulation_format(
@@ -45,7 +46,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             _, subject_denorm, _ = SimulationDataset.normalize_item(
                 sim_camera, sim_subject, None, False
             )
-            sim_generated[..., :3] += subject_denorm[..., :3]
+            sim_generated = align_ccdm_to_subject(sim_generated, subject_denorm)
         return ({"prompt_generation": sim_generated},
                 sim_camera, sim_subject, sim_volume, sim_padding, None)
 
@@ -70,6 +71,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             else sim_padding
         )
         mode_caption = caption_embedding
+        mode_presence = batch.get('prompt_none_mask')
 
         if mode == "source_trajectory":
             # Pair each trajectory with a *different* sample's prompt.
@@ -78,9 +80,13 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             shuffled = [caption_embedding[:, idx, :]
                         for idx in batch["random_prompt_index"]]
             mode_caption = torch.stack(shuffled, dim=1).to(device)
+            if mode_presence is not None:
+                indices = torch.as_tensor(batch['random_prompt_index'], device=device, dtype=torch.long)
+                mode_presence = mode_presence.index_select(0, indices)
 
         results[mode] = generate_lenscraft_trajectory(
             model, view, source_mask, mode_caption, MEMORY_TEACHER_FORCING_BY_MODE[mode],
+            caption_presence_mask=mode_presence,
         )
 
     return results, sim_camera, sim_subject, sim_volume, sim_padding, keyframing_mask

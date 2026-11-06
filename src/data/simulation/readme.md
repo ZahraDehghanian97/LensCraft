@@ -21,16 +21,58 @@ simulation data **without reading the studio's TypeScript generator or
 | Sample id | dataset-scoped file name `simulation_{datasetId}_{i}.msgpack` |
 | Sample | 100–500-frame camera 6-DoF + one box subject (matching 6-DoF + volume) + structured prompt & instruction |
 | Sequence length | source length is preserved as `original_frame_count`; 100–500-frame clips are reduced to the configured model length (30 by default) by selecting shared, exact camera/subject frame pairs over the full normalized timeline; generic upsampling interpolates the camera in subject-local space |
-| Frame rate | not encoded; every source clip spans one complete instruction |
+| Frame rate | v4 manifest records FPS (default 30) and `(frameCount - 1) / FPS` duration; older archives have no physical time metadata |
 | Units / world | three.js scene units (~meters), right-handed, **y up**, ground at y = 0 |
 | Camera pose | position + Euler **XYZ** radians of an **OpenGL-style** camera (x right, y up, looks down −z) |
-| Subject | box: per-frame center position + Euler XYZ, plus one (w, h, d) volume; non-airborne paths keep the box base on y = 0 |
+| Subject | box: per-frame center position + Euler XYZ, plus one (w, h, d) volume; legacy ground paths rest at y = 0, human root bob keeps the box above it |
 | Quantization | exporter stores `round(x·1000)` ints; Python divides by manifest `fixedPointScale` (default 1000, ~±5e-4 noise) |
 | Labels | cinematography prompt + simulation instruction with string, boolean, and finite-number values (§3.4), plus a templated English caption rendered at load time |
 | Manifest | schema/generator version, seed, export config, and encoding metadata in `manifest.json` |
 | Python expectation | trusted schema-v2 studio export with exactly 1 subject/instruction and 100–500 source frames; random export excludes Dutch/roll |
 | Normalization | dataset-level per-axis z-score of positions and volume only; rotations stay raw radians |
 | Splits | none stored; `CameraTrajectoryDataModule` random-splits by fraction at runtime |
+
+### Optional ET-compatible observation profile
+
+The studio's ET training profile keeps the four-section schema-v2 payload and
+full physical subject/camera poses. Its `manifest.modelObservation` declaration
+is consumed by `SimulationDataset`:
+
+```json
+{
+  "profile": "et_compatible_v1",
+  "subjectOrientation": "unavailable",
+  "subjectDimensions": "default",
+  "defaultSubjectDimensions": [0.5, 1.7, 0.3],
+  "simulationInstructions": "unavailable",
+  "captionPolicy": "motion_only",
+  "movementSpeed": "unavailable"
+}
+```
+
+Model conditions retain subject XYZ and the primary motion type. The optional
+`movementSpeed: "unavailable"` declaration also hides the diagnostic speed
+token; earlier declarations without it retain supplied speed. Subject
+Euler angles become zero placeholders, dimensions become the ET adapter's
+default, and all 36 technical plus eight endpoint tokens become absent.
+`subject_orientation_available` and `subject_dimensions_available` are false;
+the current core model does not interpret these flags as a learned cue.
+The generator's optional `observedMotionText` supplies the sparse text caption.
+
+`geometry_reference` preserves physical camera/subject poses and dimensions
+in unnormalized scene units for geometry metrics, including the higher
+resolution reference path. It is separate from model conditioning. Normal
+exports retain their previous item/collate behavior. Keep the manifest with
+the payload; removing it removes the observation contract.
+
+ET-profile source lengths may be 30–300 frames, sampled from ET training
+duration statistics with an explicit 30-frame floor. The profile uses training
+aggregate distributions, not native ET camera/subject trajectories or ET test
+statistics. Calibration controls use the ET adapter's common 30-frame timeline
+(linear positions and camera SLERP); the generator fits its actual 30 paired
+nearest-frame SIM samples to those controls. Reconstructed subject-center drift
+is not proof of semantic
+walking; matched center rays/FOV proxies are not measured human shot sizes.
 
 ## 2. Directory layout & file formats
 
@@ -68,82 +110,36 @@ the dictionary without remapping every reference.
 
 ### 2.1 Manifest and reproducibility
 
-New exports include `manifest.json`:
+New exports include `manifest.json`. Selected fields from the v4 contract
+are shown below; the full file also contains normalized effective class/motion
+probabilities, realized class-by-motion counts, camera-quality policy, and
+rejection counts. These excerpted fields are not a complete manifest:
 
 ```json
 {
   "schemaVersion": 2,
-  "generatorVersion": 2,
+  "generatorVersion": 4,
   "datasetId": "<archive-unique id>",
   "generatedAt": "<ISO-8601 timestamp>",
   "seed": "<string>",
   "contract": {
     "subjectsPerSample": 1,
     "instructionsPerSample": 1,
-    "frameCountStoredAsParameter": false,
-    "subjectIndexStoredAsParameter": false,
-    "parameterValueTypes": ["string", "number", "boolean"],
     "movementSampling": "largest-remainder-marginal",
-    "cameraPromptSampling": "rejection-sampled-for-observable-endpoints",
-    "initialSetupSource": "derived-from-first-camera-frame",
-    "finalSetupSource": "derived-from-last-camera-frame",
-    "instructionSetupSource": "derived-from-corresponding-camera-endpoints",
-    "noiseApplication": "dynamic-position-before-heading-and-rotation-after-heading"
+    "subjectClassSampling": "largest-remainder-per-compatible-movement",
+    "humanMotion": "procedural-root-trajectories-not-articulated-motion-capture"
   },
   "config": {
     "simulationCount": 1000,
-    "subjectCount": 1,
-    "instructionCount": 1,
+    "subjectMotionPreset": "human",
     "minFrameCount": 100,
     "maxFrameCount": 500,
-    "subjectClassProbabilities": {
-      "chair": 0.20833333333333334,
-      "table": 0.14583333333333334,
-      "laptop": 0.0625,
-      "book": 0.0625,
-      "tree": 0.10416666666666667,
-      "car": 0.20833333333333334,
-      "bicycle": 0.20833333333333334
-    },
-    "movementDistribution": {
-      "linear": 0.14285714285714285,
-      "circular": 0.14285714285714285,
-      "spiral": 0.14285714285714285,
-      "figureEight": 0.14285714285714285,
-      "wave": 0.14285714285714285,
-      "zigzag": 0.14285714285714285,
-      "static": 0.14285714285714285
-    },
-    "dynamicSubjectClassProbabilities": {
-      "car": 0.5,
-      "bicycle": 0.5
-    },
-    "noiseConfig": {
-      "applyNoise": false,
-      "positionAmplitude": 0.1,
-      "rotationAmplitude": 0.02,
-      "frequency": 0.5
-    }
+    "framesPerSecond": 30
   },
-  "realized": {
-    "movementCounts": {
-      "linear": 143,
-      "circular": 143,
-      "spiral": 143,
-      "figureEight": 143,
-      "wave": 143,
-      "zigzag": 143,
-      "static": 142
-    },
-    "subjectClassCounts": {
-      "chair": 30,
-      "table": 21,
-      "laptop": 9,
-      "book": 9,
-      "tree": 15,
-      "car": 458,
-      "bicycle": 458
-    }
+  "time": {
+    "framesPerSecond": 30,
+    "timestampSeconds": "frameIndex / framesPerSecond",
+    "durationSeconds": "(storedFrameCount - 1) / framesPerSecond"
   },
   "encoding": {
     "archiveRootDirectory": "<datasetId>",
@@ -316,24 +312,41 @@ contradict the stored frames.
 `collate_fn` stacks everything, transposes both token grids to
 (tokens, batch, D), and exposes the captions as `text_prompts`.
 
-## 6. Subject motion vocabulary (7 exported types)
+## 6. Subject motion vocabulary (generator v4)
 
-The exporter currently labels paths as `static`, `circular`, `linear`,
-`zigzag`, `spiral`, `figureEight`, or `wave`. Moving paths are assigned only
-to ground vehicles; props and vegetation remain `static`. The simulator owns
-their physical parameters, smooth variation, grounding, and multi-subject
-collision avoidance; consumers should not reproduce those algorithms from
-stale constants. LensCraft jointly resamples the emitted camera and selected-
-subject paths on the same normalized time grid.
+The exporter supports the original `static`, `circular`, `linear`, `zigzag`,
+`spiral`, `figureEight`, and `wave` plus human `walk`, `run`, `wander`,
+`stopStart`, `sidestep`, `backward`, `turnInPlace`, and `idle`. Human subjects
+have varied bounded body dimensions and procedural root trajectories. Body
+heading is independent of travel for sideways/backward motion; static is an
+exact freeze, while idle and turning are non-static for cohort selection.
+The eight human motion types require a Human subject; the six original moving
+families accept Human/Car/Bicycle, and stationary props remain available.
 
-Sampling is movement-first. Hamilton/largest-remainder allocation fixes the
-requested movement marginal for the finite export (up to the unavoidable
-single-sample rounding), then a seeded shuffle selects order. Dynamic samples
-draw only from the normalized Car/Bicycle conditional weights; static samples
-draw from all enabled class weights. A dynamic movement distribution with
-both vehicle weights at zero is rejected before generation. Manifest
-`config` values are normalized effective probabilities and `realized` records
-the actual movement and subject-class counts.
+Generation defaults to the human-focused preset, with mixed and legacy presets
+available. Sampling remains movement-first: largest-remainder allocation fixes
+finite movement counts, then compatible classes are allocated within each
+movement. Class weights are conditional, not global proportions. Invalid
+class/movement combinations fail before generation. Manifest `config` records
+effective distributions and `realized` records movement, class, class-by-movement,
+and camera counts. The camera quality and geometry-label checks still run on
+the quantized output and the 30 paired training poses.
+
+Generator version 4 retains schema version 2 and the same four-element
+MessagePack format. Its manifest records `framesPerSecond`, timestamps
+`frameIndex / framesPerSecond`, and duration `(frameCount - 1) / framesPerSecond`.
+The current model consumes the same 30 resampled poses and body dimensions;
+time is recorded for auditing but is not a model input. Human gait is only a
+rigid bounding-box-centre trajectory, not a skeleton or motion capture. There
+is no hidden attention ROI. Older manifest-less and version-2/3 exports remain
+readable; do not reuse their sample hashes or cached cohort results as v4 results.
+
+The caption vocabulary and paper/ablation dynamic cohort lists cover all eight
+new motion names. `idle` and `turnInPlace` belong to the non-static cohort even
+without substantial translation. Re-running old exact-cohort validation with
+new dynamic names requires a fresh evaluation or the original runner version.
+See [generator documentation](../../../../camera_movement_simulation/README.md)
+for presets, physical conventions, controls, and verification commands.
 
 `movement_types.txt` is an on-demand per-file index used by
 `allowed_movement_types`. Its metadata sidecar uses the same dataset

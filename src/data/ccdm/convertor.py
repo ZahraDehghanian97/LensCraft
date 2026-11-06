@@ -1,17 +1,61 @@
+import math
 import torch
 from data.convertor.utils import handle_single_or_batch
 from data.convertor.base_convertor import BaseConvertor
 
 class CCDMConvertor(BaseConvertor):
     # The native right-handed projection frame is X-left/Y-up/Z-forward
-    # (Unity's replay negates native screen X). Standard poses use OpenCV's
+    # (Unity's replay negates native screen X). Stored screen Y is positive
+    # down: camcontrol.cs uses Screen.height - WorldToScreenPoint(...).y.
+    # Standard poses use OpenCV's
     # X-right/Y-down/Z-forward camera frame. This changes camera axes only;
     # the subject-relative world position stays in the dataset's coordinates.
     _NATIVE_TO_CV = (-1.0, -1.0, 1.0)
+    _SUBJECT_BASIS = (-1.0, 1.0, -1.0)
 
-    def __init__(self, hfov_deg: float = 45.0, aspect: float = 16 / 9):
-        self.hfov_deg = hfov_deg
-        self.aspect = aspect
+    @classmethod
+    def native_subject_rotation(cls, reference):
+        return torch.diag(reference.new_tensor(cls._SUBJECT_BASIS))
+
+    @classmethod
+    def place_in_subject_frame(cls, transform, subject_transform):
+        """Place native CCDM world poses at the supplied subject pose."""
+        rotation = subject_transform[..., :3, :3] @ cls.native_subject_rotation(transform).T
+        result = transform.clone()
+        result[..., :3, :3] = rotation @ transform[..., :3, :3]
+        result[..., :3, 3] = (rotation @ transform[..., :3, 3, None]).squeeze(-1) + subject_transform[..., :3, 3]
+        return result
+
+    @classmethod
+    def to_native_subject_frame(cls, transform, subject_transform):
+        """Undo subject placement before encoding native subject-relative features."""
+        rotation = cls.native_subject_rotation(transform) @ subject_transform[..., :3, :3].transpose(-1, -2)
+        result = transform.clone()
+        result[..., :3, :3] = rotation @ transform[..., :3, :3]
+        offset = transform[..., :3, 3] - subject_transform[..., :3, 3]
+        result[..., :3, 3] = (rotation @ offset[..., None]).squeeze(-1)
+        return result
+
+    def __init__(self, hfov_deg: float | None = None, aspect: float = 16 / 9,
+                 *, vfov_deg: float | None = None):
+        # Unity Camera.fieldOfView is vertical. The paper's default 45 degrees
+        # is modeled as vertical here; native calibration/aspect are unavailable.
+        # Explicit horizontal-FOV callers retain that parameter's meaning.
+        if hfov_deg is not None and vfov_deg is not None:
+            raise ValueError('Specify horizontal or vertical FOV, not both')
+        if not math.isfinite(aspect) or aspect <= 0:
+            raise ValueError('Aspect must be finite and positive')
+        if hfov_deg is None:
+            vfov_deg = 45.0 if vfov_deg is None else float(vfov_deg)
+            if not math.isfinite(vfov_deg) or not 0 < vfov_deg < 180:
+                raise ValueError('Vertical FOV must be between zero and 180 degrees')
+            hfov_deg = math.degrees(2 * math.atan(math.tan(math.radians(vfov_deg) / 2) * aspect))
+        else:
+            hfov_deg = float(hfov_deg)
+            if not math.isfinite(hfov_deg) or not 0 < hfov_deg < 180:
+                raise ValueError('Horizontal FOV must be between zero and 180 degrees')
+            vfov_deg = math.degrees(2 * math.atan(math.tan(math.radians(hfov_deg) / 2) / aspect))
+        self.hfov_deg, self.vfov_deg, self.aspect = hfov_deg, vfov_deg, aspect
 
     @handle_single_or_batch(arg_specs=[(1, 2), (2, 2)])
     def convert_ccdm_to_transform(self, ccdm: torch.Tensor, subject_position: torch.Tensor | None = None) -> torch.Tensor:
@@ -26,7 +70,7 @@ class CCDMConvertor(BaseConvertor):
 
         r_norm = torch.linalg.norm(r, dim=-1, keepdim=True)
         q_z_abs = r_norm / torch.sqrt(1 + (p_x * k_h)**2 + (p_y * k_v)**2)
-        q_x_abs, q_y_abs = q_z_abs * p_x * k_h, q_z_abs * p_y * k_v
+        q_x_abs, q_y_abs = q_z_abs * p_x * k_h, -q_z_abs * p_y * k_v
 
         candidates = []
         for q_z_sign in [1, -1]:
@@ -96,7 +140,7 @@ class CCDMConvertor(BaseConvertor):
         safe_depth = depth.abs().maximum(min_depth)
         safe_depth = torch.where(depth < 0, -safe_depth, safe_depth)
         p_x = (q_cam[..., 0] / safe_depth) / torch.tan(hfov / 2.0)
-        p_y = (q_cam[..., 1] / safe_depth) / torch.tan(vfov / 2.0)
+        p_y = -(q_cam[..., 1] / safe_depth) / torch.tan(vfov / 2.0)
 
         return torch.cat([rel_position, p_x.unsqueeze(-1), p_y.unsqueeze(-1)], dim=-1)
 
@@ -112,7 +156,11 @@ class CCDMConvertor(BaseConvertor):
         dtype = trajectory.dtype
 
         subject_position = torch.zeros((batch_size, seq_len, 3), device=device, dtype=dtype)
-        subject_rot = torch.eye(3, device=device, dtype=dtype).expand(batch_size, seq_len, 3, 3)
+        # Native captions place the subject's front at world +Z and left at
+        # world +X. Simulation's zero-heading subject faces -Z (left=-X).
+        # Encode that fixed subject basis as a 180-degree yaw; camera world
+        # positions and orientations must not be reflected or rescaled.
+        subject_rot = self.native_subject_rotation(trajectory).expand(batch_size, seq_len, 3, 3)
 
         subject_transform = torch.eye(4, device=device, dtype=dtype).expand(batch_size, seq_len, 4, 4).clone()
         subject_transform[..., :3, :3] = subject_rot
@@ -131,10 +179,9 @@ class CCDMConvertor(BaseConvertor):
         subject_trajectory: torch.Tensor | None = None,
         subject_volume: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, None, None]:
-        subject_position = (
-            subject_trajectory[..., :3, 3] if subject_trajectory is not None else None
-        )
-        trajectory = self.transform_to_ccdm(transform, subject_position)
+        if subject_trajectory is not None:
+            transform = self.to_native_subject_frame(transform, subject_trajectory)
+        trajectory = self.transform_to_ccdm(transform)
         subject_trajectory = None
         subject_volume = None
         return trajectory, subject_trajectory, subject_volume

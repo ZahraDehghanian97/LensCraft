@@ -1,0 +1,19 @@
+diff --git a/clatr/src/models/clatr.py b/clatr/src/models/clatr.py
+index 796edfcec8502a18237db3167814fffb9a840e6d..e05106974b8f2a3d5cb73138950ed1f45fa41655 100644
+--- a/clatr/src/models/clatr.py
++++ b/clatr/src/models/clatr.py
+@@ -123,9 +123,11 @@ class CLaTr(TEMOS):
+         self.validation_step_sent = []
+ 
+         if checkpoint_path is not None:
+-            state_dict = torch.load(checkpoint_path, map_location=torch.device(device))[
+-                "state_dict"
+-            ]
++            state_dict = torch.load(
++                checkpoint_path,
++                map_location=torch.device(device),
++                weights_only=False,
++            )["state_dict"]
+             print(self.load_state_dict(state_dict))
+             for param in self.parameters():
+                 param.requires_grad = False

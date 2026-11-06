@@ -17,6 +17,7 @@ TRAJECTORY_CACHE_VERSION = 6
 ET_GENERATION_SEED_VERSION = 2
 
 LENSCRAFT_GENERATION_VERSION = 2
+CCDM_COORDINATE_FRAME_VERSION = 3
 _LENSCRAFT_FORMATS = frozenset({"simulation", "lens_craft"})
 
 _PATH_INPUT_KEYS = frozenset(
@@ -29,6 +30,8 @@ _PATH_INPUT_KEYS = frozenset(
         "data_path",
         "dataset_dir",
         "et_cin_lang_path",
+        "annotations_path",
+        "sample_indices_path",
         "project_config_dir",
     }
 )
@@ -333,6 +336,9 @@ def build_trajectory_cache_key(
         source["etGenerationSeedVersion"] = ET_GENERATION_SEED_VERSION
     if model_type in _LENSCRAFT_FORMATS or model_type is None:
         source["lenscraftGenerationVersion"] = LENSCRAFT_GENERATION_VERSION
+    dataset_target = str(cache_config.get("data", {}).get("dataset", {}).get("config", {}).get("_target_", ""))
+    if model_type == "ccdm" or "CCDMDataset" in dataset_target:
+        source["ccdmCoordinateFrameVersion"] = CCDM_COORDINATE_FRAME_VERSION
     canonical = json.dumps(
         source, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")

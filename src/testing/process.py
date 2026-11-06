@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 import torch
 
 from data.convertor.convertor import convert_to_target
+from data.ccdm.alignment import align_ccdm_to_subject
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import structured_conditioning_from_batch
 from data.sim_format import (
@@ -105,6 +106,7 @@ def _lenscraft_first_position(
     )
     lenscraft_generation = ref_model.generate_camera_trajectory(
         caption_embedding=caption_embedding,
+        caption_presence_mask=batch.get('prompt_none_mask'),
         camera_trajectory=None,
         subject_trajectory=sim_subject_trajectory,
         subject_volume=sim_subject_volume,
@@ -203,7 +205,7 @@ def _generate_baseline_variants(
             _, subject_denorm, _ = SimulationDataset.normalize_item(
                 sim_camera_trajectory, sim_subject_trajectory, None, False
             )
-            aligned[..., :3] += subject_denorm[..., :3]
+            aligned = align_ccdm_to_subject(aligned, subject_denorm)
         aligned, _, _ = SimulationDataset.normalize_item(aligned, None, None, True)
         normalized_trajectory = aligned
         if want_norm:
@@ -328,6 +330,31 @@ def _update_geometry_metrics(callback, item, generated, view, batch,
     reference = batch.get("simulation_reference")
     if reference is not None and reference["camera_trajectory"].shape[1] == target.shape[1]:
         intrinsics = reference.get("camera_intrinsics")
+    # ET-like SIM exports keep physical body pose and dimensions separately
+    # from their deliberately incomplete model conditions. Prefer the physical
+    # reference on the exact evaluation timeline (including high-res views).
+    geometry_reference = None
+    if reference is not None and reference["camera_trajectory"].shape[1] == target.shape[1]:
+        geometry_reference = reference.get("geometry_reference")
+    if geometry_reference is None:
+        geometry_reference = batch.get("geometry_reference")
+    if geometry_reference is not None:
+        reference_is_normalized = geometry_reference.get("simulation_normalized", False)
+        reference_camera, reference_subject, reference_volume, reference_padding = convert_to_target(
+            "simulation", "simulation", geometry_reference["camera_trajectory"],
+            geometry_reference["subject_trajectory"], geometry_reference["subject_volume"],
+            geometry_reference["padding_mask"], target_len=target.shape[1],
+            need_denormal=reference_is_normalized, need_normal=False,
+        )
+        # Camera target already follows the generation-view sampling; full
+        # reference sampling can only replace it when the timelines coincide.
+        same_timeline = geometry_reference["camera_trajectory"].shape[1] == target.shape[1]
+        if same_timeline:
+            target = reference_camera
+        subject, volume = reference_subject, reference_volume
+        if reference_padding is not None:
+            valid = valid & ~reference_padding
+        intrinsics = geometry_reference.get("camera_intrinsics") if same_timeline else None
     if intrinsics is not None and intrinsics.shape[1] != target.shape[1]:
         # Do not pair a lens sample with an unrelated resampled camera pose.
         intrinsics = None
@@ -457,11 +484,7 @@ def test_batch(
 
     for metric_item in metric_items:
         generation_mode, count = parse_keyframe_mode(metric_item, num_keyframes)
-        caption_embedding = (
-            structured_conditioning_from_batch(batch)
-            if dataset_type in ("simulation", "et")
-            else None
-        )
+        caption_embedding = structured_conditioning_from_batch(batch)
         memory_teacher_forcing_ratio = MEMORY_TEACHER_FORCING_BY_MODE[generation_mode]
         if count is not None and count not in masks_by_count:
             masks_by_count[count] = build_keyframing_mask(
@@ -473,6 +496,7 @@ def test_batch(
         if cached_outputs is None:
             sim_generated_trajectory = generate_lenscraft_trajectory(
                 model, generation_view, source_mask, caption_embedding, memory_teacher_forcing_ratio,
+                caption_presence_mask=batch.get('prompt_none_mask'),
             )
         else:
             item_output = cached_outputs["items"][metric_item]

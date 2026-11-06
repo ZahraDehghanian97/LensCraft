@@ -46,7 +46,8 @@ def generate_baseline_trajectory(
     return sim_generated, generated_padding
 
 
-def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, memory_ratio):
+def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, memory_ratio,
+                                 *, caption_presence_mask=None):
     """Apply a conditioning mode while keeping source visibility and padding separate."""
     camera, subject, volume, padding = view
     return model.generate_camera_trajectory(
@@ -57,4 +58,5 @@ def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, m
         padding_mask=padding,
         memory_teacher_forcing_ratio=memory_ratio,
         caption_embedding=caption_embedding,
+        caption_presence_mask=caption_presence_mask,
     )["reconstructed"]

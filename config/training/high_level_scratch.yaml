@@ -1,0 +1,47 @@
+# Fresh SIM-only training. Launch with initialize_from_checkpoint=null,
+# resume_checkpoint=null and checkpoint_monitor=val_transfer_prompt_score.
+# Retain the original 100-epoch schedule, batch_size=128 and seed=42; the
+# launcher owns these root-level settings and the frozen 60k/20k/20k split.
+defaults:
+  - high_level_sparse
+  - _self_
+
+# Restore the original scratch optimizer/scheduler, overriding the inherited
+# 1e-5 continuation rate. BaseTrainer steps this scheduler after each optimizer
+# step, so warmup_steps=10 means ten optimizer steps, not ten epochs.
+optimizer:
+  lr: 1.0e-4
+lr_scheduler:
+  _target_: training.lr_schedulers.root_warmup_cosine.RootWarmupCosineDecayLR
+  _partial_: true
+  warmup_steps: 10
+  rate: 0.5714
+  n_th_root: 2
+  base_lr: [0.0003]
+
+# Predeclared 50% pure prompt batches, 50% divided among reference families.
+# Caption omission remains 75% high-level-only and 25% unmodified captions;
+# original / ET-shaped / CCDM-shaped SIM views remain 50% / 25% / 25%.
+conditioning:
+  mode_weights:
+    prompt_generation: 3.0
+    reconstruction: 1.0
+    key_framing: 1.0
+    key_framing+prompt: 1.0
+
+# Selection is the unweighted mean of four pure-prompt scores: clean SIM,
+# sparse SIM, ET-shaped SIM and CCDM-shaped SIM. Each score is normalized
+# position error + rotation error/180 + normalized step error + the mean of
+# relative-rotation, rotation-step and angular-path errors divided by 180.
+# It uses no native ET/CCDM examples, cameras, labels or empirical mask bank.
+# Each diagnostic uses the fixed first 16 validation batches (2,048 examples
+# with batch_size=128 on one device). Ordinary prompt val_loss still covers the
+# full 20k validation split; training and final evaluation are not capped here.
+# Existing all-family val_transfer_score remains logged and unchanged.
+validation_conditioning:
+  max_batches: 16
+  motion_score_weight: 1.0
+validation_caption_missingness:
+  max_batches: 16
+validation_domain_augmentation:
+  max_batches: 16

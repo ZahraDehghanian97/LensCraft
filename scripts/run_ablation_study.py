@@ -34,8 +34,11 @@ VARIANTS = {
     "without_volume": {"training.model.module.use_subject_volume": False},
     "without_noise": {"training.noise.initial_std": 0.0, "training.noise.final_std": 0.0},
 }
+# Static means an exact pose freeze; idle and turn-in-place still change poses.
+# This list is part of saved evaluation provenance and checked on resume.
 COHORTS = {"static": ["static"], "dynamic": ["circular", "zigzag", "linear", "spiral",
-    "figureEight", "wave", "pendulum", "orbital", "bounce"]}
+    "figureEight", "wave", "pendulum", "orbital", "bounce",
+    "walk", "run", "wander", "stopStart", "sidestep", "backward", "turnInPlace", "idle"]}
 METRICS = ("clatr_score", "fcd", "precision", "recall", "density", "coverage", "clip_score")
 EPOCHS, BATCH_SIZE, SEED, TEST_FRACTION = 100, 128, 42, 0.1
 ENV_KEYS = ("CLIP_EMBEDDINGS_CACHE_DIR", "HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",

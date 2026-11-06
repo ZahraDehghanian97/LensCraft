@@ -1,0 +1,3 @@
+# Install in the project's existing ML environment.
+pytest>=7.3
+ruff>=0.6

@@ -30,7 +30,7 @@ python src/translate_prompt.py \
   --output /path/to/et-evaluation/fresh_annotations.json \
   --metadata-output /path/to/et-evaluation/fresh_annotations.metadata.json \
   --cache-dir /path/to/et-evaluation/gateway_cache \
-  --model zai/glm-5.3-flash
+  --model deepseek/deepseek-v4.1-flash-1017
 
 python scripts/prepare_et_gateway_evaluation.py \
   --dataset-root "$ET_DATA_DIR" --output-dir /path/to/et-evaluation \

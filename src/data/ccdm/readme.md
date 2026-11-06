@@ -48,12 +48,22 @@ Camera Diffusion Model, EG 2024) **without reading
 1. **Subject-relative and subject-free.** The data contains no subject
    trajectory. Per frame, `r = camera_position − subject_position`; the world
    frame is effectively the subject's local frame.
+   Native view captions put front at +Z and left at +X. Simulation defines
+   zero-heading front at -Z and left at -X, so the synthesized subject transform
+   has a fixed 180-degree Y rotation. Camera world poses are unchanged. Leaving
+   the synthesized subject at identity reverses the conditioning view labels.
 2. **Screen position `p`.** With `q` = subject position in the native
    right-handed camera frame (+X left, +Y up, +Z forward):
-   `p_x = (q_x/q_z)/tan(hfov/2)` and `p_y = (q_y/q_z)/tan(vfov/2)`, so
+   `p_x = (q_x/q_z)/tan(hfov/2)` and `p_y = -(q_y/q_z)/tan(vfov/2)`, so
    `|p| ≤ 1` ⇔ subject inside the frustum. The FOV itself is **not part of the
    data** — the original Unity consumer applies its own camera FOV at replay
    time, so any pose reconstruction must pick an FOV as a modeling choice.
+   Stored Y is downward: the publisher's `camcontrol.cs` subtracts pixel Y
+   from `Screen.height` before normalizing it. The default reconstruction uses
+   vertical FOV 45 degrees and an assumed 16:9 aspect ratio. Unity's
+   `Camera.fieldOfView` is vertical; the released demo scene's 60-degree FOV
+   does not establish the training optics. Coordinate protocol version 3 fixes
+   the prior stored-Y sign and horizontal/vertical default-FOV mismatch.
    The shared standard pose uses OpenCV camera axes (+X right, +Y down,
    +Z forward). The converter bridges these camera bases with
    `R_cv = R_native @ diag(-1, -1, 1)` and reverses that bridge before

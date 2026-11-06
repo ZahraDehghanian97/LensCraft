@@ -11,6 +11,7 @@ TRAJECTORY_LOSS_KEYS = (
     "first_frame", "relative", "speed", "rotation_absolute", "rotation_raw"
 )
 KEYFRAME_LOSS_KEYS = ("keyframe_position", "keyframe_rotation")
+OPTIONAL_POSITION_LOSS_KEYS = ("position_absolute",)
 
 
 class CameraTrajectoryLoss:
@@ -89,6 +90,7 @@ class CameraTrajectoryLoss:
             tgt_key_padding_mask=tgt_key_padding_mask,
             projected_pred=model_output.get('reconstructed_rot_matrix'),
             known_mask=(model_output.get('known_mask') if known_mask is None else known_mask),
+            cycle_prompt_mask=model_output.get('cycle_prompt_mask'),
         )
 
     def _euler_traj_to_matrix(self, traj6):
@@ -102,6 +104,7 @@ class CameraTrajectoryLoss:
         self, trajectory_pred, trajectory_target, clip_pred, clip_target, batch,
         cycle_embeddings=None, tgt_key_padding_mask=None, projected_pred=None,
         known_mask=None,
+        cycle_prompt_mask=None,
     ):
         loss_dict = dict()
 
@@ -124,7 +127,8 @@ class CameraTrajectoryLoss:
                 clip_target=clip_pred,
                 clip_pred=cycle_embeddings,
                 weighted_clip_loss=self.weighted_clip_loss,
-                encoder_loss_function=self.encoder_loss_function
+                encoder_loss_function=self.encoder_loss_function,
+                prompt_none_mask=cycle_prompt_mask,
             )
 
             loss_dict["cycle"] = total_cycle_loss
@@ -135,7 +139,7 @@ class CameraTrajectoryLoss:
 
 
         if any(self.losses_list.get(key, 0)
-               for key in TRAJECTORY_LOSS_KEYS + KEYFRAME_LOSS_KEYS):
+               for key in TRAJECTORY_LOSS_KEYS + KEYFRAME_LOSS_KEYS + OPTIONAL_POSITION_LOSS_KEYS):
             loss_dict.update(self.compute_trajectory_losses(
                 trajectory_pred, trajectory_target,
                 tgt_key_padding_mask=tgt_key_padding_mask,
@@ -179,6 +183,11 @@ class CameraTrajectoryLoss:
         the endpoint derivatives of acos; evaluation reports geodesic degrees.
         These terms are opt-in through losses_list, so old configurations retain
         their original total objective.
+
+        ``position_absolute`` is an optional all-valid-frame position MSE.
+        It anchors offsets throughout the path, independently of frame zero
+        and the relative/step objectives. Its units match the positions passed
+        to this loss (normalized simulation coordinates during training).
         """
         if pred.ndim != 3 or pred.shape[-1] != 12 or pred.shape != target.shape:
             raise ValueError("Expected matching (batch, frames, 12) trajectories")
@@ -239,7 +248,7 @@ class CameraTrajectoryLoss:
             first_valid = valid[:, :1]
             relative_valid = first_valid & valid[:, 1:]
             speed_valid = valid[:, :-1] & valid[:, 1:]
-            return {
+            losses = {
                 "first_frame": (
                     position_error(p_pred[:, :1], p_tgt[:, :1], first_valid)
                     + rotation_error(R_pred[:, :1], R_tgt[:, :1], first_valid)
@@ -269,6 +278,9 @@ class CameraTrajectoryLoss:
                 "keyframe_position": position_error(p_pred, p_tgt, known_valid),
                 "keyframe_rotation": rotation_error(R_pred, R_tgt, known_valid),
             }
+            if self.losses_list.get("position_absolute", 0):
+                losses["position_absolute"] = position_error(p_pred, p_tgt, valid)
+            return losses
 
     def compute_trajectory_loss(
         self, pred, target, tgt_key_padding_mask=None, projected_pred=None,

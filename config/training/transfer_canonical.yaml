@@ -1,0 +1,10 @@
+# Opt-in simulation-only continuation in an initial-camera coordinate frame.
+# This is a synthetic training view, not a native ET inference calibration.
+# Launch with data.compact_batches=false: per-example movement masking requires
+# the simulation annotation metadata that compact batches omit.
+defaults:
+  - transfer_robust
+  - _self_
+
+domain_augmentation:
+  et_coordinate_frame: first_camera

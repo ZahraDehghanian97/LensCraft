@@ -1,0 +1,30 @@
+# Opt-in SIM-only continuation focused on the native CCDM information contract.
+# Launch with data.compact_batches=false, checkpoint_monitor=val_ccdm_prompt_score,
+# initialize_from_checkpoint=<SIM checkpoint>, resume_checkpoint=null,
+# trainer.max_epochs=5.
+# No native CCDM examples, learned scale factors or empirical test masks are used.
+defaults:
+  - high_level_scratch
+  - _self_
+
+optimizer:
+  lr: 1.0e-5
+lr_scheduler: null
+
+domain_augmentation:
+  et_probability: 0.10
+  ccdm_probability: 0.65
+  ccdm_static_motion: true
+  ccdm_native_manifold: true
+
+# Motion captions survive on stationary upright SIM subjects. Camera-local
+# motion fields require exact native 5-D rotation reconstruction; positional
+# dolly/pedestal/arc/crane type, speed and easing survive removal of roll.
+# Other samples retain angular-endpoint supervision. Shot size/framing stay absent
+# because the native adapter replaces the simulator's subject dimensions.
+conditioning:
+  mode_weights:
+    prompt_generation: 6.0
+    reconstruction: 1.0
+    key_framing: 1.0
+    key_framing+prompt: 1.0

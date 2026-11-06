@@ -26,6 +26,7 @@ from .metadata import (
     resolve_dataset_root,
 )
 from .utils import fix_prompts_and_instructions, load_clip_means
+from .observation import ModelObservationPolicy
 from data.collate_utils import (
     collate_structured_conditioning,
     collate_trajectories,
@@ -36,6 +37,7 @@ from data.collate_utils import (
 class SimulationDataset(Dataset):
     _normalization_parameters = None
     _normalization_parameters_cache = {}
+    _normalization_parameters_override = None
 
     def __init__(
         self,
@@ -74,6 +76,7 @@ class SimulationDataset(Dataset):
         self.embedding_means = load_clip_means() if self.fill_none_with_mean else None
 
         self.manifest = load_dataset_manifest(self.data_path)
+        self.model_observation_policy = ModelObservationPolicy.from_manifest(self.manifest)
         if self.manifest is not None:
             export_config = self.manifest.get("config", {})
             for count_name in ("subjectCount", "instructionCount"):
@@ -173,11 +176,33 @@ class SimulationDataset(Dataset):
         dataset_fingerprint: Optional[str] = None,
         target_frame_count: int = SIMULATION_FRAME_COUNT,
     ) -> Dict:
+        """Use this dataset's statistics, or an explicit shared reference export.
+
+        Set SIMULATION_NORMALIZATION_DATA_PATH for training and evaluation to
+        share an independent dataset's coordinate scales. The override applies
+        to both dataset instances and the static ET/CCDM conversion helpers.
+        """
+        normalization_data_path = os.environ.get("SIMULATION_NORMALIZATION_DATA_PATH")
+        override_key = (
+            (str(Path(normalization_data_path).expanduser().absolute()), target_frame_count)
+            if normalization_data_path else None
+        )
         if (
             data_path is None
             and SimulationDataset._normalization_parameters is not None
+            and SimulationDataset._normalization_parameters_override == override_key
         ):
             return SimulationDataset._normalization_parameters
+
+        if normalization_data_path:
+            data_path = Path(normalization_data_path).expanduser()
+            # These arguments describe the samples being loaded, not the
+            # reference export. Never decode the reference with their dictionary
+            # or use their inventory/fingerprint to populate its cache.
+            parameter_dictionary = None
+            simulation_files = None
+            fixed_point_scale = None
+            dataset_fingerprint = None
 
         if data_path is None:
             data_path = os.environ.get("SIMULATION_DATA_PATH")
@@ -189,6 +214,8 @@ class SimulationDataset(Dataset):
         data_path = resolve_dataset_root(Path(data_path))
         if simulation_files is None:
             simulation_files = find_simulation_files(data_path)
+        if normalization_data_path and not simulation_files:
+            raise ValueError(f"Normalization reference has no simulation files: {data_path}")
         if fixed_point_scale is None or dataset_fingerprint is None:
             manifest = load_dataset_manifest(data_path)
             if fixed_point_scale is None:
@@ -216,6 +243,7 @@ class SimulationDataset(Dataset):
 
         # Existing inference helpers use this process-wide "current" dataset.
         SimulationDataset._normalization_parameters = parameters
+        SimulationDataset._normalization_parameters_override = override_key
         return parameters
 
     def __len__(self) -> int:
@@ -341,6 +369,22 @@ class SimulationDataset(Dataset):
                 camera_trajectory, subject_trajectory, self.reference_frame_count
             )
             reference_volume = subject_volume
+            reference_intrinsics = extract_camera_intrinsics(
+                data["cameraFrames"], self.reference_frame_count
+            )
+            reference_geometry = None
+            if self.model_observation_policy is not None:
+                reference_geometry = {
+                    "simulation_normalized": False,
+                    "camera_trajectory": reference_camera.clone(),
+                    "subject_trajectory": reference_subject.clone(),
+                    "subject_volume": reference_volume.clone(),
+                    "camera_intrinsics": reference_intrinsics,
+                    "padding_mask": torch.zeros(self.reference_frame_count, dtype=torch.bool),
+                }
+                reference_subject, reference_volume = self.model_observation_policy.subject_condition(
+                    reference_subject, reference_volume,
+                )
             if self.normalize:
                 reference_camera, reference_subject, reference_volume = (
                     SimulationDataset._normalize_item_with_parameters(
@@ -349,14 +393,14 @@ class SimulationDataset(Dataset):
                     )
                 )
             reference = {
-                "camera_intrinsics": extract_camera_intrinsics(
-                    data["cameraFrames"], self.reference_frame_count
-                ),
+                "camera_intrinsics": reference_intrinsics,
                 "camera_trajectory": reference_camera,
                 "subject_trajectory": reference_subject,
                 "subject_volume": reference_volume,
                 "padding_mask": torch.zeros(self.reference_frame_count, dtype=torch.bool),
             }
+            if reference_geometry is not None:
+                reference["geometry_reference"] = reference_geometry
         camera_trajectory, subject_trajectory = (
             resample_paired_euler_trajectories(
                 camera_trajectory,
@@ -367,6 +411,29 @@ class SimulationDataset(Dataset):
         movement_type = data["subjectsInfo"][0]["movementType"]
         instruction = data["simulationInstructions"][0]
         prompt = data["cinematographyPrompts"][0]
+        visible_prompt, visible_instruction = prompt, instruction
+        observed_motion_text = None
+        geometry_reference = None
+        if self.model_observation_policy is not None:
+            # This truth is kept separately for physical geometry/inspection;
+            # it is never passed through the model's subject conditioning.
+            geometry_reference = {
+                "simulation_normalized": False,
+                "camera_trajectory": camera_trajectory.clone(),
+                "subject_trajectory": subject_trajectory.clone(),
+                "subject_volume": subject_volume.clone(),
+                "camera_intrinsics": extract_camera_intrinsics(
+                    data["cameraFrames"], self.target_frame_count
+                ),
+                "padding_mask": torch.zeros(self.target_frame_count, dtype=torch.bool),
+            }
+            subject_trajectory, subject_volume = self.model_observation_policy.subject_condition(
+                subject_trajectory, subject_volume,
+            )
+            visible_prompt, visible_instruction = self.model_observation_policy.caption_condition(
+                prompt, instruction,
+            )
+            observed_motion_text = self.model_observation_policy.observed_motion_text(prompt)
 
         (
             simulation_instruction_tensor,
@@ -375,8 +442,8 @@ class SimulationDataset(Dataset):
             simulation_instruction_parameters,
             cinematography_prompt_parameters,
         ) = fix_prompts_and_instructions(
-            instruction,
-            prompt,
+            visible_instruction,
+            visible_prompt,
             self.clip_embeddings,
             self.fill_none_with_mean,
             self.embedding_means,
@@ -413,11 +480,19 @@ class SimulationDataset(Dataset):
             "cinematography_prompt_parameters": cinematography_prompt_parameters,
             "raw_prompt": prompt,
             "raw_instruction": instruction,
-            "text_prompt": extract_text_prompt(prompt, movement_type),
+            "text_prompt": (
+                observed_motion_text if observed_motion_text is not None
+                else extract_text_prompt(visible_prompt, movement_type)
+            ),
             "prompt_none_mask": prompt_none_mask,
         }
         if reference is not None:
             item["simulation_reference"] = reference
+        if geometry_reference is not None:
+            item["geometry_reference"] = geometry_reference
+            item["subject_orientation_available"] = torch.tensor(False, dtype=torch.bool)
+            item["subject_dimensions_available"] = torch.tensor(False, dtype=torch.bool)
+            item["model_observation"] = self.model_observation_policy.provenance()
         return item
 
 
@@ -432,6 +507,15 @@ def collate_fn(batch):
             value if value is not None else torch.full_like(template, float("nan"))
             for value in values
         ])
+
+    def collate_geometry_references(references):
+        result = {
+            key: stack_optional(references, key)
+            for key in ("camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask")
+        }
+        result["camera_intrinsics"] = collate_intrinsics(references)
+        result["simulation_normalized"] = False
+        return result
 
     result = {
         "camera_intrinsics": collate_intrinsics(batch),
@@ -453,4 +537,16 @@ def collate_fn(batch):
             for key in ("camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask")
         }
         result["simulation_reference"]["camera_intrinsics"] = collate_intrinsics(references)
+        if "geometry_reference" in references[0]:
+            result["simulation_reference"]["geometry_reference"] = collate_geometry_references(
+                [reference["geometry_reference"] for reference in references]
+            )
+    if any("geometry_reference" in item for item in batch):
+        if not all("geometry_reference" in item for item in batch):
+            raise ValueError("A simulation batch cannot mix model observation policies")
+        references = [item["geometry_reference"] for item in batch]
+        result["geometry_reference"] = collate_geometry_references(references)
+        for key in ("subject_orientation_available", "subject_dimensions_available"):
+            result[key] = torch.stack([item[key] for item in batch])
+        result["model_observation"] = [item["model_observation"] for item in batch]
     return result

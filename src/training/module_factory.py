@@ -38,6 +38,16 @@ def checkpoint_monitor(requested: str, training_config: Any) -> str:
         if not isinstance(requested, str) or not requested:
             raise ValueError('checkpoint_monitor must be auto or a logged metric name')
         return requested
+    domains = _config_value(training_config, 'validation_domain_augmentation')
+    if domains is not _MISSING and domains is not None:
+        enabled = _config_value(domains, 'enabled')
+        if enabled is _MISSING or enabled:
+            return 'val_transfer_score'
+    missingness = _config_value(training_config, 'validation_caption_missingness')
+    if missingness is not _MISSING and missingness is not None:
+        enabled = _config_value(missingness, 'enabled')
+        if enabled is _MISSING or enabled:
+            return 'val_robustness_score'
     validation = _config_value(training_config, 'validation_conditioning')
     enabled = _config_value(validation, 'enabled') if validation is not _MISSING and validation is not None else False
     # A present partial configuration uses ConditioningValidation's defaults.

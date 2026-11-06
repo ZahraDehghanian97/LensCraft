@@ -17,6 +17,9 @@ module:
   denormalize_memory: false
   # Experimental direct pose/time/presence queries; requires training/finetuning.
   keyframe_pose_conditioning: false
+  # Explicit unknown-field tokens; enable when training/fine-tuning, and retain
+  # that setting in the inference config. Legacy checkpoints keep mean fills.
+  caption_presence_conditioning: false
   camera_memory_norms:
     _target_: data.simulation.memory_norms.vocabulary_memory_norms
     clip_embeddings: ${training.loss_module.clip_embeddings}

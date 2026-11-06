@@ -1,0 +1,15 @@
+# Opt-in SIM-only continuation with incomplete high-level text descriptions.
+# No native ET examples, mask banks or test-derived scale/direction corrections.
+# This teaches omission of simulator programs; it does not change motion-label
+# definitions, physical units, model architecture or checkpoint selection.
+defaults:
+  - transfer_robust
+  - _self_
+
+domain_augmentation:
+  et_coordinate_frame: world
+
+caption_missingness:
+  profile: high_level_only
+  preserve_movement_type: true
+  mask_bank_path: null

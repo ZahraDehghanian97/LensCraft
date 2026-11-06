@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import hydra
 import lightning as L
@@ -29,6 +30,7 @@ from testing.process import test_batch
 from testing.keyframes import DEFAULT_KEYFRAME_COUNTS, keyframe_mode, validate_keyframe_counts
 from testing.evaluator import load_semantic_evaluator, identify_clatr_evaluator
 from testing.trajectory_cache import (
+    CCDM_COORDINATE_FRAME_VERSION,
     TRAJECTORY_CACHE_VERSION,
     build_trajectory_cache_key,
     validate_cached_metric_batch,
@@ -37,6 +39,10 @@ from visualization.utils import (
     tSNE_visualize_embeddings,
     tSNE_visualize_embeddings_by_class_type,
 )
+
+if TYPE_CHECKING:
+    from testing.metrics.clatr_extractor import CLaTrFeatureExtractor
+    from testing.metrics.native_clatr_extractor import NativeCLaTrFeatureExtractor
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -269,18 +275,20 @@ def _load_clip_embeddings(cfg: DictConfig, model_type: str):
 def _select_metric_items(
     model_type: str, dataset_type: str, norm_ablation: bool,
     keyframe_counts=DEFAULT_KEYFRAME_COUNTS,
+    *, structured_captions: bool | None = None,
 ) -> list[str]:
     if model_type in BASELINE_MODELS:
         if norm_ablation:
             return list(BASELINE_ITEMS)
         return [NORM_ITEM]
     counts = validate_keyframe_counts(keyframe_counts)
+    captioned = dataset_type in CAPTIONED_DATASETS if structured_captions is None else structured_captions
     items = ["reconstruction"]
-    if dataset_type in CAPTIONED_DATASETS:
+    if captioned:
         items += ["prompt_generation", "hybrid_generation"]
     for count in counts:
         items.append(keyframe_mode("key_framing", count))
-        if dataset_type in CAPTIONED_DATASETS:
+        if captioned:
             items.append(keyframe_mode("key_framing+prompt", count))
     return items
 
@@ -437,6 +445,16 @@ def _write_metrics_json(
         payload = {
             "model_type": model_type,
             "dataset_type": dataset_type,
+            "ccdm_coordinate_protocol": ({
+                "version": CCDM_COORDINATE_FRAME_VERSION,
+                "stored_screen_y": "positive down (publisher Unity WorldToScreenPoint mapping)",
+                "vertical_fov_deg": 45.0,
+                "aspect": 16 / 9,
+                "optics_calibrated": False,
+                "reconstruction": "exact upright screen-ray solution; native measured rotations unavailable",
+                "native_subject_front": "+Z", "simulation_zero_heading_front": "-Z",
+                "placement": "subject rotation composed with native Y-180 basis; rotation and translation applied to camera",
+            } if model_type == "ccdm" or dataset_type == "ccdm" else None),
             "et_type": et_type,
             "clatr_backend": cfg.get("clatr_backend", "native"),
             "prdc_recall_version": 2,
@@ -602,6 +620,9 @@ def main(cfg: DictConfig) -> None:
     metric_items = _select_metric_items(
         model_type, dataset_type, norm_ablation,
         cfg.get("keyframes", {}).get("counts", DEFAULT_KEYFRAME_COUNTS),
+        structured_captions=(dataset_type in CAPTIONED_DATASETS or
+                             (dataset_type == "ccdm" and bool(
+                                 cfg.data.dataset.config.get("annotations_path")))),
     )
 
     _run_evaluation(

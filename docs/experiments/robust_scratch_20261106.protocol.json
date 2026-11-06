@@ -1,0 +1,143 @@
+{
+  "protocol": "robust-scratch-v1",
+  "objective": "Full random-initialized robust LensCraft, retaining natural and mixed camera paths, diverse subject sizes, explicit native orbit, and caption-anchored generated semantics. Ideal is a candidate design, not a result claim.",
+  "architecture": {
+    "relative_representation": false,
+    "context_conditioning": false,
+    "caption_presence_conditioning": true,
+    "base": "Frozen4encoder4decoder512wide8headsFF2048dropout0.3svd9D",
+    "raw_caption_text_direct_input": false
+  },
+  "training": {
+    "initialization": "random",
+    "initialize_from_checkpoint": null,
+    "seed": 42,
+    "epochs": 100,
+    "updates_per_epoch": 609,
+    "updates": 60900,
+    "natural_examples_per_epoch": 68192,
+    "primitive_exposures_per_epoch": 9744,
+    "examples_per_epoch": 77936,
+    "total_exposures": 7793600,
+    "batch_size": 128,
+    "natural_batch_max": 112,
+    "primitive_batch_size": 16,
+    "last_batch_size": 112,
+    "drop_last": false,
+    "optimizer": "AdamW",
+    "learning_rate_peak": 0.0003,
+    "learning_rate_final": 1e-05,
+    "warmup_updates": 1000,
+    "scheduler": "linear warmup then cosine decay over all60900updates",
+    "gradient_clip_norm": 1.0,
+    "precision": "float32CPU or bfloat16CUDA with float32geometry/semanticreductions",
+    "microbatch": "Fixed actual microbatch chosen by preflight and frozen beforemain; sample-count-weighted accumulation, sameoptimizerbatchmembership/modes/seeds. Structured semantic means are reduced per microbatch, so no exact full-batch gradient-equivalence claim.",
+    "loss": "Established physical-position/true-bbox-diagonal geometry weights; clean full-target encoder supervision loss-only; all generated valid frames reencoded; caption-conditioned cycle matches detached supplied captions under effective availability; camera-only anchor detached.",
+    "native_training_examples": 0,
+    "native_selection_examples": 0,
+    "resume": "Own epoch checkpoint only, exact optimizer/scheduler/model/RNG/history and source identities; no historical weights loaded."
+  },
+  "data": {
+    "original_training": 60000,
+    "fresh_narrow": 4096,
+    "fresh_broad": 4096,
+    "natural_pool": 68192,
+    "primitive_pool": 4096,
+    "source_preservation": "Every natural reference/target retained each epoch; independent additional primitives, no target substitutions.",
+    "primitive_sampling": "Deterministic balanced seven-family stream; each of609batches adds16primitives, lastnaturalpartial retained.",
+    "natural_domain_probabilities": {
+      "original": 0.5,
+      "et": 0.25,
+      "ccdm": 0.25
+    },
+    "primitive_domain": "ccdm",
+    "dimensions": "Preserve all actual sizes/classes/subject trajectories; no size cap or native dimension restoration.",
+    "metadata": "Respect actual availability; joint all-five-groups-missing profile25% of natural rows plus existing sanitized observed-context dropout; fixedCCDMbasis remains known.",
+    "unknown_policy": "Retain mixed/ambiguous motion and trajectory supervision; no false static labels or tolerance relaxation.",
+    "source_disjointness": "Original60k/20k/20k splits; fresh train-only cohorts; source-heldout primitive validation; expanded consumed payload pin audit required.",
+    "normalization": "Independently frozen historical normalization; never recomputed on native/validation/test."
+  },
+  "native_motion_interface": {
+    "primary": "Text-only minimal high-level Pan/Orbit mapping in movement_type slot; preserve all other45fields, masks, tokenbytes, endpoints, text and IDs. No nine-field clearing.",
+    "nativePan": "Existing fixed offline CLIP pooler512vector,index19",
+    "nativeOrbit": "Fixed offline CLIP pooler512vector,index20,nondirectional: The camera rotates around the character.",
+    "training": "Same tokens after quantization-aware synthetic motion supervision; survives high-level-only missingness.",
+    "companion": "FullCCDM originalannotations pureprompt comparison, same selected weights; interface not selected by native metrics."
+  },
+  "validation": {
+    "selection_domain": "simulation",
+    "conditioning": "Pure prompt generation with zero camera input, no supplied target poses and unavailable metadata kept unavailable.",
+    "groups": {
+      "clean": 1024,
+      "missing": 256,
+      "heldout_small": 256,
+      "heldout_large": 256,
+      "heldout_combo": 256,
+      "heldout_narrow": 256,
+      "heldout_broad": 256,
+      "native_sim_ccdm": 256,
+      "native_sim_et": 256,
+      "native_semantic_ccdm": 256,
+      "motion_static": 64,
+      "motion_push_in": 64,
+      "motion_pull_out": 64,
+      "motion_pan": 64,
+      "motion_boom_up": 64,
+      "motion_boom_down": 64,
+      "motion_orbit": 64
+    },
+    "scored_views": 3776,
+    "underlying_examples": 3520,
+    "paired_views": "native_semantic_ccdm and native_sim_ccdm retain the same256source identities as two explicitly reported views; allCCDMviews now use common repaired motion andnativeOrbit labels.",
+    "score": "Unweighted mean of17 group geometry scores plus0.25 times the worst; position and step divided by true bbox diagonal and SO3 divided by pi.",
+    "checkpoint_selection": "Minimum predeclared SIM macro+.25worst score at initializer and every complete epoch; initializer wins ties.",
+    "promotion_guardrails": "Report clean/missing and every group atinitializer/selected/final. No matched scratchcontrol is trained; historicalcomparison isdescriptive and isnot used forpromotion.",
+    "postselection_motion_audit": "One pinned selectedmodel diagnostic over all448heldoutprimitives, unknowns retained, fixedsourceprecision classifier andcontinuousresiduals. Not the selection metric or unqualified semantic accuracy.",
+    "checkpoints": 101,
+    "validation_every_epochs": 1,
+    "native_selection_examples": 0
+  },
+  "evaluation": {
+    "simulation": 20000,
+    "ccdm": 27810,
+    "et": 6423
+  },
+  "evaluation_modes": {
+    "primary_per_domain": 13,
+    "primary_domains": [
+      "simulation",
+      "ccdm",
+      "et"
+    ],
+    "companion_ccdm_modes": [
+      "prompt_generation"
+    ],
+    "expected_stage_processes": 4,
+    "expected_domain_mode_rows": 40,
+    "selection": "Complete full randomscratch training and freezeSIMselectedweights before native cohorts; no native-best seed/weight/epoch/interface selection.",
+    "contracts": "Unchanged frozen normalization, cohorts, evaluators, metric formulas, CLaTr050, PRDC5splits/k3/recallv2/seed42/30frames; assistedmodes explicitlyidentified."
+  },
+  "resources": {
+    "ownership": "Leave all unrelated jobs unchanged.",
+    "benchmark_required": true,
+    "candidate_cuda_memory_cap_gib": 2.0,
+    "candidate_microbatch": 16,
+    "benchmark_start_threads": 8,
+    "max_total_training_threads": 48,
+    "cpu_thread_candidates": [
+      8,
+      16,
+      32,
+      48
+    ],
+    "execution_profile": "Choose device/microbatch/thread count using preflight timing and memory only; freeze execution.json before full training. No native metric selection."
+  },
+  "report": "Separate robust_scratch_20261106/RESULTS.md, all3datasets/all40moderows, sameweightinterfaceeffect, recall/CLATR/orbit/ET regressions, learningcurves/provenance, historicalcomparisons descriptive.",
+  "limitations": [
+    "One complete random-initialization seed42; no independent-seed uncertainty estimate.",
+    "Historical models have differenttraining budgets, recipes or interfaces; comparisons are descriptive, not a matched causal ablation.",
+    "CCDM/ET are previously examined development cohorts, not blind tests.",
+    "Deterministic architecture cannot represent all valid trajectories for identical partial inputs.",
+    "A prospective data/loss recipe does not guarantee improved native recall or generalization; report every outcome."
+  ]
+}

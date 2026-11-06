@@ -493,7 +493,8 @@ class VisualizationRepository:
                             raise ValueError("LensCraft prompt conditioning needs structured cinematography annotations; this dataset sample has none.")
                         generated = model.generate_camera_trajectory(subject_trajectory=sim_subject, subject_volume=sim_volume,
                             camera_trajectory=sim_camera, src_key_mask=source_mask, padding_mask=padding,
-                            memory_teacher_forcing_ratio=MEMORY_TEACHER_FORCING_BY_MODE[mode], caption_embedding=caption)["reconstructed"]
+                            memory_teacher_forcing_ratio=MEMORY_TEACHER_FORCING_BY_MODE[mode], caption_embedding=caption,
+                            caption_presence_mask=batch.get('prompt_none_mask'))["reconstructed"]
                         poses = _sim_standard(generated, normalized=True)[0][0]
                         poses = poses[~_array(padding[0]).astype(bool)]
                         name = f"lens_craft:{mode}"

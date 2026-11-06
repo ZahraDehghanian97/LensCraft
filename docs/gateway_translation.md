@@ -8,18 +8,18 @@ environment variables. The key is never written to annotations or provenance.
 ```bash
 python src/translate_prompt.py \
   --prompt 'The camera trucks right while the character remains stationary.' \
-  --model zai/glm-5.3-flash \
+  --model deepseek/deepseek-v4.1-flash-1017 \
   --output outputs/prompt.json \
   --metadata-output outputs/prompt.metadata.json
 ```
 
-The default model is `zai/glm-5.3-flash`, verified in the
+The default model is `deepseek/deepseek-v4.1-flash-1017`.
+Available models are listed in the
 [Gateway model catalog](https://ai-gateway.vercel.sh/v1/models).
 `--model` or `AI_GATEWAY_MODEL` can explicitly select another Gateway model ID.
 The translator does not configure fallback models. It requests `low` reasoning
-effort for this extraction task. `--reasoning-effort` accepts the GLM catalog's
-verified `low`, `high`, and `max` values; the catalog does not advertise disabled
-reasoning. Vercel documents the standard
+effort for this extraction task. `--reasoning-effort` accepts `low`, `high`,
+and `max`; support depends on the selected model. Vercel documents the standard
 [`reasoning_effort` parameter](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions/reasoning).
 
 Output contains `cinematographyPrompts` and `simulationInstructions`, each with
@@ -90,7 +90,7 @@ without caching invalid data or dropping the sample. Provenance records attempt
 count, response IDs/models, validation errors, and total token usage across all
 returned attempts. A truncated completion is always discarded and retried with
 twice the output budget: by default 8,192 → 16,384 → 32,768 tokens, capped at the
-GLM catalog's 131,000-token limit. Truncation and validation share the same two-retry
+application's 131,000-token retry cap. Truncation and validation share the same two-retry
 allowance; partial JSON is never accepted. Each attempt records its budget,
 reasoning effort, finish reason, and available reasoning-token count. Successful
 cached translations remain reusable when only the retry limit changes. Changing
@@ -105,5 +105,50 @@ the output budget and request timeout; SDK retries are limited to two.
 Run the network-free boundary checks:
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests -p 'test_gateway_translation.py' -v
+PYTHONPATH=src python -m unittest discover -s tests -p 'test_gateway_movement_contract.py' -v
 ```
+
+## Simulation movement aliases
+
+The generator-v5 training inventory encodes a named movement and its low-level
+dynamic aliases together. The October 1 audit checked ten training annotations
+per movement for all 17 types present in that inventory. Its sample identities,
+hashes, and observed values are recorded in
+[simulation_motion_contract.json](../../performance_reports/et_training_review_20261001/simulation_motion_contract.json).
+In particular, the former Gateway instruction assigning dolly, arc, and crane
+to `interpolation` contradicted those training annotations. Their contract is:
+
+| `movement.type` | `dynamic.type` | `dynamic.movementMode` | `dynamic.direction` |
+| --- | --- | --- | --- |
+| `dollyIn` / `dollyOut` | `simple` | `transition` | `forward` / `backward` |
+| `arcLeft` / `arcRight` | `simple` | `arc` | `left` / `right` |
+| `craneUp` / `craneDown` | `simple` | `crane` | `up` / `down` |
+| `follow` / `track` / `static` | `interpolation` | `null` | `null` |
+
+`MOVEMENT_CONTRACT` in [gateway.py](../src/annotator/gateway.py) also covers the
+existing pan, tilt, truck, pedestal, and dutch aliases. Dutch is supported by
+the generator source but was absent from the audited training inventory.
+After schema validation, `validate_translation` rejects explicitly supplied
+dynamic aliases that contradict a known high-level movement. This includes
+wrong directions and modes, not just invalid enum values. Unknown values remain
+`null`; validation never fills missing facts or changes composition. A schema
+can therefore be valid while these movement aliases are inconsistent, and
+consistent aliases still do not prove that the source caption was understood.
+
+The corrected system instructions change the existing cache fingerprint.
+Frozen annotations, earlier correction scripts, and evaluation receipts remain
+historical artifacts. Replaying a contradictory old annotation through current
+validation fails; a repaired or freshly translated annotation set requires a
+new revision and provenance instead of overwriting the old receipt. The
+network-free test command above covers the six corrected movement variants,
+direction and mode contradictions, existing motions, null preservation, and the
+validation-retry path. It makes no claim about trajectory quality.
+
+Two semantic limits remain beyond alias consistency. The simulation defines
+Follow as a rear chase and Track as side-on tracking; generic language about
+following a subject does not establish that distinction or the subject's
+heading. Also, native ET
+[segmentation](https://github.com/robincourant/the-exceptional-trajectories/blob/main/src/processing/segmentation.py)
+labels camera-local translation and omits angular velocity from its segmentation
+input. An ET translation label therefore does not establish locked rotation,
+and its `static` label alone does not prove a fixed camera orientation.

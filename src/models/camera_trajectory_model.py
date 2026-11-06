@@ -35,6 +35,7 @@ class LensCraft(nn.Module):
         denormalize_memory: bool = False,
         camera_memory_norms=None,
         keyframe_pose_conditioning: bool = False,
+        caption_presence_conditioning: bool = False,
     ):
         super(LensCraft, self).__init__()
 
@@ -59,6 +60,16 @@ class LensCraft(nn.Module):
         )
         self.register_buffer(
             "structured_slot_encoding", slot_encoding, persistent=False
+        )
+        # Explicit unknown values live in embedding space, independently of
+        # the dataset's mean/zero fill. A fixed code adds no checkpoint weights
+        # and keeps old state_dicts loadable; learning its meaning requires
+        # training with caption_presence_conditioning enabled.
+        missing_encoding = torch.ones(latent_dim, dtype=torch.float32)
+        missing_encoding[1::2] = -1
+        self.register_buffer(
+            "missing_caption_encoding", missing_encoding / latent_dim ** 0.5,
+            persistent=False,
         )
 
         self.subject_trajectory_projection = nn.Linear(subject_dim, latent_dim)
@@ -93,6 +104,7 @@ class LensCraft(nn.Module):
         self.use_merged_memory = use_merged_memory
         self.denormalize_memory = denormalize_memory
         self.keyframe_pose_conditioning = keyframe_pose_conditioning
+        self.caption_presence_conditioning = caption_presence_conditioning
         self.register_buffer("camera_memory_norms", None, persistent=False)
         self.set_camera_memory_norms(camera_memory_norms)
         self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
@@ -207,10 +219,14 @@ class LensCraft(nn.Module):
         camera_embedding: Optional[torch.Tensor] = None,
         caption_embedding: Optional[torch.Tensor] = None,
         teacher_forcing_ratio: float = 0.0,
-        mask_memory_prob: float = 0.0
+        mask_memory_prob: float = 0.0,
+        caption_presence_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if caption_embedding is not None:
-            caption_embedding = self._prepare_caption_tokens(caption_embedding)
+            caption_embedding = self._prepare_caption_tokens(
+                caption_embedding, caption_presence_mask,
+                condition_presence=(camera_embedding is None or teacher_forcing_ratio > 0),
+            )
 
         if camera_embedding is None:
             if caption_embedding is None:
@@ -260,18 +276,47 @@ class LensCraft(nn.Module):
             device=memory.device, dtype=memory.dtype
         )
 
-    def _prepare_caption_tokens(self, caption_embedding):
+    def _prepare_caption_tokens(self, caption_embedding, caption_presence_mask=None,
+                                *, condition_presence=True):
+        if caption_embedding.ndim != 3:
+            raise ValueError("caption_embedding must have shape [fields, batch, embedding]")
         token_count = caption_embedding.shape[0]
+        if token_count not in (1, cinematography_struct_size, self.num_query_tokens):
+            raise ValueError(
+                f"Expected 1, {cinematography_struct_size}, or "
+                f"{self.num_query_tokens} caption tokens; got {token_count}"
+            )
+        use_presence = self.caption_presence_conditioning and condition_presence
+        presence = None
+        if use_presence:
+            if caption_presence_mask is None:
+                if token_count != 1:
+                    raise ValueError(
+                        "caption_presence_conditioning requires caption_presence_mask "
+                        "for structured captions; pass the dataset prompt_none_mask"
+                    )
+            else:
+                if (not torch.is_tensor(caption_presence_mask)
+                        or caption_presence_mask.dtype != torch.bool
+                        or caption_presence_mask.shape != (caption_embedding.shape[1], token_count)):
+                    raise ValueError("caption_presence_mask must be boolean [batch, caption fields]")
+                presence = caption_presence_mask.to(device=caption_embedding.device)
         if token_count == cinematography_struct_size:
             neutral = caption_embedding.new_zeros(
                 self.num_query_tokens - token_count,
                 *caption_embedding.shape[1:],
             )
-            return torch.cat([caption_embedding, neutral], dim=0)
-        if token_count not in (1, self.num_query_tokens):
-            raise ValueError(
-                f"Expected 1, {cinematography_struct_size}, or "
-                f"{self.num_query_tokens} caption tokens; got {token_count}"
+            caption_embedding = torch.cat([caption_embedding, neutral], dim=0)
+            if presence is not None:
+                absent = torch.zeros(
+                    presence.shape[0], self.num_query_tokens - token_count,
+                    dtype=torch.bool, device=presence.device,
+                )
+                presence = torch.cat([presence, absent], dim=1)
+        if presence is not None:
+            caption_embedding = torch.where(
+                presence.T[..., None], caption_embedding,
+                self.missing_caption_encoding.to(caption_embedding)[None, None, :],
             )
         return caption_embedding
 
@@ -339,6 +384,7 @@ class LensCraft(nn.Module):
         trajectory_teacher_forcing_ratio: float = 0.0,
         mask_memory_prob: float = 0.0,
         decode_mode: str = 'single_step',
+        caption_presence_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         self._validate_pose_decode_mode(decode_mode)
         subject_trajectory, subject_volume = self._prepare_subject_inputs(
@@ -390,7 +436,8 @@ class LensCraft(nn.Module):
             camera_embedding=camera_embedding.clone(),
             caption_embedding=caption_embedding,
             teacher_forcing_ratio=memory_teacher_forcing_ratio,
-            mask_memory_prob=mask_memory_prob
+            mask_memory_prob=mask_memory_prob,
+            caption_presence_mask=caption_presence_mask,
         )
 
         reconstructed_raw = self.decoder(
@@ -432,7 +479,8 @@ class LensCraft(nn.Module):
         trajectory_teacher_forcing_ratio: float = 0.0,
         src_key_mask: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
-        decode_mode: str = 'single_step'
+        decode_mode: str = 'single_step',
+        caption_presence_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         self._validate_pose_decode_mode(decode_mode)
         with torch.no_grad():
@@ -483,7 +531,8 @@ class LensCraft(nn.Module):
                     trajectory_teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
                     src_key_mask=src_key_mask,
                     tgt_key_padding_mask=padding_mask,
-                    decode_mode=decode_mode
+                    decode_mode=decode_mode,
+                    caption_presence_mask=caption_presence_mask,
                 )
 
             # If there is no camera trajectory, use only the decoder
@@ -504,7 +553,8 @@ class LensCraft(nn.Module):
 
                 memory = self.prepare_embedding_memory_for_decoder(
                     caption_embedding=caption_embedding,
-                    teacher_forcing_ratio=0.0
+                    teacher_forcing_ratio=0.0,
+                    caption_presence_mask=caption_presence_mask,
                 )
 
                 reconstructed_raw = self.decoder(

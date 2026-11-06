@@ -1,0 +1,2 @@
+# Preserve upstream whitespace in reviewable patches for byte-exact application.
+patches/third_party/*.patch -whitespace

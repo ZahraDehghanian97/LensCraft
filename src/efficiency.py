@@ -91,6 +91,7 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
                 padding_mask=sim_padding,
                 memory_teacher_forcing_ratio=1.0,
                 caption_embedding=caption_embedding,
+                caption_presence_mask=batch.get('prompt_none_mask'),
             )
 
         flop_inputs = (sim_camera, sim_subject, sim_volume)
