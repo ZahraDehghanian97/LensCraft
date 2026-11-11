@@ -1,26 +1,13 @@
 import torch
 
 
-def load_checkpoint(checkpoint_path, model, device):
-    checkpoint = torch.load(
-        checkpoint_path, map_location=device, weights_only=False
-    )
-    state_dict = checkpoint["state_dict"]
+def load_checkpoint(checkpoint_path, model, device, *, checkpoint=None):
+    if checkpoint is None:
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+    from utils.load_lens_craft import categorical_checkpoint_state, migrate_geometric_context_state
 
-    new_state_dict = {}
-    for key, value in state_dict.items():
-        if key.startswith('model.'):
-            new_key = key[6:]
-        else:
-            new_key = key
-
-        if 'subject_projection_loc_rot' in new_key:
-            new_key = new_key.replace('subject_projection_loc_rot', 'subject_trajectory_projection')
-
-        if 'subject_projection_vol' in new_key:
-            new_key = new_key.replace('subject_projection_vol', 'subject_volume_projection')
-
-        new_state_dict[new_key] = value
-
-    model.load_state_dict(new_state_dict)
+    state, _ = categorical_checkpoint_state(checkpoint)
+    model.load_state_dict(migrate_geometric_context_state(model, state), strict=True)
     return model

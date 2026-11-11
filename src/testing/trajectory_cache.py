@@ -16,7 +16,10 @@ TRAJECTORY_CACHE_VERSION = 6
 # Only E.T.'s cache key changes when its generation protocol changes.
 ET_GENERATION_SEED_VERSION = 2
 
-LENSCRAFT_GENERATION_VERSION = 3
+# Geometric conditioning, independent keyframe memory, and checkpoint-owned scales.
+LENSCRAFT_GENERATION_VERSION = 4
+# Captions reach the native text encoder unchanged (dolly is not zoom).
+CCDM_GENERATION_VERSION = 2
 CCDM_COORDINATE_FRAME_VERSION = 3
 _LENSCRAFT_FORMATS = frozenset({"simulation", "lens_craft"})
 
@@ -266,11 +269,19 @@ def build_trajectory_cache_key(
             cache_config, resolve_path=resolve_path
         ),
     }
+    normalization_reference = os.environ.get("SIMULATION_NORMALIZATION_DATA_PATH")
+    if normalization_reference:
+        source["simulationNormalizationReference"] = stat_path_provenance(
+            resolve_path(os.path.expanduser(normalization_reference)),
+            include_globs=_SIMULATION_DATA_GLOBS,
+        )
     model_type = (
         cache_config.get("training", {}).get("model", {}).get("data_format", {}).get("type")
     )
     if model_type == "et":
         source["etGenerationSeedVersion"] = ET_GENERATION_SEED_VERSION
+    if model_type == "ccdm":
+        source["ccdmGenerationVersion"] = CCDM_GENERATION_VERSION
     if model_type in _LENSCRAFT_FORMATS or model_type is None:
         source["lenscraftGenerationVersion"] = LENSCRAFT_GENERATION_VERSION
     dataset_target = str(cache_config.get("data", {}).get("dataset", {}).get("config", {}).get("_target_", ""))

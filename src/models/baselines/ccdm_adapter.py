@@ -126,12 +126,7 @@ class CCDMAdapter:
 
         return traj
 
-    _PROMPT_REWRITES = (("pushes in", "zooms in"), ("pulls out", "zooms out"))
-
     def generate_using_text(self, text_prompts, subject_trajectory=None, trajectory=None, padding_mask=None):
-        for old, new in self._PROMPT_REWRITES:
-            text_prompts = [prompt.replace(old, new) for prompt in text_prompts]
-
         with torch.no_grad():
             text_embeddings = self.clip_embedder.extract_clip_embeddings(text_prompts, return_seq=False).to(self.device)
 

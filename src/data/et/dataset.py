@@ -113,6 +113,8 @@ class ETDataset(Dataset):
             'subject_trajectory': subject_trajectory,
             'subject_volume': None,
             'padding_mask': ~item['padding_mask'].to(torch.bool),
+            "subject_orientation_available": torch.tensor(False),
+            "subject_dimensions_available": torch.tensor(False),
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32),
             **conditioning,
             "raw_prompt": prompt,
@@ -134,4 +136,6 @@ def collate_fn(batch):
         'text_prompts': [item['text_prompts'] for item in batch],
         'item_ids': [item['item_id'] for item in batch],
     }
+    for key in ("subject_orientation_available", "subject_dimensions_available"):
+        result[key] = torch.stack([item[key] for item in batch])
     return result

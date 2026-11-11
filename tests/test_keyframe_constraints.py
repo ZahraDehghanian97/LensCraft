@@ -178,7 +178,10 @@ def test_autoregressive_feedback_uses_supplied_keyframes_for_later_predictions(c
     finally:
         handle.remove()
 
-    assert len(decoder_inputs) == camera.shape[1]
+    # The shared pose projection also builds the visible keyframe context.
+    # Inspect the final T calls, which are the actual autoregressive inputs.
+    assert len(decoder_inputs) >= camera.shape[1]
+    decoder_inputs = decoder_inputs[-camera.shape[1]:]
     supplied_matrices = model._euler6_to_mat12(camera)
     for timestep in range(camera.shape[1] - 1):
         visible = known[:, timestep]

@@ -164,7 +164,7 @@ def test_profile_separates_condition_from_full_physical_truth(export_factory, no
     assert torch.equal(reference["subject_volume"], physical["volume"])
     assert item["subject_orientation_available"].item() is False
     assert item["subject_dimensions_available"].item() is False
-    assert "metadata_only" in item["model_observation"]["subject_availability_encoding"]
+    assert "explicit model availability masks" in item["model_observation"]["subject_availability_encoding"]
     assert item["raw_prompt"] == physical["prompt"]
     assert item["raw_instruction"] == physical["instruction"]
     # Mutating condition placeholders cannot overwrite preserved truth.
@@ -241,6 +241,9 @@ def test_profile_reference_and_availability_survive_collation_and_compaction(exp
         assert batch["subject_orientation_available"].dtype == torch.bool
         assert len(batch["model_observation"]) == 2
         assert batch["simulation_reference"]["subject_trajectory"].shape == (2, 8, 6)
+        assert batch["simulation_reference"]["simulation_normalized"] is False
+        assert not batch["simulation_reference"]["subject_orientation_available"].any()
+        assert not batch["simulation_reference"]["subject_dimensions_available"].any()
         assert torch.count_nonzero(batch["simulation_reference"]["subject_trajectory"][..., 3:]) == 0
         assert batch["simulation_reference"]["geometry_reference"]["subject_trajectory"][..., 3:].abs().sum() > 0
     ordinary, _ = export_factory()

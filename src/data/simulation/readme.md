@@ -211,8 +211,13 @@ volume           = (volume - dim_mean) / dim_std
 padding_mask = zeros(30, bool)                   # nothing is padded
 ```
 
-When `normalize=True`, stats are computed once over the same 30 paired samples
-used from every simulation file (so long clips are not overweighted) and cached in
+Training data modules split the inventory before fitting normalization and use
+only training files, sampling the same 30 paired frames per clip so long clips
+are not overweighted. Validation and test reuse those scales. The selected
+training-file IDs are part of the cache fingerprint, and repeated setup keeps
+the same splits. Standalone `SimulationDataset` construction still fits its
+supplied inventory unless explicit checkpoint parameters or an independent
+`SIMULATION_NORMALIZATION_DATA_PATH` reference is provided. Stats are cached in
 `normalization_parameters.json` (historical PyTorch sample std; zero or
 singleton stds → 1). In memory they are keyed by resolved dataset path plus
 the lightweight dataset fingerprint, and each
@@ -225,7 +230,9 @@ lightweight dataset fingerprint. For both manifest-backed and legacy exports,
 the fingerprint includes the manifest (when present) plus the
 parameter-dictionary and simulation-file name/size/mtime inventory. Payload
 contents are not hashed. A missing or nonmatching sidecar causes the stats to be
-regenerated.
+regenerated. New model checkpoints store these moments under `normalization`;
+inference restores them instead of fitting the evaluation cohort. Older
+checkpoints need their original normalization reference for comparable results.
 
 ### 4.2 Prompt / instruction → categorical IDs and raw metadata
 

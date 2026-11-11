@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from testing.metrics.clip_embeddings import CLIPEmbedder
+from testing.metrics.normalization import find_training_config, load_metric_normalization
 from training.clatr.lightning_module import LightningCLaTr
 from utils.clatr_text import prepare_text_features
 
@@ -34,6 +35,13 @@ class NativeCLaTrFeatureExtractor(nn.Module):
         self.lit = LightningCLaTr.load_from_checkpoint(
             checkpoint_path, map_location="cpu"
         )
+        normalization_context = getattr(self.lit, "normalization_context", {})
+        if normalization_context.get("format", "simulation") != "simulation":
+            raise ValueError("Native CLaTr SIM evaluator requires a simulation-trained checkpoint")
+        self.metric_normalization = load_metric_normalization({
+            "normalization": getattr(self.lit, "normalization_parameters", None),
+            "normalization_context": normalization_context,
+        }, saved_config_path=find_training_config(checkpoint_path))
         self.lit.eval()
         for p in self.lit.parameters():
             p.requires_grad_(False)
@@ -65,8 +73,16 @@ class NativeCLaTrFeatureExtractor(nn.Module):
         sim_subject_trajectory: Optional[torch.Tensor] = None,  # unused
         sim_subject_volume: Optional[torch.Tensor] = None,      # unused
         sim_padding_mask: Optional[torch.Tensor] = None,
+        *,
+        source_normalization=None,
+        camera_is_normalized=True,
+        subject_is_normalized=True,
     ) -> torch.Tensor:
-        x = sim_camera_trajectory.to(self.device).float()
+        camera, _, _ = self.metric_normalization.convert(
+            sim_camera_trajectory, source_normalization=source_normalization,
+            camera_is_normalized=camera_is_normalized,
+        )
+        x = camera.to(self.device).float()
         if x.shape[-1] != self.traj_num_feats:
             raise ValueError(
                 f"Trajectory feature dim {x.shape[-1]} does not match the "

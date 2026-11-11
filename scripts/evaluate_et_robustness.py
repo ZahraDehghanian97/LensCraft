@@ -211,7 +211,7 @@ def bind_environment(args):
     # Resolve environment-owned relative paths before changing the workdir;
     # generated CLIP statistics must be isolated in this output directory.
     for name in ("DIRECTOR_PROJECT_DIR", "ET_DATA_DIR", "ET_CIN_LANG_PATH",
-                 "SIMULATION_DATA_PATH", "CLIP_EMBEDDINGS_CACHE_DIR"):
+                 "SIMULATION_DATA_PATH", "SIMULATION_NORMALIZATION_DATA_PATH", "CLIP_EMBEDDINGS_CACHE_DIR"):
         if os.environ.get(name):
             path = Path(os.environ[name]).expanduser()
             os.environ[name] = str(path if path.is_absolute() else (args.repo_root / path).resolve())
@@ -225,11 +225,12 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
     from omegaconf import OmegaConf
     from torch.utils.data import Subset
     from data.datamodule import CameraTrajectoryDataModule
-    from data.sim_format import build_keyframing_mask, to_simulation_format
+    from data.sim_format import build_keyframing_mask, geometry_context_from_batch, to_simulation_format
     from data.simulation.dataset import SimulationDataset
     from data.simulation.utils import structured_conditioning_from_batch
     from generation import generate_lenscraft_trajectory
     from utils.device import move_batch_to_device
+    from utils.normalization import prepare_evaluation_normalization
 
     if not cfg.data.dataset.config.normalize:
         raise ValueError("This runner requires normalized production model inputs")
@@ -246,6 +247,12 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
         split_seed=int(cfg.data.get("split_seed", 42)),
         test_movement_types=cfg.get("test_movement_types"), test_fraction=cfg.get("test_fraction", 1.0),
     )
+    # Both native ET conversion and simulation samples must use the transform
+    # selected once from this checkpoint (or its explicit legacy training source).
+    if getattr(model, "normalization_parameters", None) is not None:
+        prepare_evaluation_normalization(dm, model, "lens_craft")
+    else:
+        dm.load_state_dict({"normalization": normalization})
     dm.setup()
     full_count = len(dm.test_dataset)
     indices = list(dm.test_dataset.indices)
@@ -273,7 +280,7 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
         "seed": seed, "batch_size": dm.batch_size, "modes": modes,
         "resolved_data_config": OmegaConf.to_container(cfg.data, resolve=True),
         "shuffle": "One-place cyclic shift within each batch; singleton unchanged; recorded per sample.",
-        "keyframes": "Deterministic per-ID visible frames; soft camera memory unless checkpoint enables pose conditioning.",
+        "keyframes": "Deterministic per-ID visible frames; explicit pose constraints condition generation independently of caption weights.",
         "reference_assisted_modes": ["reconstruction", "oracle_freeze_reference_first_pose"] + [m for m in modes if m.startswith("keyframe_")],
         "diagnostic_baselines": {
             'modes': baseline_modes,
@@ -297,6 +304,7 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
         for batch_index, raw_batch in enumerate(dm.test_dataloader()):
             batch = move_batch_to_device(raw_batch, args.device)
             camera, subject, volume, padding = to_simulation_format(batch, dataset_type, target_len=model.decoder.seq_length)
+            geometry_context = geometry_context_from_batch(batch, dataset_type, target_len=camera.shape[1])
             if padding is None:
                 padding = torch.zeros(camera.shape[:2], dtype=torch.bool, device=camera.device)
             view = camera, subject, volume, padding
@@ -308,9 +316,9 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
             presence = batch.get('prompt_none_mask')
             shuffled_presence = None if presence is None else presence[permutation]
             generated = {
-                "prompt_original": generate_lenscraft_trajectory(model, view, padding, caption, 1., caption_presence_mask=presence),
-                "prompt_shuffled": generate_lenscraft_trajectory(model, view, padding, caption[:, permutation], 1., caption_presence_mask=shuffled_presence),
-                "reconstruction": generate_lenscraft_trajectory(model, view, padding, caption, 0., caption_presence_mask=presence),
+                "prompt_original": generate_lenscraft_trajectory(model, view, padding, caption, 1., caption_presence_mask=presence, geometry_context=geometry_context),
+                "prompt_shuffled": generate_lenscraft_trajectory(model, view, padding, caption[:, permutation], 1., caption_presence_mask=shuffled_presence, geometry_context=geometry_context),
+                "reconstruction": generate_lenscraft_trajectory(model, view, padding, caption, 0., caption_presence_mask=presence, geometry_context=geometry_context),
             }
             for count in args.keyframes:
                 sample_seeds = [int(hashlib.sha256(f"{seed}:{name}".encode()).hexdigest()[:16], 16) for name in item_ids]
@@ -319,11 +327,12 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
                 generated[f"keyframe_prompt_k{count}"] = generate_lenscraft_trajectory(
                     model, view, source_mask, caption, .5,
                     caption_presence_mask=presence, known_camera_mask=~source_mask,
+                    geometry_context=geometry_context,
                 )
             if batch_index == 0:
                 controls = {}
                 for name, replacement in (("zero", torch.zeros_like(camera)), ("shuffled", camera[permutation]), ("none", None)):
-                    control = generate_lenscraft_trajectory(model, (replacement, subject, volume, padding), padding, caption, 1., caption_presence_mask=presence)
+                    control = generate_lenscraft_trajectory(model, (replacement, subject, volume, padding), padding, caption, 1., caption_presence_mask=presence, geometry_context=geometry_context)
                     difference = (control - generated["prompt_original"]).abs()
                     controls[name + "_max_abs_difference"] = float(difference.max()) if torch.isfinite(difference).all() else None
                 controls["passed_at_1e-5"] = all(value is not None and value <= 1e-5 for value in controls.values())
@@ -385,8 +394,9 @@ def main(argv=None):
     bind_environment(args)
     import torch
     from omegaconf import OmegaConf, open_dict
-    from data.simulation.dataset import SimulationDataset
+    from data.datamodule import CameraTrajectoryDataModule
     from models.factory import load_model
+    from utils.normalization import prepare_evaluation_normalization
     if not OmegaConf.has_resolver("eval"):
         OmegaConf.register_new_resolver("eval", eval)
     train_cfg = OmegaConf.load(args.train_config)
@@ -399,22 +409,30 @@ def main(argv=None):
     os.chdir(args.output)
     # ET conversion must use the checkpoint's simulation normalization, not
     # statistics selected by another datamodule left in this process.
-    simulation_data = train_cfg.data.dataset.config
-    if "SimulationDataset" not in simulation_data._target_:
+    simulation_data = (OmegaConf.select(train_cfg, "data.dataset.config")
+                       or OmegaConf.select(train_cfg, "data.dataset.simulation_config"))
+    if simulation_data is None or "SimulationDataset" not in simulation_data._target_:
         raise ValueError("--train-config must identify the checkpoint's simulation normalization dataset")
-    normalization = SimulationDataset.get_normalization_parameters(
-        str(simulation_data.data_path),
-        target_frame_count=int(simulation_data.get("normalization_frame_count", train_cfg.data.dataset.info.get("seq_length", 30))),
+    simulation_data = deepcopy(simulation_data)
+    if simulation_data.get("normalization_frame_count") is None:
+        with open_dict(simulation_data):
+            simulation_data.normalization_frame_count = int(
+                OmegaConf.select(train_cfg, "data.dataset.info.seq_length", default=30))
+    model = load_model(model_cfg, "lens_craft", torch.device(args.device))
+    normalization_module = CameraTrajectoryDataModule(
+        dataset_config=simulation_data, batch_size=1, num_workers=0,
     )
+    normalization_provenance = prepare_evaluation_normalization(normalization_module, model, "lens_craft")
+    normalization = normalization_module.state_dict()["normalization"]
     normalization_json = {key: {field: value.cpu().tolist() if torch.is_tensor(value) else value
                                for field, value in fields.items()} for key, fields in normalization.items()}
     write_json(args.output / "normalization.json", normalization_json)
-    model = load_model(model_cfg, "lens_craft", torch.device(args.device))
     manifest = {"started_at": datetime.now(timezone.utc).isoformat(), "device": args.device,
                 "torch_version": torch.__version__, "checkpoint": {"path": str(args.checkpoint), "sha256": sha256(args.checkpoint)},
                 "train_config": {"path": str(args.train_config), "sha256": sha256(args.train_config)},
                 "et_config": {"path": str(args.et_config), "sha256": sha256(args.et_config)},
                 "normalization_sha256": sha256(args.output / "normalization.json"),
+                "normalization": normalization_provenance,
                 "model_inference": OmegaConf.to_container(model_cfg.training.model.inference, resolve=True),
                 "keyframe_pose_conditioning": bool(model.keyframe_pose_conditioning),
                 "semantic_fields": 10, "semantic_values": 93,

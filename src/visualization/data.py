@@ -123,7 +123,7 @@ def _select_item(value, index, batch_size, *, batched_ndim=None):
     return value
 
 
-def _sim_standard(camera, subject=None, volume=None, *, normalized=False):
+def _sim_standard(camera, subject=None, volume=None, *, normalized=False, normalization_parameters=None):
     import torch
     from data.simulation.convertor import SIMConvertor
 
@@ -135,7 +135,12 @@ def _sim_standard(camera, subject=None, volume=None, *, normalized=False):
         from data.simulation.dataset import SimulationDataset
         load_dotenv(PROJECT_ROOT / ".env", override=False)
         try:
-            camera, subject, volume = SimulationDataset.normalize_item(camera, subject, volume, False)
+            if normalization_parameters is None:
+                camera, subject, volume = SimulationDataset.normalize_item(camera, subject, volume, False)
+            else:
+                camera, subject, volume = SimulationDataset._normalize_item_with_parameters(
+                    camera, subject, volume, normalization_parameters, normalize=False,
+                )
         except (ValueError, FileNotFoundError) as error:
             raise ValueError("This legacy inference file stores normalized coordinates. Configure "
                              "SIMULATION_DATA_PATH to the training dataset, then save a portable comparison.") from error
@@ -384,10 +389,25 @@ class VisualizationRepository:
         return ComparisonSample(handle["ids"][native_index], dataset, str(prompt), {"GT": camera}, subject, volume,
                                 metadata=metadata, _context=(self, handle, native_index))
 
-    def _batch(self, handle, native_index):
+    def _batch(self, handle, native_index, *, normalization_parameters=None):
         import hydra
         dataset = handle["dataset"]
-        key = (dataset, handle["split"], str(handle["data_path"]))
+        # Equal inventories can require different normalized observations for
+        # different checkpoints. Values, rather than mapping identity, make the
+        # cache reusable for equivalent persisted transforms.
+        normalization_key = None if normalization_parameters is None else tuple(
+            tuple(float(value) for value in _array(normalization_parameters[group][statistic]).reshape(-1))
+            for group in ("camera_position", "subject_position", "subject_dimensions")
+            for statistic in ("mean", "std")
+        )
+        key = (dataset, handle["split"], str(handle["data_path"]), normalization_key)
+        if normalization_parameters is not None:
+            from data.simulation.dataset import SimulationDataset
+            SimulationDataset.set_current_normalization_parameters(
+                normalization_parameters,
+                int(handle["config"].data.dataset.config.get("normalization_frame_count")
+                    or handle["config"].data.dataset.config.get("target_frame_count", 30)),
+            )
         if key not in self._inference_datasets:
             from omegaconf import OmegaConf
             dataset_config = OmegaConf.create(OmegaConf.to_container(handle["config"].data.dataset.config, resolve=True))
@@ -395,10 +415,17 @@ class VisualizationRepository:
                 raise ValueError("Model inference requires data.dataset.config.normalize=true, as in the training pipeline.")
             if dataset == "et":
                 dataset_config.split = handle["split"]
-            self._inference_datasets[key] = hydra.utils.instantiate(dataset_config)
+            dataset_kwargs = (
+                {"normalization_parameters": normalization_parameters}
+                if dataset == "simulation" and normalization_parameters is not None else {}
+            )
+            self._inference_datasets[key] = hydra.utils.instantiate(dataset_config, **dataset_kwargs)
         native = self._inference_datasets[key]
         if dataset == "simulation":
             from data.simulation.dataset import collate_fn
+            # A cached dataset must also restore its own conversion scales;
+            # another model load can have installed a different transform.
+            native.set_normalization_parameters(native.normalization_parameters)
             # Training configs can filter movement types, changing the native
             # dataset's indices. Always preserve the preview's selected file.
             selected_path = handle["native"]["files"][native_index].resolve()
@@ -419,7 +446,7 @@ class VisualizationRepository:
 
     def generate(self, sample, models=("lens_craft",), mode="prompt_generation", keyframes=None, *, seed=None, device=None):
         import torch
-        from data.sim_format import MEMORY_TEACHER_FORCING_BY_MODE, to_simulation_format
+        from data.sim_format import MEMORY_TEACHER_FORCING_BY_MODE, geometry_context_from_batch, to_simulation_format
         from data.categorical_conditioning import conditioning_from_batch, conditioning_presence_from_batch
         from inferencing.process import inference_batch
         from models.factory import load_model
@@ -442,7 +469,6 @@ class VisualizationRepository:
         if requested_device == "auto":
             requested_device = "cuda" if torch.cuda.is_available() else "cpu"
         torch_device = torch.device(requested_device)
-        batch = move_batch_to_device(self._batch(handle, native_index), torch_device)
         output = copy.copy(sample)
         output.trajectories = dict(sample.trajectories)
         output.metadata = copy.deepcopy(sample.metadata)
@@ -460,11 +486,19 @@ class VisualizationRepository:
                     with _generation_seed(seed, torch_device):
                         self._models[model_key] = load_model(cfg, model_type, torch_device)
                 model = self._models[model_key]
+                normalization_parameters = (
+                    getattr(model, "normalization_parameters", None)
+                    if model_type == "lens_craft" else None
+                )
+                batch = move_batch_to_device(self._batch(
+                    handle, native_index, normalization_parameters=normalization_parameters,
+                ), torch_device)
                 seq_length = int(cfg.training.model.data_format.seq_length)
                 constraints = {}
                 with _generation_seed(seed, torch_device), torch.inference_mode():
                     if model_type == "lens_craft":
                         sim_camera, sim_subject, sim_volume, padding = to_simulation_format(batch, sample.dataset, target_len=seq_length)
+                        geometry_context = geometry_context_from_batch(batch, sample.dataset, target_len=seq_length)
                         if padding is None:
                             padding = torch.zeros(sim_camera.shape[:2], dtype=torch.bool, device=torch_device)
                         source_mask = padding.clone()
@@ -484,7 +518,10 @@ class VisualizationRepository:
                             keyframe_kwargs["known_camera_mask"] = ~source_mask
                             if source_mask.all():
                                 raise ValueError("The selected keyframes are all padded; choose valid frames.")
-                            camera_standard = _sim_standard(sim_camera, normalized=True)[0][0]
+                            camera_standard = _sim_standard(
+                                sim_camera, normalized=True,
+                                normalization_parameters=normalization_parameters,
+                            )[0][0]
                             valid_indices = [i for i in source_indices if not bool(padding[0, i])]
                             selected = [timeline_indices[i] for i in valid_indices]
                             constraints = {"keyframe_poses": camera_standard[valid_indices].tolist(),
@@ -496,8 +533,12 @@ class VisualizationRepository:
                         generated = model.generate_camera_trajectory(subject_trajectory=sim_subject, subject_volume=sim_volume,
                             camera_trajectory=sim_camera, src_key_mask=source_mask, padding_mask=padding,
                             memory_teacher_forcing_ratio=MEMORY_TEACHER_FORCING_BY_MODE[mode], caption_embedding=caption,
-                            caption_presence_mask=conditioning_presence_from_batch(batch, model), **keyframe_kwargs)["reconstructed"]
-                        poses = _sim_standard(generated, normalized=True)[0][0]
+                            caption_presence_mask=conditioning_presence_from_batch(batch, model),
+                            **keyframe_kwargs, **geometry_context)["reconstructed"]
+                        poses = _sim_standard(
+                            generated, normalized=True,
+                            normalization_parameters=normalization_parameters,
+                        )[0][0]
                         poses = poses[~_array(padding[0]).astype(bool)]
                         name = f"lens_craft:{mode}"
                     else:

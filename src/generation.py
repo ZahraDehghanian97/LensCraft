@@ -47,7 +47,8 @@ def generate_baseline_trajectory(
 
 
 def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, memory_ratio,
-                                 *, caption_presence_mask=None, known_camera_mask=None):
+                                 *, caption_presence_mask=None, known_camera_mask=None,
+                                 geometry_context=None):
     """Generate with optional exact keyframes, separate from visibility and padding."""
     camera, subject, volume, padding = view
     keyframe_kwargs = (
@@ -64,4 +65,5 @@ def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, m
         caption_embedding=caption_embedding,
         caption_presence_mask=caption_presence_mask,
         **keyframe_kwargs,
+        **(geometry_context or {}),
     )["reconstructed"]

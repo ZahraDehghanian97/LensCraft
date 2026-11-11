@@ -13,7 +13,7 @@ module:
   dim_feedforward: 1024
   dropout_rate: 0.3
   seq_length: ${training.model.data_format.seq_length}
-  # Explicit pose-query conditioning is a keyframe training policy.
+  # Saved-config compatibility; explicit known_camera_mask always supplies poses.
   keyframe_pose_conditioning: false
 
 inference:

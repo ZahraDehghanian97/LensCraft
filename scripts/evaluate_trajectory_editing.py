@@ -145,6 +145,7 @@ def encode_valid(evaluator, camera, subject, volume, padding):
 def evaluate_batches(model, evaluator, dataset, loader, indices, args, output, metric_vocabulary):
     """Run paired controls and edits; return sums/counts and cohort accounting."""
     import torch
+    from data.sim_format import geometry_context_from_batch
     from data.simulation.dataset import SimulationDataset
     from data.simulation.utils import structured_conditioning_from_batch
     from testing.trajectory_editing import (
@@ -189,10 +190,13 @@ def evaluate_batches(model, evaluator, dataset, loader, indices, args, output, m
             cpu_rows = selected.cpu().tolist()
             camera, subject, volume, padding = [batch[key][selected] for key in
                 ("camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask")]
+            geometry_context = {key: value[selected] for key, value in
+                geometry_context_from_batch(batch, "simulation", target_len=camera.shape[1]).items()}
             inputs = dict(camera_trajectory=camera, subject_trajectory=subject,
-                          subject_volume=volume, padding_mask=padding, src_key_mask=padding)
-            # All three controls use the same encoder-only source path, even
-            # for checkpoints with optional direct pose queries enabled.
+                          subject_volume=volume, padding_mask=padding, src_key_mask=padding,
+                          **geometry_context)
+            # All three controls use the same encoder-only source path;
+            # editing supplies no exact keyframe constraints.
             generated = {"reconstruction": model.generate_camera_trajectory(
                 **inputs, caption_embedding=caption[:, selected],
                 caption_presence_mask=presence[selected],

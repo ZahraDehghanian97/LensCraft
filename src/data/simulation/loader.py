@@ -253,6 +253,8 @@ def calculate_normalization_parameters_tensor(
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     if simulation_files is None:
         simulation_files = find_simulation_files(data_path)
+    if not simulation_files:
+        raise ValueError("Normalization requires at least one simulation file")
 
     camera_positions = []
     subject_positions = []

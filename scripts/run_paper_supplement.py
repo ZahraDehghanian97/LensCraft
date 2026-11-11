@@ -152,23 +152,25 @@ def _timing_inputs(cfg, args):
     from data.datamodule import CameraTrajectoryDataModule
     from data.dataset_type import resolve_dataset_type
     from data.convertor.convertor import convert_to_target
-    from data.sim_format import to_simulation_format
+    from data.sim_format import geometry_context_from_batch, to_simulation_format
     from data.simulation.utils import structured_conditioning_from_batch
     from models.factory import load_model, model_type_from_cfg
     from testing.paper_protocol import configure_native_length
     from utils.device import move_batch_to_device
+    from utils.normalization import prepare_evaluation_normalization
 
     device = torch.device(cfg.device)
     model_type = model_type_from_cfg(cfg)
+    model = load_model(cfg, model_type, device)
     dm = CameraTrajectoryDataModule(dataset_config=cfg.data.dataset.config,
         batch_size=args.eff_batch_size, num_workers=0, val_size=cfg.data.val_size,
         test_size=cfg.data.test_size, test_fraction=cfg.test_fraction)
+    prepare_evaluation_normalization(dm, model, model_type)
     dm.setup()
     batch = move_batch_to_device(next(iter(dm.test_dataloader())), device)
     if len(batch["text_prompts"]) != args.eff_batch_size:
         raise ValueError("Insufficient held-out inputs for requested efficiency batch")
     dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
-    model = load_model(cfg, model_type, device)
     length_protocol = configure_native_length(model, model_type, args.eff_frames)
     limitations = ["Text conditioning extraction and input format conversion are excluded from timing and FLOPs.",
                   "Adapter-native output decoding/postprocessing is included; model loading and metric evaluation are excluded.",
@@ -176,11 +178,13 @@ def _timing_inputs(cfg, args):
                   "Measurements share server GPUs with other jobs and may include resource contention."]
     if model_type == "lens_craft":
         _, subject, volume, padding = to_simulation_format(batch, dataset_type, target_len=args.eff_frames)
+        geometry_context = geometry_context_from_batch(batch, dataset_type, target_len=args.eff_frames)
         caption = structured_conditioning_from_batch(batch)
         def generate():
             return model.generate_camera_trajectory(subject_trajectory=subject, subject_volume=volume,
                 camera_trajectory=None, padding_mask=padding, memory_teacher_forcing_ratio=1.0,
-                caption_embedding=caption, caption_presence_mask=batch.get('prompt_none_mask'))["reconstructed"]
+                caption_embedding=caption, caption_presence_mask=batch.get('prompt_none_mask'),
+                **geometry_context)["reconstructed"]
         if length_protocol["extrapolates_checkpoint_native_length"]:
             limitations.append(f"LensCraft generates {args.eff_frames} frames with unchanged weights trained at {length_protocol['checkpoint_native_frames']} frames; this is a length-extrapolation timing benchmark, not a quality evaluation at the trained length.")
         return generate, model, limitations, length_protocol
@@ -190,10 +194,7 @@ def _timing_inputs(cfg, args):
         batch["padding_mask"], args.eff_frames)
     prompts = batch["text_prompts"]
     if model_type == "ccdm":
-        rewritten = list(prompts)
-        for old, new in model._PROMPT_REWRITES:
-            rewritten = [prompt.replace(old, new) for prompt in rewritten]
-        embedding = model.clip_embedder.extract_clip_embeddings(rewritten, return_seq=False)
+        embedding = model.clip_embedder.extract_clip_embeddings(prompts, return_seq=False)
         model.clip_embedder.extract_clip_embeddings = lambda *a, **kw: embedding
         limitations.append(f"CCDM generates {model.seq_len} frames using {model.n_T} diffusion steps; checkpoint was trained at native length 300.")
     elif model_type == "et":

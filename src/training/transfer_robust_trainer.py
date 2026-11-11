@@ -16,6 +16,7 @@ from numbers import Integral
 
 import torch
 
+from data.sim_format import geometry_context_from_batch
 from training.autoencoder_trainer import LightningLensCraft
 from training.conditioning import TRAINING_MODES
 from training.conditioning_metrics import METRIC_NAMES, conditioning_pose_score, pose_metric_totals
@@ -132,6 +133,7 @@ class TransferRobustTrainer(LightningLensCraft):
                     caption_presence_mask=view.get('prompt_none_mask'),
                     caption_missingness_seeds=seeds,
                     force_caption_missingness=True,
+                    geometry_context=geometry_context_from_batch(view),
                 )
                 totals = pose_metric_totals(output['reconstructed'], camera, padding, output['known_mask'])
                 for key, pair in totals.items():

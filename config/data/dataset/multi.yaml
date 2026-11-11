@@ -13,5 +13,9 @@ simulation_config:
 ccdm_config:
   _target_: data.ccdm.CCDMDataset
   data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
+  # Mixed categorical training needs translations of the native captions.
+  # CCDMDataset verifies schema, source IDs and exact caption alignment.
+  annotations_path: ${oc.env:CCDM_ANNOTATIONS_PATH,null}
+  sample_indices_path: null
   normalize: true
   original_seq_len: 300

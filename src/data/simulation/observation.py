@@ -102,5 +102,5 @@ class ModelObservationPolicy:
                 "supplied annotation" if self.movement_speed_available
                 else "unknown; archived speed enum is a diagnostic placeholder"
             ),
-            "subject_availability_encoding": "metadata_only; core model has no learned availability cue",
+            "subject_availability_encoding": "explicit model availability masks; unknown values are masked before projection",
         }

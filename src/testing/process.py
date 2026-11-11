@@ -10,6 +10,7 @@ from data.sim_format import (
     MEMORY_TEACHER_FORCING_BY_MODE,
     build_keyframing_mask,
     to_simulation_format,
+    geometry_context_from_batch,
 )
 from generation import generate_baseline_trajectory, generate_lenscraft_trajectory
 from testing.baseline_modes import (
@@ -21,6 +22,27 @@ from testing.keyframes import parse_keyframe_mode
 from utils.device import move_batch_to_device
 
 BASELINE_MODELS = ("ccdm", "et", "gendop")
+
+
+def _simulation_view_is_normalized(batch, target_len):
+    view = batch
+    reference = batch.get("simulation_reference")
+    if reference is not None and reference["camera_trajectory"].shape[1] == target_len:
+        view = reference
+    return view.get("simulation_normalized", True)
+
+
+def _metric_normalization_kwargs(evaluator, batch, *, camera_is_normalized=None,
+                                 target_len=None):
+    """Describe source coordinates only for metrics owning a SIM transform."""
+    if not hasattr(evaluator, "metric_normalization"):
+        return {}
+    normalized = _simulation_view_is_normalized(batch, target_len)
+    return {
+        "source_normalization": SimulationDataset._normalization_parameters,
+        "camera_is_normalized": normalized if camera_is_normalized is None else camera_is_normalized,
+        "subject_is_normalized": normalized,
+    }
 
 
 def _align_structured_metric_target(
@@ -203,6 +225,7 @@ def _update_generation_metrics(
     ref_model,
     batch: Dict[str, Any],
     generated_padding_mask: Optional[torch.Tensor] = None,
+    generated_is_normalized: Optional[bool] = None,
 ) -> None:
     # Learned metrics use the reference model's temporal view; generated and
     # cached baseline trajectories retain their complete native frame count.
@@ -218,6 +241,11 @@ def _update_generation_metrics(
             sim_subject_trajectory,
             sim_subject_volume,
             metric_generated_mask,
+            **_metric_normalization_kwargs(
+                clatr_extractor, batch,
+                camera_is_normalized=(False if metric_item == NO_NORM_ITEM else generated_is_normalized),
+                target_len=sim_padding_mask.shape[1],
+            ),
         )
         metric_callback.update_clatr_metrics(
             metric_item,
@@ -240,6 +268,11 @@ def _update_generation_metrics(
             sim_subject_volume,
             src_key_mask=metric_generated_mask,
             subject_key_padding_mask=sim_padding_mask,
+            **_metric_normalization_kwargs(
+                ref_model, batch,
+                camera_is_normalized=(False if metric_item == NO_NORM_ITEM else generated_is_normalized),
+                target_len=sim_padding_mask.shape[1],
+            ),
         )
         prompt_embedding, prompt_none_mask = _align_structured_metric_target(
             prompt_embedding,
@@ -365,6 +398,9 @@ def test_batch(
             sim_subject_trajectory,
             sim_subject_volume,
             sim_padding_mask,
+            **_metric_normalization_kwargs(
+                clatr_extractor, batch, target_len=sim_padding_mask.shape[1],
+            ),
         )
         if batch.get("text_prompts") is not None:
             text_clatr = clatr_extractor.encode_text(batch["text_prompts"])
@@ -412,6 +448,7 @@ def test_batch(
                 ref_model,
                 batch,
                 generated_padding_mask=variant_padding_masks.get(metric_item),
+                generated_is_normalized=metric_item != NO_NORM_ITEM,
             )
             _update_geometry_metrics(
                 metric_callback, metric_item, sim_generated_trajectory,
@@ -441,6 +478,9 @@ def test_batch(
         batch, dataset_type, target_len=model.decoder.seq_length
     )
     camera, subject, volume, padding = generation_view
+    geometry_context = geometry_context_from_batch(
+        batch, dataset_type, target_len=camera.shape[1],
+    )
     masks_by_count = {}
     generated_outputs: Dict[str, Any] = {"items": {}}
 
@@ -460,6 +500,7 @@ def test_batch(
                 model, generation_view, source_mask, caption_embedding, memory_teacher_forcing_ratio,
                 caption_presence_mask=conditioning_presence_from_batch(batch, model),
                 known_camera_mask=(~source_mask if count is not None else None),
+                geometry_context=geometry_context,
             )
         else:
             item_output = cached_outputs["items"][metric_item]
@@ -497,6 +538,7 @@ def test_batch(
             ref_model,
             batch,
             generated_padding_mask=padding,
+            generated_is_normalized=_simulation_view_is_normalized(batch, camera.shape[1]),
         )
         _update_geometry_metrics(
             metric_callback, metric_item, sim_generated_trajectory, generation_view,

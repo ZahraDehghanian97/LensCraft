@@ -15,6 +15,7 @@ from training.module_factory import (
     checkpoint_monitor,
 )
 from utils.checkpoint import load_checkpoint
+from utils.normalization import prepare_evaluation_normalization
 
 load_dotenv()
 
@@ -28,10 +29,32 @@ def _compact_batches_enabled(cfg: DictConfig) -> bool:
 
 
 def _validate_multi_config(cfg: DictConfig) -> None:
-    if (OmegaConf.select(cfg, "data.use_multi_dataset", default=False)
-            and OmegaConf.select(cfg, "training._target_", default="")
+    if not OmegaConf.select(cfg, "data.use_multi_dataset", default=False):
+        return
+    if (OmegaConf.select(cfg, "training._target_", default="")
             != "training.multi_dataset_trainer.MultiDatasetTrainer"):
         raise ValueError("Mixed-dataset training requires MultiDatasetTrainer")
+    annotations_path = OmegaConf.select(cfg, "data.dataset.ccdm_config.annotations_path")
+    if annotations_path is None or not str(annotations_path).strip():
+        raise ValueError(
+            "Mixed categorical training requires structured CCDM caption annotations. "
+            "Set CCDM_ANNOTATIONS_PATH or "
+            "data.dataset.ccdm_config.annotations_path=/path/to/annotations.json. "
+            "Rows must contain custom_id, source_prompt, cinematographyPrompts and "
+            "simulationInstructions for every selected CCDM sample; native caption "
+            "text alone does not condition the categorical generator."
+        )
+    annotations_path = hydra.utils.to_absolute_path(os.path.expanduser(str(annotations_path)))
+    if not os.path.isfile(annotations_path):
+        raise FileNotFoundError(
+            f"CCDM training annotations not found: {annotations_path}. "
+            "Set CCDM_ANNOTATIONS_PATH or data.dataset.ccdm_config.annotations_path "
+            "to an existing annotations.json file."
+        )
+    # Hydra changes into the output directory; keep configured relative paths
+    # anchored to the original project directory for the subsequent loader.
+    with open_dict(cfg.data.dataset.ccdm_config):
+        cfg.data.dataset.ccdm_config.annotations_path = annotations_path
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
@@ -76,7 +99,14 @@ def main(cfg: DictConfig):
 
     model = instantiate(cfg.training.model.module)
     if initial_checkpoint not in empty:
-        model = load_checkpoint(hydra.utils.to_absolute_path(os.path.expanduser(str(initial_checkpoint))), model, torch.device('cpu'))
+        initial_path = hydra.utils.to_absolute_path(os.path.expanduser(str(initial_checkpoint)))
+        saved_checkpoint = torch.load(initial_path, map_location='cpu', weights_only=False)
+        if saved_checkpoint.get('normalization') is not None:
+            data_module.load_state_dict({'normalization': saved_checkpoint['normalization']})
+        model = load_checkpoint(initial_path, model, torch.device('cpu'), checkpoint=saved_checkpoint)
+        if saved_checkpoint.get('normalization') is None:
+            prepare_evaluation_normalization(data_module, model, 'lens_craft')
+        del saved_checkpoint
         logger.info('Initialized weights for a new run from %s; optimizer and epoch start fresh', initial_checkpoint)
 
     optimizer = instantiate(cfg.training.optimizer)
@@ -84,9 +114,15 @@ def main(cfg: DictConfig):
 
     checkpoint_path = None
     if resume_checkpoint not in empty:
-        checkpoint_path = str(resume_checkpoint)
+        checkpoint_path = hydra.utils.to_absolute_path(os.path.expanduser(str(resume_checkpoint)))
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
+        saved_checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+        if saved_checkpoint.get('normalization') is not None:
+            data_module.load_state_dict({'normalization': saved_checkpoint['normalization']})
+        else:
+            prepare_evaluation_normalization(data_module, model, 'lens_craft')
+        del saved_checkpoint
         logger.info("Resuming training from checkpoint: %s", checkpoint_path)
 
     # Keep current training options in both cases; fit restores all checkpoint

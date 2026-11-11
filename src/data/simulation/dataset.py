@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -38,6 +39,7 @@ class SimulationDataset(Dataset):
     _normalization_parameters = None
     _normalization_parameters_cache = {}
     _normalization_parameters_override = None
+    _normalization_parameters_frame_count = None
 
     def __init__(
         self,
@@ -47,6 +49,8 @@ class SimulationDataset(Dataset):
         target_frame_count: int = SIMULATION_FRAME_COUNT,
         normalization_frame_count: Optional[int] = None,
         reference_frame_count: Optional[int] = None,
+        defer_normalization: bool = False,
+        normalization_parameters: Optional[Dict] = None,
     ):
         self.data_path = resolve_dataset_root(Path(data_path))
         self.allowed_movement_types = allowed_movement_types or []
@@ -145,7 +149,10 @@ class SimulationDataset(Dataset):
                 f"movement types: {self.allowed_movement_types}"
             )
 
-        if self.normalize:
+        self.normalization_parameters = None
+        if self.normalize and normalization_parameters is not None:
+            self.set_normalization_parameters(normalization_parameters)
+        elif self.normalize and not defer_normalization:
             self.normalization_parameters = self.get_normalization_parameters(
                 self.data_path,
                 parameter_dictionary=self.parameter_dictionary,
@@ -155,8 +162,73 @@ class SimulationDataset(Dataset):
                 target_frame_count=self.normalization_frame_count,
             )
             print("Normalization enabled. Using normalization parameters.")
-        else:
-            self.normalization_parameters = None
+
+    def initialize_training_normalization(self, train_indices: Sequence[int]) -> None:
+        """Fit one shared coordinate transform using training clips only.
+
+        Data modules defer fitting until their held-out split is fixed. Explicit
+        checkpoint parameters and an independent normalization reference retain
+        their precedence over this local training inventory.
+        """
+        if not self.normalize:
+            return
+        if self.normalization_parameters is not None:
+            self.set_normalization_parameters(self.normalization_parameters)
+            return
+        if len(train_indices) == 0:
+            if not os.environ.get("SIMULATION_NORMALIZATION_DATA_PATH"):
+                raise ValueError("Normalization requires at least one training sample")
+            self.normalization_parameters = self.get_normalization_parameters(
+                self.data_path, target_frame_count=self.normalization_frame_count,
+            )
+            return
+        training_files = sorted(
+            (self.simulation_files[index] for index in train_indices),
+            key=lambda path: path.name,
+        )
+        # The full export fingerprint alone cannot distinguish different splits
+        # of the same inventory. Include selected IDs even when its manifest is
+        # unchanged, and make the key independent of random_split's ordering.
+        selected_ids = "\n".join(path.name for path in training_files).encode("utf-8")
+        membership = hashlib.sha256(selected_ids).hexdigest()
+        self.normalization_parameters = self.get_normalization_parameters(
+            self.data_path,
+            parameter_dictionary=self.parameter_dictionary,
+            simulation_files=training_files,
+            fixed_point_scale=self.fixed_point_scale,
+            dataset_fingerprint=f"{self.dataset_fingerprint}:training_files={membership}",
+            target_frame_count=self.normalization_frame_count,
+        )
+
+    @staticmethod
+    def set_current_normalization_parameters(
+        parameters: Dict, target_frame_count: int = SIMULATION_FRAME_COUNT,
+    ) -> Dict:
+        """Restore explicit checkpoint scales for conversion/inference helpers."""
+        normalized = {}
+        for group in ("camera_position", "subject_position", "subject_dimensions"):
+            normalized[group] = {}
+            for statistic in ("mean", "std"):
+                value = torch.as_tensor(parameters[group][statistic], dtype=torch.float32).detach().cpu().clone()
+                if value.shape != (3,) or not torch.isfinite(value).all():
+                    raise ValueError(f"Invalid normalization {group}.{statistic}: expected three finite values")
+                if statistic == "std" and (value <= 0).any():
+                    raise ValueError(f"Invalid normalization {group}.std: values must be positive")
+                normalized[group][statistic] = value
+        reference = os.environ.get("SIMULATION_NORMALIZATION_DATA_PATH")
+        SimulationDataset._normalization_parameters = normalized
+        SimulationDataset._normalization_parameters_frame_count = target_frame_count
+        SimulationDataset._normalization_parameters_override = (
+            (str(Path(reference).expanduser().absolute()), target_frame_count)
+            if reference else None
+        )
+        return normalized
+
+    def set_normalization_parameters(self, parameters: Dict) -> None:
+        """Apply persisted scales to this dataset and static conversion helpers."""
+        self.normalization_parameters = self.set_current_normalization_parameters(
+            parameters, self.normalization_frame_count,
+        )
 
     @staticmethod
     def get_normalization_parameters(
@@ -166,23 +238,42 @@ class SimulationDataset(Dataset):
         simulation_files: Optional[Sequence[Path]] = None,
         fixed_point_scale: Optional[float] = None,
         dataset_fingerprint: Optional[str] = None,
-        target_frame_count: int = SIMULATION_FRAME_COUNT,
+        target_frame_count: Optional[int] = None,
     ) -> Dict:
         """Use this dataset's statistics, or an explicit shared reference export.
 
         Set SIMULATION_NORMALIZATION_DATA_PATH for training and evaluation to
         share an independent dataset's coordinate scales. The override applies
         to both dataset instances and the static ET/CCDM conversion helpers.
+        An omitted frame count reuses installed statistics for static helpers;
+        explicit frame counts request statistics for that sampling resolution.
         """
         normalization_data_path = os.environ.get("SIMULATION_NORMALIZATION_DATA_PATH")
+        reference_path = (
+            str(Path(normalization_data_path).expanduser().absolute())
+            if normalization_data_path else None
+        )
+        current_override = SimulationDataset._normalization_parameters_override
+        current_reference_path = current_override[0] if current_override else None
+        if target_frame_count is None:
+            # Static normalize/denormalize helpers must use the scales installed
+            # with a checkpoint, even if it was trained at 100 rather than the
+            # default 30 frames. Changing the reference export still invalidates
+            # current fitted statistics and resolves the new source below.
+            if (data_path is None
+                    and SimulationDataset._normalization_parameters is not None
+                    and current_reference_path == reference_path):
+                return SimulationDataset._normalization_parameters
+            target_frame_count = SIMULATION_FRAME_COUNT
         override_key = (
-            (str(Path(normalization_data_path).expanduser().absolute()), target_frame_count)
+            (reference_path, target_frame_count)
             if normalization_data_path else None
         )
         if (
             data_path is None
             and SimulationDataset._normalization_parameters is not None
             and SimulationDataset._normalization_parameters_override == override_key
+            and SimulationDataset._normalization_parameters_frame_count == target_frame_count
         ):
             return SimulationDataset._normalization_parameters
 
@@ -236,6 +327,7 @@ class SimulationDataset(Dataset):
         # Existing inference helpers use this process-wide "current" dataset.
         SimulationDataset._normalization_parameters = parameters
         SimulationDataset._normalization_parameters_override = override_key
+        SimulationDataset._normalization_parameters_frame_count = target_frame_count
         return parameters
 
     def __len__(self) -> int:
@@ -338,6 +430,11 @@ class SimulationDataset(Dataset):
         return camera_trajectory, subject_trajectory, subject_volume
 
     def __getitem__(self, index: int) -> Dict:
+        if self.normalize and self.normalization_parameters is None:
+            raise RuntimeError(
+                "Simulation normalization is deferred; initialize training normalization "
+                "or supply saved normalization_parameters before reading samples"
+            )
         data = parse_simulation_file_to_dict(
             self.simulation_files[index],
             self.parameter_dictionary,
@@ -385,6 +482,7 @@ class SimulationDataset(Dataset):
                     )
                 )
             reference = {
+                "simulation_normalized": self.normalize,
                 "camera_intrinsics": reference_intrinsics,
                 "camera_trajectory": reference_camera,
                 "subject_trajectory": reference_subject,
@@ -393,6 +491,8 @@ class SimulationDataset(Dataset):
             }
             if reference_geometry is not None:
                 reference["geometry_reference"] = reference_geometry
+                reference["subject_orientation_available"] = torch.tensor(False, dtype=torch.bool)
+                reference["subject_dimensions_available"] = torch.tensor(False, dtype=torch.bool)
         camera_trajectory, subject_trajectory = (
             resample_paired_euler_trajectories(
                 camera_trajectory,
@@ -513,6 +613,10 @@ def collate_fn(batch):
             for key in ("camera_trajectory", "subject_trajectory", "subject_volume", "padding_mask")
         }
         result["simulation_reference"]["camera_intrinsics"] = collate_intrinsics(references)
+        result["simulation_reference"]["simulation_normalized"] = references[0]["simulation_normalized"]
+        for key in ("subject_orientation_available", "subject_dimensions_available"):
+            if key in references[0]:
+                result["simulation_reference"][key] = torch.stack([reference[key] for reference in references])
         if "geometry_reference" in references[0]:
             result["simulation_reference"]["geometry_reference"] = collate_geometry_references(
                 [reference["geometry_reference"] for reference in references]

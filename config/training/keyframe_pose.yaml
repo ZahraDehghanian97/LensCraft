@@ -1,4 +1,4 @@
-# Optional explicit keyframe pose-query policy for the same categorical model.
+# Historical recipe alias. Explicit keyframe masks now always supply poses.
 defaults:
   - default
   - _self_

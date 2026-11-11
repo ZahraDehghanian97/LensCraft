@@ -3,6 +3,7 @@ import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
 from data.convertor.convertor import convert_to_target
+from data.sim_format import geometry_context_from_batch
 from data.categorical_conditioning import (
     conditioning_from_batch, conditioning_presence_from_batch,
 )
@@ -66,6 +67,7 @@ class MultiDatasetTrainer(BaseTrainer):
             decode_mode=self.decode_mode,
             compute_cycle_embeddings=True,
             caption_presence_mask=caption_presence,
+            geometry_context=geometry_context_from_batch(batch, "simulation"),
         )
 
         loss_batch = dict(batch, prompt_none_mask=caption_presence)
@@ -100,6 +102,10 @@ class MultiDatasetTrainer(BaseTrainer):
             target_len=self.model.decoder.seq_length,
         )
         converted_batch = dict(batch)
+        context = geometry_context_from_batch(
+            batch, "ccdm", target_len=self.model.decoder.seq_length,
+        )
+        converted_batch.update(context)
         converted_batch.update(
             camera_trajectory=camera_trajectory,
             subject_trajectory=subject_trajectory,
@@ -119,6 +125,7 @@ class MultiDatasetTrainer(BaseTrainer):
             decode_mode=self.decode_mode,
             caption_presence_mask=caption_presence,
             compute_cycle_embeddings=True,
+            geometry_context=context,
         )
 
         return self.loss_module(

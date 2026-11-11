@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from hydra.utils import instantiate
 
 from data.convertor.convertor import convert_to_target
-from models.baselines.text_encoder import CaptionEncoder
 from data.et.load import load_et_config
+from testing.metrics.normalization import MetricNormalization
 from utils.importing import ModuleImporter
 
 
@@ -28,6 +28,11 @@ class CLaTrFeatureExtractor(nn.Module):
         self.device = device
         self.num_cams = num_cams
         self.latent_dim = latent_dim
+        # Convert SIM inputs to physical coordinates first; the existing ET
+        # converter then applies the ET checkpoint's native representation.
+        self.metric_normalization = MetricNormalization(
+            normalized=False, provenance={"source": "et_native_coordinate_conversion"},
+        )
 
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(
@@ -69,6 +74,7 @@ class CLaTrFeatureExtractor(nn.Module):
         for p in self.clatr.parameters():
             p.requires_grad_(False)
 
+        from models.baselines.text_encoder import CaptionEncoder
         self.caption_encoder = CaptionEncoder(device=str(device))
 
         self._text_ctx = 77
@@ -80,7 +86,17 @@ class CLaTrFeatureExtractor(nn.Module):
         sim_subject_trajectory: torch.Tensor,
         sim_subject_volume: Optional[torch.Tensor],
         sim_padding_mask: torch.Tensor,
+        *,
+        source_normalization=None,
+        camera_is_normalized=True,
+        subject_is_normalized=True,
     ) -> torch.Tensor:
+        sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume = self.metric_normalization.convert(
+            sim_camera_trajectory, sim_subject_trajectory, sim_subject_volume,
+            source_normalization=source_normalization,
+            camera_is_normalized=camera_is_normalized,
+            subject_is_normalized=subject_is_normalized,
+        )
         traj_et, _, _, pad_et = convert_to_target(
             "simulation",
             "et",
@@ -89,6 +105,7 @@ class CLaTrFeatureExtractor(nn.Module):
             sim_subject_volume,
             sim_padding_mask,
             target_len=self.num_cams,
+            need_denormal=False,
         )
 
         x = traj_et.to(self.device).float()

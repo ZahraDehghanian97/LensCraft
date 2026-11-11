@@ -69,6 +69,45 @@ class BaseTrainer(L.LightningModule):
             self.model = torch.compile(self.model, mode=self.compile_mode)
             self.compiled = True
 
+    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Persist training scales alongside weights for independent inference."""
+        from data.simulation.dataset import SimulationDataset
+
+        datamodule = getattr(self._trainer, "datamodule", None)
+        state = datamodule.state_dict() if datamodule is not None else {}
+        parameters = state.get("normalization")
+        if parameters is None:
+            parameters = SimulationDataset._normalization_parameters
+        if parameters is not None:
+            checkpoint["normalization"] = {
+                group: {statistic: torch.as_tensor(value).detach().cpu().clone()
+                        for statistic, value in values.items()}
+                for group, values in parameters.items()
+            }
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Restore the geometric schema and the scales used by these weights."""
+        from data.simulation.dataset import SimulationDataset
+        from utils.load_lens_craft import migrate_geometric_context_state
+
+        state = checkpoint.get("state_dict")
+        if state is not None:
+            has_context = any("geometric_context." in key for key in state)
+            needs_context = any("geometric_context." in key for key in self.model.state_dict())
+            if needs_context and not has_context and checkpoint.get("optimizer_states"):
+                raise ValueError(
+                    "Cannot resume optimizer state from a checkpoint predating geometric context. "
+                    "Use initialize_from_checkpoint=<path> and resume_checkpoint=null to continue "
+                    "training with a fresh optimizer."
+                )
+            checkpoint["state_dict"] = migrate_geometric_context_state(self.model, state, prefix="model.")
+        parameters = checkpoint.get("normalization")
+        if parameters is not None:
+            SimulationDataset.set_current_normalization_parameters(parameters)
+            datamodule = getattr(self._trainer, "datamodule", None)
+            if datamodule is not None:
+                datamodule.load_state_dict({"normalization": parameters})
+
     def _calculate_schedule_parameters(self) -> Dict[str, float]:
         current_epoch = self.current_epoch
         max_epochs = self.trainer.max_epochs
@@ -117,6 +156,7 @@ class BaseTrainer(L.LightningModule):
         caption_presence_mask: Optional[torch.Tensor] = None,
         caption_missingness_seeds=None,
         force_caption_missingness: bool = False,
+        geometry_context: Optional[Dict[str, torch.Tensor]] = None,
     ) -> Dict[str, torch.Tensor]:
         ratios = self._calculate_schedule_parameters()
 
@@ -215,6 +255,7 @@ class BaseTrainer(L.LightningModule):
             decode_mode=decode_mode,
             **caption_kwargs,
             **keyframe_kwargs,
+            **(geometry_context or {}),
         )
         output['known_mask'] = known_mask
         output['conditioning_mode'] = conditioning_mode or 'scheduled'

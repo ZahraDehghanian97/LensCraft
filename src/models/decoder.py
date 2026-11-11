@@ -175,6 +175,18 @@ class Decoder(nn.Module):
         known_camera_poses, known_pose_mask = self._known_poses(
             memory, tgt_key_padding_mask, known_camera_poses, known_pose_mask)
         batch_size, device = memory.shape[1], memory.device
+        if known_camera_poses is not None:
+            # Supplied constraints are available before generation, including
+            # future endpoints. Causal feedback alone would never expose a
+            # final-frame keyframe to earlier predictions. Put their masked
+            # pose/time context into the always-visible prefix as well.
+            pose_context = self.embedding(known_camera_poses)
+            pose_context = pose_context + self.known_pose_presence_encoding.to(pose_context)
+            pose_context = pose_context.masked_fill(~known_pose_mask[..., None], 0)
+            subject_embedding = torch.cat((
+                subject_embedding[:, :self.seq_length] + pose_context,
+                subject_embedding[:, self.seq_length:],
+            ), dim=1)
         shape = (batch_size, self.seq_length, self.output_dim)
         if target is not None and target.shape != shape:
             raise ValueError(f'target must have shape {shape}')

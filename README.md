@@ -11,13 +11,16 @@ An unknown field is zero and excluded from attention. The field sizes are
 `[5, 8, 8, 13, 21, 4, 5, 8, 8, 13]`; movement includes `nativePan` and
 `nativeOrbit`.
 
-The default model has **6,907,937 parameters**, hidden width 256, eight heads,
+The default model has **6,909,473 parameters**, hidden width 256, eight heads,
 four encoder and four decoder layers, and feedforward width 1024. The decoder
 cross-attends directly to the 21D tokens. Fixed field codes identify their
 positions only during attention. There is no embedding table, latent merger,
 external memory projection or hidden encoder-state path into the decoder.
-Subject trajectory and volume remain context; explicit keyframes remain pose
-constraints. Camera output uses position3 and an SVD9D rotation projected to SO(3).
+Subject trajectory, volume and observed lens calibration remain geometric
+context. Explicit availability masks distinguish missing subject orientation
+and dimensions from measurements. Explicit keyframes remain pose constraints,
+independently of caption weights. Camera output uses position3 and an SVD9D
+rotation projected to SO(3).
 
 Training uses per-field cross-entropy with weight 1, detached-target
 `KL(original || cycle)` with weight 1, and the configured camera geometry losses.
@@ -39,8 +42,10 @@ See the [categorical representation](docs/categorical_conditioning.md),
 [training recipes](docs/training_and_evaluation.md), and
 [fixed evaluation contract](docs/evaluation.md).
 
-**Checkpoint compatibility:** the current categorical checkpoint state keys
-are preserved. Saved categorical configs are migrated by the loader. Older
+**Checkpoint compatibility:** earlier categorical checkpoints are migrated with
+zero-initialized geometric context weights and an explicit warning. Continue
+training to learn optics and availability; loading old weights does not establish
+those capabilities. New checkpoints persist their training normalization. Older
 512D CLIP/merged generator checkpoints are rejected explicitly; use their
 frozen historical source outside this project to reproduce those experiments.
 
@@ -272,8 +277,10 @@ Long training jobs are best run inside `tmux`/`screen` so they survive disconnec
 
 Pass `known_camera_mask` to preserve supplied camera poses exactly and predict
 the remaining frames. `True` means a fixed keyframe; `padding_mask` separately
-marks timesteps outside the clip. Current categorical checkpoints support this
-without enabling the optional `keyframe_pose_conditioning` pose-query policy.
+marks timesteps outside the clip. Explicit keyframes condition the decoder in
+both decoding modes, including when the caption supplies all semantic memory.
+The historical `keyframe_pose_conditioning` setting remains accepted for saved
+configs; the explicit mask determines pose availability.
 For a loaded LensCraft `model`, provide poses in its simulation format:
 
 ```python
@@ -324,6 +331,14 @@ python src/train.py data/dataset=et
 python src/train.py data/dataset=ccdm
 python src/train.py data=multi training=multi
 ```
+
+Mixed categorical training requires `CCDM_ANNOTATIONS_PATH` (or
+`data.dataset.ccdm_config.annotations_path`) pointing to structured translations
+of the CCDM captions. The loader checks every selected source ID, exact caption
+and annotation schema. For a translated subset, also set
+`data.dataset.ccdm_config.sample_indices_path=/path/to/indices.json`.
+Native text alone supplies no categorical labels. Annotation-free CCDM loading
+remains available for evaluation and independent text-conditioned baselines.
 
 The default family policy samples prompt generation, reconstruction, keyframing
 and keyframes plus prompt equally. Known poses stay clean; hidden camera values

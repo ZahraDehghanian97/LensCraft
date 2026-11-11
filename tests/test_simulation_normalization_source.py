@@ -13,6 +13,7 @@ def normalization_sources(monkeypatch, tmp_path):
     monkeypatch.setattr(simulation.SimulationDataset, "_normalization_parameters", None)
     monkeypatch.setattr(simulation.SimulationDataset, "_normalization_parameters_cache", {})
     monkeypatch.setattr(simulation.SimulationDataset, "_normalization_parameters_override", None)
+    monkeypatch.setattr(simulation.SimulationDataset, "_normalization_parameters_frame_count", None)
     paths = {name: tmp_path / name for name in ("new", "reference", "other")}
     files = {name: [path / "simulation_000.msgpack"] for name, path in paths.items()}
     calls = []
@@ -99,6 +100,18 @@ def test_override_cache_keeps_normalization_frame_counts_separate(monkeypatch, n
     paths, _, calls, _ = normalization_sources
     monkeypatch.setenv("SIMULATION_NORMALIZATION_DATA_PATH", str(paths["reference"]))
     native = simulation.SimulationDataset.get_normalization_parameters(target_frame_count=300)
+    model = simulation.SimulationDataset.get_normalization_parameters(target_frame_count=30)
+    assert native["frames"] == 300 and model["frames"] == 30
+    assert len(calls) == 2
+    assert simulation.SimulationDataset.get_normalization_parameters(target_frame_count=300) is native
+    assert len(calls) == 2
+
+
+def test_default_cache_keeps_explicit_frame_counts_separate(monkeypatch, normalization_sources):
+    paths, _, calls, _ = normalization_sources
+    monkeypatch.setenv("SIMULATION_DATA_PATH", str(paths["new"]))
+    native = simulation.SimulationDataset.get_normalization_parameters(target_frame_count=300)
+    assert simulation.SimulationDataset.get_normalization_parameters() is native
     model = simulation.SimulationDataset.get_normalization_parameters(target_frame_count=30)
     assert native["frames"] == 300 and model["frames"] == 30
     assert len(calls) == 2

@@ -9,6 +9,7 @@ from data.sim_format import (
     MEMORY_TEACHER_FORCING_BY_MODE,
     build_keyframing_mask,
     to_simulation_format,
+    geometry_context_from_batch,
 )
 from generation import generate_baseline_trajectory, generate_lenscraft_trajectory
 from utils.device import move_batch_to_device
@@ -54,6 +55,9 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         sample_seeds=keyframe_sample_seeds,
     )
 
+    geometry_context = geometry_context_from_batch(
+        batch, dataset_type, target_len=sim_camera.shape[1],
+    )
     results = {}
     for mode in ("prompt_generation", "reconstruction", "key_framing+prompt",
                  "key_framing", "source_trajectory"):
@@ -85,6 +89,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             model, view, source_mask, mode_caption, MEMORY_TEACHER_FORCING_BY_MODE[mode],
             caption_presence_mask=mode_presence,
             known_camera_mask=(~source_mask if mode in _KEYFRAMING_MODES else None),
+            geometry_context=geometry_context,
         )
 
     return results, sim_camera, sim_subject, sim_volume, sim_padding, keyframing_mask

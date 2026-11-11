@@ -17,6 +17,7 @@ from testing.metrics.semantic_evaluator import (
     FrozenSemanticEvaluator,
 )
 from testing.metrics.semantic_vocabulary import load_metric_clip_embeddings
+from testing.metrics.normalization import load_metric_normalization
 
 
 def checkpoint_identity(path: str | Path) -> dict:
@@ -125,6 +126,10 @@ def load_semantic_evaluator(
     evaluator = FrozenSemanticEvaluator(**encoder_definition)
     payload = torch.load(checkpoint["path"], map_location="cpu", weights_only=False)
     evaluator.load_metric_checkpoint(payload).to(device)
+    evaluator.metric_normalization = load_metric_normalization(
+        payload, saved_config_path=(saved_config["path"] if saved_config else None),
+        frame_count=int(module.get("seq_length", 30)),
+    )
     raw_clip_name = str(clip["model_name"])
     cache_file = clip.get("cache_file") or os.path.join(
         os.environ.get("CLIP_EMBEDDINGS_CACHE_DIR", "."),
@@ -148,6 +153,7 @@ def load_semantic_evaluator(
         "clip_model_name": clip_model_name,
         "embedding_dim": embedding_dim,
         "frozen": True,
+        "normalization": evaluator.metric_normalization.provenance,
         "implementation": {
             "target": "testing.metrics.semantic_evaluator.FrozenSemanticEvaluator",
             "encoder_definition": encoder_definition,
@@ -160,6 +166,7 @@ def load_semantic_evaluator(
             "checkpoint_sha256": checkpoint["sha256"],
             "model_definition_sha256": definition_hash,
             "clip_model_name": clip_model_name,
+            "normalization": evaluator.metric_normalization.provenance,
         }),
     }
     return evaluator
@@ -173,10 +180,13 @@ def identify_clatr_evaluator(extractor, checkpoint_path, backend: str) -> dict:
         "checkpoint": checkpoint,
         "feature_dim": int(extractor.feature_dim),
     }
+    if hasattr(extractor, "metric_normalization"):
+        identity["normalization"] = extractor.metric_normalization.provenance
     identity["fingerprint"] = _config_hash({
         "backend": backend,
         "checkpoint_sha256": checkpoint["sha256"],
         "feature_dim": identity["feature_dim"],
+        "normalization": identity.get("normalization"),
     })
     extractor.evaluation_provenance = identity
     return identity

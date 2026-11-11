@@ -179,7 +179,7 @@ def run(args):
     from dotenv import load_dotenv
     import numpy as np
     import torch
-    from data.sim_format import to_simulation_format
+    from data.sim_format import geometry_context_from_batch, to_simulation_format
     from data.simulation.loader import load_movement_types
     from data.simulation.utils import structured_conditioning_from_batch
     from utils.device import move_batch_to_device
@@ -294,6 +294,7 @@ def run(args):
         device = torch.device(args.device)
         batch = move_batch_to_device(repository._batch(sample_handle, native_index), device)
         camera, subject, volume, padding = to_simulation_format(batch, "simulation", target_len=30)
+        geometry_context = geometry_context_from_batch(batch, "simulation", target_len=camera.shape[1])
         if padding is None:
             padding = torch.zeros(camera.shape[:2], dtype=torch.bool, device=device)
         valid_indices, source_indices = reversed_valid_indices(padding[0].cpu().tolist())
@@ -306,7 +307,7 @@ def run(args):
             reconstructed = model.generate_camera_trajectory(subject_trajectory=subject, subject_volume=volume,
                 camera_trajectory=reversed_camera, src_key_mask=padding, padding_mask=padding,
                 memory_teacher_forcing_ratio=.5, caption_embedding=caption,
-                caption_presence_mask=batch.get('prompt_none_mask'))["reconstructed"]
+                caption_presence_mask=batch.get('prompt_none_mask'), **geometry_context)["reconstructed"]
         generated.trajectories["Source (time-reversed GT)"] = _sim_standard(reversed_camera, normalized=True)[0][0][known.cpu().numpy()]
         generated.trajectories["lens_craft:conflicting_source+prompt"] = _sim_standard(reconstructed, normalized=True)[0][0][known.cpu().numpy()]
         generated.metadata.update(conflicting_prompt=True, source_transformation="reverse valid camera frames in time; original subject and original target prompt retained",

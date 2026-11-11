@@ -2,6 +2,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 import os
+import warnings
 
 import torch
 from hydra.utils import instantiate, to_absolute_path
@@ -20,6 +21,26 @@ _OLD_CHECKPOINT_ERROR = (
     "CLIP, old ID adapters, and robust-wrapper generator checkpoints are no longer supported; "
     "select the categorical 100-epoch checkpoint or another categorical checkpoint."
 )
+
+
+def migrate_geometric_context_state(model, state, *, prefix=''):
+    """Upgrade only the complete, absent geometry group of older checkpoints.
+
+    Zero initialization preserves the old projection computation for measured
+    subject inputs. It cannot give old weights knowledge of optics: continued
+    training is required. Partial groups remain strict-load errors.
+    """
+    context = {prefix + name: value for name, value in model.state_dict().items()
+               if name.startswith('geometric_context.') or '.geometric_context.' in name}
+    if not context or any(name in state for name in context):
+        return state
+    warnings.warn(
+        'This categorical checkpoint predates geometric context. New context weights '
+        'are initialized to zero; continue training to learn lens calibration and '
+        'subject-feature availability before evaluating those capabilities.',
+        RuntimeWarning, stacklevel=2,
+    )
+    return dict(state, **{name: torch.zeros_like(value) for name, value in context.items()})
 
 
 def categorical_checkpoint_state(payload):
@@ -91,7 +112,14 @@ def load_categorical_generator(model_module, model_inference, device, *, checkpo
     model = instantiate(module)
     if type(model) is not LensCraft:
         raise ValueError(f"Categorical generation requires {_MODEL_TARGET}")
+    has_context_weights = any(name.startswith('geometric_context.') for name in state)
+    state = migrate_geometric_context_state(model, state)
     model.load_state_dict(state, strict=True)
+    if payload.get('normalization') is not None:
+        from data.simulation.dataset import SimulationDataset
+
+        SimulationDataset.set_current_normalization_parameters(payload['normalization'])
+        model.normalization_parameters = payload['normalization']
     model.to(device).eval()
     return model, {
         "source_format": source_format,
@@ -99,6 +127,8 @@ def load_categorical_generator(model_module, model_inference, device, *, checkpo
         "runtime_implementation": _MODEL_TARGET,
         "semantic_shape": [10, "batch", 21],
         "semantic_coordinate_count": 93,
+        "geometric_context_weights_restored": has_context_weights,
+        "geometric_context_requires_training": not has_context_weights,
         "config_schema_migration": "remove redundant categorical constructor settings",
     }
 

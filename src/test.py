@@ -20,6 +20,7 @@ from data.simulation.utils import (
     simulation_struct_size,
 )
 from models.factory import load_model, model_type_from_cfg as _model_type_from_cfg
+from utils.normalization import prepare_evaluation_normalization
 
 from testing.metrics.callback import MetricCallback
 from testing.baseline_modes import (
@@ -574,6 +575,7 @@ def main(cfg: DictConfig) -> None:
 
     model_type = _model_type_from_cfg(cfg)
     L.seed_everything(cfg.get("seed", 42), workers=True)
+    model, ref_model = _load_eval_models(cfg, model_type, device)
 
     if "SimulationDataset" in cfg.data.dataset.config["_target_"]:
         # Read native model inputs and the common reference directly from the
@@ -590,6 +592,7 @@ def main(cfg: DictConfig) -> None:
         test_movement_types=cfg.get("test_movement_types"),
         test_fraction=cfg.get("test_fraction", 1.0),
     )
+    normalization_provenance = prepare_evaluation_normalization(data_module, model, model_type)
     data_module.setup()
     logger.info(
         "Test samples: %d original holdout, %d after test_fraction=%s, %d in movement cohort",
@@ -608,7 +611,6 @@ def main(cfg: DictConfig) -> None:
             norm_ablation,
         )
 
-    model, ref_model = _load_eval_models(cfg, model_type, device)
     clip_embeddings = _load_clip_embeddings(cfg, model_type)
 
     metric_callback = MetricCallback(
@@ -650,6 +652,7 @@ def main(cfg: DictConfig) -> None:
                 "semantic_fields": 10,
                 "semantic_values": 93,
                 "semantic_token_width": 21,
+                "normalization": normalization_provenance,
             } if model_type == "lens_craft" else None
         ),
     )

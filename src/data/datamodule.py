@@ -24,8 +24,6 @@ def compact_simulation_collate_fn(batch):
         "simulation_instruction_parameters",
         "cinematography_prompt_parameters",
         "original_frame_count",
-        "camera_intrinsics",
-        "simulation_normalized",
     ):
         result.pop(key, None)
     return result
@@ -70,9 +68,19 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             if compact_batches and self.dataset_mode == 'simulation'
             else self.collate_fn
         )
+        self._full_dataset = None
+        self._restored_normalization_parameters = None
 
     def setup(self, stage=None):
-        full_dataset = hydra.utils.instantiate(self.dataset_config)
+        # Lightning calls setup for fit, validation and test in one process.
+        # Reuse the inventory, split membership and training-fitted transform.
+        if self._full_dataset is not None:
+            return
+        dataset_config = self.dataset_config
+        if 'SimulationDataset' in dataset_config['_target_']:
+            dataset_config = dict(dataset_config)
+            dataset_config['defer_normalization'] = True
+        full_dataset = hydra.utils.instantiate(dataset_config)
         
         if hasattr(full_dataset, 'preprocess'):
             full_dataset.preprocess()
@@ -86,6 +94,10 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
             # Model initialization and repeated setup calls must not change splits.
             generator=Generator().manual_seed(self.split_seed),
         )
+        if isinstance(full_dataset, SimulationDataset) and getattr(full_dataset, 'normalize', False):
+            if self._restored_normalization_parameters is not None:
+                full_dataset.set_normalization_parameters(self._restored_normalization_parameters)
+            full_dataset.initialize_training_normalization(self.train_dataset.indices)
         self.original_test_sample_count = len(self.test_dataset)
         if self.test_fraction < 1:
             sample_count = max(1, math.ceil(self.original_test_sample_count * self.test_fraction))
@@ -93,6 +105,26 @@ class CameraTrajectoryDataModule(L.LightningDataModule):
         self.fractional_test_sample_count = len(self.test_dataset)
         if self.test_movement_types is not None:
             self._filter_test_movement_types(full_dataset)
+        self._full_dataset = full_dataset
+
+    def state_dict(self):
+        dataset = self._full_dataset
+        if isinstance(dataset, SimulationDataset) and dataset.normalization_parameters is not None:
+            return {'normalization': dataset.normalization_parameters}
+        if self._restored_normalization_parameters is not None:
+            return {'normalization': self._restored_normalization_parameters}
+        return {}
+
+    def load_state_dict(self, state_dict):
+        parameters = state_dict.get('normalization', state_dict.get('simulation_normalization_parameters'))
+        if parameters is None:
+            return
+        self._restored_normalization_parameters = SimulationDataset.set_current_normalization_parameters(
+            parameters, int(self.dataset_config.get('normalization_frame_count')
+                            or self.dataset_config.get('target_frame_count', 30)),
+        )
+        if isinstance(self._full_dataset, SimulationDataset):
+            self._full_dataset.set_normalization_parameters(self._restored_normalization_parameters)
 
     def _filter_test_movement_types(self, full_dataset):
         """Intersect movement metadata with the original held-out indices only."""

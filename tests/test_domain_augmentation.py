@@ -234,3 +234,20 @@ def test_ccdm_following_camera_becomes_static_with_turning_subject(batch, augmen
     actual_camera, _, _ = standard(result)
     valid = ~batch['padding_mask']
     torch.testing.assert_close(actual_camera[valid], native_camera[valid])
+
+
+@pytest.mark.parametrize("domain", ["et", "ccdm"])
+def test_augmented_subject_conditions_mark_unknowns_and_do_not_reuse_reference(batch, augmentation, domain):
+    intrinsics = torch.tensor([35., 16. / 9.], dtype=batch["camera_trajectory"].dtype).expand(3, 4, 2).clone()
+    batch["camera_intrinsics"] = intrinsics
+    batch["simulation_reference"] = {"camera_trajectory": batch["camera_trajectory"].clone()}
+    result = augmentation.apply(batch, force_domain=domain)
+    assert not result["subject_orientation_available"].any()
+    assert not result["subject_dimensions_available"].any()
+    assert "simulation_reference" not in result
+    assert "simulation_reference" in batch
+    if domain == "ccdm":
+        assert result["camera_intrinsics"].isnan().all()
+    else:
+        torch.testing.assert_close(result["camera_intrinsics"], intrinsics)
+    assert torch.isfinite(batch["camera_intrinsics"]).all()

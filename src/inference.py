@@ -17,6 +17,7 @@ from models.factory import (
     model_type_from_cfg as _model_type_from_cfg,
 )
 from utils.device import resolve_device as _resolve_device
+from utils.normalization import prepare_evaluation_normalization
 
 from dotenv import load_dotenv
 
@@ -87,6 +88,7 @@ def main(cfg: DictConfig) -> None:
         OmegaConf.register_new_resolver("eval", eval)
 
     model_type = _model_type_from_cfg(cfg)
+    model = _load_model(cfg, model_type, device)
 
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -95,10 +97,10 @@ def main(cfg: DictConfig) -> None:
         val_size=cfg.data.val_size,
         test_size=cfg.data.test_size,
     )
+    prepare_evaluation_normalization(data_module, model, model_type)
     data_module.setup()
     dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
 
-    model = _load_model(cfg, model_type, device)
     test_dataloader = data_module.test_dataloader()
 
     try:

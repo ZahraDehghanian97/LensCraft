@@ -13,9 +13,11 @@ from omegaconf import DictConfig, OmegaConf
 from data.datamodule import CameraTrajectoryDataModule
 from data.convertor.convertor import convert_to_target
 from data.dataset_type import resolve_dataset_type
+from data.sim_format import geometry_context_from_batch, to_simulation_format
 from data.simulation.utils import structured_conditioning_from_batch
 from models.factory import load_model, model_type_from_cfg as _model_type_from_cfg
 from utils.device import move_batch_to_device, resolve_device as _resolve_device
+from utils.normalization import prepare_evaluation_normalization
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -56,21 +58,10 @@ def _warmup_and_runs(cfg: DictConfig, model_type: str) -> tuple[int, int]:
 
 def _to_simulation_batch(batch, dataset_type):
     """Project one batch into the 30-frame simulation format the ref model expects."""
-    if dataset_type == "simulation":
-        return (
-            batch["camera_trajectory"],
-            batch["subject_trajectory"],
-            batch["subject_volume"],
-            batch["padding_mask"],
-        )
-    return convert_to_target(
-        dataset_type, "simulation",
-        batch["camera_trajectory"], batch["subject_trajectory"],
-        batch["subject_volume"], batch["padding_mask"], 30,
-    )
+    return to_simulation_format(batch, dataset_type, target_len=30)
 
 
-def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_length):
+def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_length, *, model=None):
     """Return (gen_fn, flop_model, flop_inputs) for one fixed batch.
 
     `gen_fn` runs a single generation pass; `flop_model`/`flop_inputs` feed
@@ -78,10 +69,13 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
     can't be auto-counted from the generate path).
     """
     sim_camera, sim_subject, sim_volume, sim_padding = sim_batch
+    if model is None:
+        model = load_model(cfg, model_type, device)
 
     if model_type == "lens_craft":
-        ref_model = load_model(cfg, model_type, device)
+        ref_model = model
         caption_embedding = structured_conditioning_from_batch(batch)
+        geometry_context = geometry_context_from_batch(batch, dataset_type, target_len=sim_subject.shape[1])
 
         def gen_fn():
             return ref_model.generate_camera_trajectory(
@@ -92,6 +86,7 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
                 memory_teacher_forcing_ratio=1.0,
                 caption_embedding=caption_embedding,
                 caption_presence_mask=batch.get('prompt_none_mask'),
+                **geometry_context,
             )
 
         flop_inputs = (sim_camera, sim_subject, sim_volume)
@@ -104,8 +99,6 @@ def _build_gen_fn(cfg, batch, model_type, dataset_type, device, sim_batch, seq_l
         batch["subject_volume"], batch["padding_mask"], seq_length,
         torch.full((batch_size,), 30, device=device),
     )
-
-    model = load_model(cfg, model_type, device)
 
     def gen_fn():
         return model.generate_using_text(
@@ -180,6 +173,7 @@ def main(cfg: DictConfig) -> None:
 
     model_type = _model_type_from_cfg(cfg)
     n_warmup, n_runs = _warmup_and_runs(cfg, model_type)
+    model = load_model(cfg, model_type, device)
 
     data_module = CameraTrajectoryDataModule(
         dataset_config=cfg.data.dataset.config,
@@ -188,6 +182,7 @@ def main(cfg: DictConfig) -> None:
         val_size=cfg.data.val_size,
         test_size=cfg.data.test_size,
     )
+    prepare_evaluation_normalization(data_module, model, model_type)
     data_module.setup()
     dataset_type = resolve_dataset_type(cfg.data.dataset.config["_target_"])
     seq_length = cfg.training.model.data_format.seq_length
@@ -197,7 +192,7 @@ def main(cfg: DictConfig) -> None:
 
     sim_batch = _to_simulation_batch(batch, dataset_type)
     gen_fn, flop_model, flop_inputs = _build_gen_fn(
-        cfg, batch, model_type, dataset_type, device, sim_batch, seq_length
+        cfg, batch, model_type, dataset_type, device, sim_batch, seq_length, model=model
     )
 
     logger.info("Timing %s (batch_size=%d, warmup=%d, runs=%d) ...",

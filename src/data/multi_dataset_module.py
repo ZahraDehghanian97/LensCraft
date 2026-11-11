@@ -2,6 +2,7 @@ import os
 import platform
 import psutil
 import lightning as L
+from torch import Generator
 from torch.utils.data import DataLoader, random_split
 import hydra
 
@@ -16,7 +17,8 @@ class MultiDatasetModule(L.LightningDataModule):
         num_workers=None,
         val_size=0.1,
         test_size=0.1,
-        sim_ratio=0.5  # Ratio of simulation samples in each batch
+        sim_ratio=0.5,  # Ratio of simulation samples in each batch
+        split_seed=42,
     ):
         super().__init__()
         self.simulation_config = simulation_config
@@ -25,6 +27,9 @@ class MultiDatasetModule(L.LightningDataModule):
         self.val_size = val_size
         self.test_size = test_size
         self.sim_ratio = sim_ratio
+        self.split_seed = split_seed
+        self._simulation_dataset = None
+        self._restored_normalization_parameters = None
         
         self.sim_batch_size = max(1, int(batch_size * sim_ratio))
         self.ccdm_batch_size = batch_size - self.sim_batch_size
@@ -44,7 +49,7 @@ class MultiDatasetModule(L.LightningDataModule):
         else:
             self.num_workers = num_workers
 
-        if memory_gb < 4:
+        if memory_gb < 4 and self.num_workers > 0:
             self.num_workers = max(1, self.num_workers // 2)
 
         if self.is_mac:
@@ -57,9 +62,16 @@ class MultiDatasetModule(L.LightningDataModule):
             self.prefetch_factor = 4  # Higher prefetch for better throughput
 
     def setup(self, stage=None):
+        if self._simulation_dataset is not None:
+            return
+        from data.simulation.dataset import SimulationDataset
         from data.simulation.dataset import collate_fn as sim_collate_fn
         self.sim_collate_fn = sim_collate_fn
-        simulation_dataset = hydra.utils.instantiate(self.simulation_config)
+        simulation_config = self.simulation_config
+        if 'SimulationDataset' in simulation_config['_target_']:
+            simulation_config = dict(simulation_config)
+            simulation_config['defer_normalization'] = True
+        simulation_dataset = hydra.utils.instantiate(simulation_config)
         
         if hasattr(simulation_dataset, 'preprocess'):
             simulation_dataset.preprocess()
@@ -76,16 +88,44 @@ class MultiDatasetModule(L.LightningDataModule):
         sim_test_size = len(simulation_dataset) - sim_train_size - sim_val_size
         
         self.sim_train, self.sim_val, self.sim_test = random_split(
-            simulation_dataset, [sim_train_size, sim_val_size, sim_test_size]
+            simulation_dataset, [sim_train_size, sim_val_size, sim_test_size],
+            generator=Generator().manual_seed(self.split_seed),
         )
+        if isinstance(simulation_dataset, SimulationDataset) and simulation_dataset.normalize:
+            if self._restored_normalization_parameters is not None:
+                simulation_dataset.set_normalization_parameters(self._restored_normalization_parameters)
+            simulation_dataset.initialize_training_normalization(self.sim_train.indices)
         
         ccdm_train_size = int((1 - self.val_size - self.test_size) * len(ccdm_dataset))
         ccdm_val_size = int(self.val_size * len(ccdm_dataset))
         ccdm_test_size = len(ccdm_dataset) - ccdm_train_size - ccdm_val_size
         
         self.ccdm_train, self.ccdm_val, self.ccdm_test = random_split(
-            ccdm_dataset, [ccdm_train_size, ccdm_val_size, ccdm_test_size]
+            ccdm_dataset, [ccdm_train_size, ccdm_val_size, ccdm_test_size],
+            generator=Generator().manual_seed(self.split_seed + 1),
         )
+        self._simulation_dataset = simulation_dataset
+
+    def state_dict(self):
+        dataset = self._simulation_dataset
+        if dataset is not None and dataset.normalization_parameters is not None:
+            return {'normalization': dataset.normalization_parameters}
+        if self._restored_normalization_parameters is not None:
+            return {'normalization': self._restored_normalization_parameters}
+        return {}
+
+    def load_state_dict(self, state_dict):
+        from data.simulation.dataset import SimulationDataset
+
+        parameters = state_dict.get('normalization', state_dict.get('simulation_normalization_parameters'))
+        if parameters is None:
+            return
+        self._restored_normalization_parameters = SimulationDataset.set_current_normalization_parameters(
+            parameters, int(self.simulation_config.get('normalization_frame_count')
+                            or self.simulation_config.get('target_frame_count', 30)),
+        )
+        if isinstance(self._simulation_dataset, SimulationDataset):
+            self._simulation_dataset.set_normalization_parameters(self._restored_normalization_parameters)
 
     def _get_dataloader_kwargs(self, shuffle=False):
         kwargs = {
@@ -94,7 +134,7 @@ class MultiDatasetModule(L.LightningDataModule):
             'shuffle': shuffle,
         }
         
-        if not self.is_mac:
+        if not self.is_mac and self.num_workers > 0:
             kwargs.update({
                 'persistent_workers': self.persistent_workers,
                 'prefetch_factor': self.prefetch_factor,

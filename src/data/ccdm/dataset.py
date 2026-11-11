@@ -173,6 +173,8 @@ class CCDMDataset(Dataset):
             "subject_trajectory": subject_trajectory,
             "subject_volume": subject_volume,
             "padding_mask": padding_mask,
+            "subject_orientation_available": torch.tensor(False),
+            "subject_dimensions_available": torch.tensor(False),
             "text_prompts": text,
             "item_id": f"ccdm-{self.source_indices[index]:06d}",
         }
@@ -191,6 +193,8 @@ def collate_fn(batch):
         "item_ids": [item["item_id"] for item in batch],
     }
     result.update(collate_structured_conditioning(batch))
+    for key in ("subject_orientation_available", "subject_dimensions_available"):
+        result[key] = torch.stack([item[key] for item in batch])
     result["raw_prompt"] = [item["raw_prompt"] for item in batch]
     result["raw_instruction"] = [item["raw_instruction"] for item in batch]
     return result

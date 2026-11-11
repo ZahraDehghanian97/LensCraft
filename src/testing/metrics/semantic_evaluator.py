@@ -175,13 +175,26 @@ class FrozenSemanticEvaluator(nn.Module):
         self.checkpoint_load_info = {'strict_encoder_and_projection_load': True,
             'loaded_tensor_count': len(selected), 'ignored_nonencoder_tensor_count': len(ignored),
             'encoder_projection_sha256': digest.hexdigest()}
+        if ('normalization' in checkpoint
+                or checkpoint.get('normalization_context', {}).get('normalized') is False):
+            from testing.metrics.normalization import load_metric_normalization
+            self.metric_normalization = load_metric_normalization(checkpoint)
         self.eval().requires_grad_(False)
         return self
 
     @torch.no_grad()
     def embed_trajectory(self, camera_trajectory, subject_trajectory, subject_volume,
-                         src_key_mask=None, subject_key_padding_mask=None):
+                         src_key_mask=None, subject_key_padding_mask=None, *,
+                         source_normalization=None, camera_is_normalized=True,
+                         subject_is_normalized=True):
         device = next(self.parameters()).device
+        if hasattr(self, 'metric_normalization'):
+            camera_trajectory, subject_trajectory, subject_volume = self.metric_normalization.convert(
+                camera_trajectory, subject_trajectory, subject_volume,
+                source_normalization=source_normalization,
+                camera_is_normalized=camera_is_normalized,
+                subject_is_normalized=subject_is_normalized,
+            )
         if subject_trajectory is None:
             subject_trajectory = camera_trajectory.new_zeros(
                 camera_trajectory.shape[0], camera_trajectory.shape[1],

@@ -264,6 +264,31 @@ class DomainAugmentation:
         result['subject_volume'] = torch.where(
             selected.reshape(len(camera), *([1] * (volume.ndim - 1))), aug_volume.to(volume.dtype), volume,
         )
+        # These views replace measured body orientation and dimensions with
+        # native-format placeholders. Retain that missingness in the model
+        # conditions, rather than treating the placeholder as a measurement.
+        for key in ("subject_orientation_available", "subject_dimensions_available"):
+            available = batch.get(key)
+            if available is None:
+                available = torch.ones(len(camera), dtype=torch.bool, device=camera.device)
+            shapes = [(len(camera),)]
+            if key == "subject_orientation_available":
+                shapes.append(camera.shape[:2])
+            if not torch.is_tensor(available) or available.dtype != torch.bool or available.shape not in shapes:
+                raise ValueError(f"Invalid subject availability for {key}")
+            available = available.to(camera.device)
+            missing = selected[:, None] if available.ndim == 2 else selected
+            result[key] = available & ~missing
+        # A CCDM projection uses converter calibration, which is not a measured
+        # physical lens. Do not label the original optics as that projection's
+        # optics. ET rigid-frame changes preserve its measured lens.
+        if batch.get("camera_intrinsics") is not None:
+            result["camera_intrinsics"] = batch["camera_intrinsics"].clone().masked_fill(
+                ccdm[:, None, None], float("nan"),
+            )
+        # Alternate pre-augmentation observations are no longer observations
+        # of these transformed samples on any timeline.
+        result.pop("simulation_reference", None)
         self._apply_caption_mask(result, batch, views, ccdm_motion_rows=motion_rows)
         return result
 

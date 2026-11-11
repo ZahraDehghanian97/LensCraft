@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from testing.metrics.clip_embeddings import CLIPEmbedder
+from testing.metrics.normalization import copy_normalization
 from utils.clatr_text import prepare_text_features
 from utils.importing import ModuleImporter
 from utils.paths import third_party
@@ -70,6 +71,8 @@ class LightningCLaTr(L.LightningModule):
         self.max_text_tokens = max_text_tokens
 
         self._clip_embedder: Optional[CLIPEmbedder] = None
+        self.normalization_parameters = None
+        self.normalization_context = {}
 
     @property
     def clip_embedder(self) -> CLIPEmbedder:
@@ -175,7 +178,39 @@ class LightningCLaTr(L.LightningModule):
         )
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        datamodule = getattr(self._trainer, "datamodule", None)
+        if datamodule is not None:
+            parameters = datamodule.state_dict().get("normalization")
+            if parameters is not None:
+                self.normalization_parameters = copy_normalization(parameters)
+            dataset = getattr(datamodule, "_full_dataset", None)
+            dataset_mode = getattr(datamodule, "dataset_mode", None)
+            if dataset_mode == "simulation" and dataset is not None:
+                self.normalization_context = {
+                    "format": "simulation", "normalized": bool(dataset.normalize),
+                    "frame_count": int(dataset.normalization_frame_count),
+                }
+            elif dataset_mode in ("et", "ccdm"):
+                self.normalization_context = {"format": dataset_mode}
+        if self.normalization_parameters is not None:
+            checkpoint["normalization"] = copy_normalization(self.normalization_parameters)
+        if self.normalization_context:
+            checkpoint["normalization_context"] = dict(self.normalization_context)
         state = checkpoint.get("state_dict", {})
         for key in list(state.keys()):
             if key.startswith("_clip_embedder"):
                 del state[key]
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        parameters = checkpoint.get("normalization")
+        self.normalization_parameters = copy_normalization(parameters) if parameters is not None else None
+        self.normalization_context = dict(checkpoint.get("normalization_context", {}))
+        # Loading a frozen judge must never replace the generator's active
+        # transform. During an actual training resume, restore its data module.
+        datamodule = getattr(self._trainer, "datamodule", None)
+        if datamodule is not None and parameters is not None:
+            datamodule.load_state_dict({"normalization": self.normalization_parameters})
+
+    def on_fit_start(self) -> None:
+        if self.normalization_parameters is not None:
+            self.trainer.datamodule.load_state_dict({"normalization": self.normalization_parameters})

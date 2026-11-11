@@ -3,6 +3,7 @@ import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
 from data.convertor.convertor import convert_to_target
+from data.sim_format import geometry_context_from_batch
 from data.categorical_conditioning import (
     conditioning_from_batch, conditioning_presence_from_batch,
 )
@@ -80,6 +81,7 @@ class LightningLensCraft(BaseTrainer):
         )
 
         new_batch = dict(batch)
+        new_batch.update(geometry_context_from_batch(batch, source, target_len=target_seq_len))
         new_batch["camera_trajectory"] = camera_trajectory
         new_batch["subject_trajectory"] = subject_trajectory
         new_batch["subject_volume"] = subject_volume
@@ -113,6 +115,7 @@ class LightningLensCraft(BaseTrainer):
             compute_cycle_embeddings=compute_cycle,
             conditioning_mode=('prompt_generation' if stage != 'train' and self._validate_conditioning else None),
             caption_presence_mask=caption_presence,
+            geometry_context=geometry_context_from_batch(batch),
         )
 
         loss_batch = dict(batch, prompt_none_mask=caption_presence)
@@ -193,6 +196,7 @@ class LightningLensCraft(BaseTrainer):
                 is_training=False, decode_mode=self.decode_mode, compute_cycle_embeddings=False,
                 conditioning_mode=mode, keyframe_count=count, keyframe_sample_seeds=seeds,
                 caption_presence_mask=caption_presence,
+                geometry_context=geometry_context_from_batch(batch),
             )
             totals = pose_metric_totals(output['reconstructed'], camera, padding, output['known_mask'])
             for key, pair in totals.items():
@@ -209,6 +213,7 @@ class LightningLensCraft(BaseTrainer):
                     camera, batch['subject_trajectory'], batch['subject_volume'], shuffled_caption, padding,
                     is_training=False, decode_mode=self.decode_mode, compute_cycle_embeddings=False,
                     conditioning_mode='prompt_generation', caption_presence_mask=shuffled_mask,
+                    geometry_context=geometry_context_from_batch(batch),
                 )
                 # Paired correct/shuffled totals use exactly the same clips.
                 for name, output in (('correct', prompt_output), ('shuffled', shuffled_output)):
@@ -262,6 +267,7 @@ class LightningLensCraft(BaseTrainer):
             is_training=False, decode_mode=self.decode_mode, conditioning_mode='prompt_generation',
             caption_presence_mask=conditioning_presence_from_batch(batch),
             caption_missingness_seeds=seeds, force_caption_missingness=True,
+            geometry_context=geometry_context_from_batch(batch),
         )
         totals = pose_metric_totals(output['reconstructed'], camera, padding, output['known_mask'])
         for key, pair in totals.items():

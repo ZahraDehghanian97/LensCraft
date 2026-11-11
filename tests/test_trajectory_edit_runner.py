@@ -120,8 +120,24 @@ def test_real_checkpoint_dataset_edit_controls_and_reports(experiment, monkeypat
     def reject_direct_poses(*args, **kwargs):
         pytest.fail("Every editing control must bypass direct source-pose queries")
 
+    original_generate = LensCraft.generate_camera_trajectory
+    geometry_batches = []
+
+    def generate_with_measured_optics(self, *args, **kwargs):
+        camera = kwargs["camera_trajectory"]
+        optics = kwargs["camera_intrinsics"]
+        # Eligibility can select just one row from a two-row loader batch.
+        # Its measured lens must follow the same selection as its source path.
+        assert optics.shape == (*camera.shape[:2], 2)
+        torch.testing.assert_close(optics[..., 0], torch.full_like(optics[..., 0], 35.))
+        torch.testing.assert_close(optics[..., 1], torch.full_like(optics[..., 1], 16 / 9))
+        geometry_batches.append(camera.shape[0])
+        return original_generate(self, *args, **kwargs)
+
     monkeypatch.setattr(LensCraft, "_known_camera_pose_inputs", reject_direct_poses)
+    monkeypatch.setattr(LensCraft, "generate_camera_trajectory", generate_with_measured_optics)
     runner.run(experiment)
+    assert geometry_batches and sum(geometry_batches) == 6  # Two edits, each with three controls.
     result = json.loads((experiment.output / "metrics.json").read_text())
     protocol = result["protocol"]
     assert protocol["status"] == "complete"

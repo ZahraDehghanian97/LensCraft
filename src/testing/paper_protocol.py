@@ -47,9 +47,10 @@ def random_keyframe_mask(padding_mask, sample_seeds):
 
 def install_random_keyframe_protocol(evaluator, cache_dir=None):
     """Install a process-local test.py extension; source files remain untouched."""
-    from data.sim_format import to_simulation_format
+    from data.sim_format import geometry_context_from_batch, to_simulation_format
     from data.simulation.utils import structured_conditioning_from_batch
-    from testing.process import _update_generation_metrics, _update_geometry_metrics
+    from testing.process import (_metric_normalization_kwargs, _simulation_view_is_normalized, _update_generation_metrics,
+                                 _update_geometry_metrics)
     from utils.device import move_batch_to_device
 
     requested_histogram, actual_histogram = Counter(), Counter()
@@ -69,12 +70,17 @@ def install_random_keyframe_protocol(evaluator, cache_dir=None):
         batch = move_batch_to_device(batch, device)
         view = to_simulation_format(batch, dataset_type, target_len=model.decoder.seq_length)
         camera, subject, volume, padding = view
+        geometry_context = geometry_context_from_batch(batch, dataset_type, target_len=camera.shape[1])
         source_mask, requested = random_keyframe_mask(padding, keyframe_sample_seeds)
         requested_histogram.update(requested)
         actual_histogram.update((~source_mask).sum(1).cpu().tolist())
         recorded_masks.extend(zip(keyframe_sample_seeds, requested, source_mask.cpu().tolist()))
         reference = to_simulation_format(batch, dataset_type, target_len=ref_model.decoder.seq_length)
-        ref_clatr = clatr_extractor.encode_trajectory(*reference) if clatr_extractor else None
+        ref_clatr = (clatr_extractor.encode_trajectory(
+            *reference, **_metric_normalization_kwargs(
+                clatr_extractor, batch, target_len=reference[0].shape[1],
+            ),
+        ) if clatr_extractor else None)
         text_clatr = clatr_extractor.encode_text(batch["text_prompts"]) if clatr_extractor else None
         caption = structured_conditioning_from_batch(batch)
         generated = {"items": {}, "sample_seeds": list(keyframe_sample_seeds), "requested_counts": requested}
@@ -88,11 +94,13 @@ def install_random_keyframe_protocol(evaluator, cache_dir=None):
                 memory_teacher_forcing_ratio=(0.0 if item == RANDOM_KEYFRAME_MODES[0] else 0.5),
                 caption_embedding=caption,
                 caption_presence_mask=batch.get('prompt_none_mask'),
+                **geometry_context,
             )["reconstructed"]
             _update_generation_metrics(
                 metric_callback, item, trajectory, reference[1], reference[2], reference[3],
                 ref_clatr, text_clatr, clatr_extractor, ref_model, batch,
                 generated_padding_mask=padding,
+                generated_is_normalized=_simulation_view_is_normalized(batch, camera.shape[1]),
             )
             _update_geometry_metrics(
                 metric_callback, item, trajectory, view, batch,

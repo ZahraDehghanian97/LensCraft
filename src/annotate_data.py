@@ -73,8 +73,13 @@ def main(cfg: DictConfig) -> None:
     for p in (batch_dir, results_dir, output_dir):
         p.mkdir(exist_ok=True)
 
+    dataset_config = OmegaConf.to_container(cfg.data.dataset.config, resolve=True)
+    if dataset_config['_target_'] == 'data.simulation.dataset.SimulationDataset':
+        # This command collects captions, not model inputs. Its all-test
+        # inventory has no training partition from which to fit camera scales.
+        dataset_config['normalize'] = False
     data_module = CameraTrajectoryDataModule(
-        dataset_config=cfg.data.dataset.config,
+        dataset_config=dataset_config,
         batch_size=cfg.data.batch_size,
         num_workers=2,
         val_size=0,

@@ -19,6 +19,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from data.datamodule import CameraTrajectoryDataModule
 from training.clatr import LightningCLaTr
+from testing.metrics.normalization import find_training_config, load_metric_normalization
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -40,6 +41,34 @@ def _infer_traj_feat_dim(cfg: DictConfig) -> int:
     return 6
 
 
+def _prepare_resume_normalization(data_module, checkpoint_path):
+    """Restore the resumed judge's input transform before dataset setup."""
+    if checkpoint_path is None:
+        return
+    checkpoint_path = hydra.utils.to_absolute_path(str(checkpoint_path))
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    context = checkpoint.get("normalization_context", {})
+    saved_format = context.get("format")
+    if saved_format is not None and saved_format != data_module.dataset_mode:
+        raise ValueError("CLaTr resume dataset format differs from its checkpoint training inputs")
+    if data_module.dataset_mode != "simulation":
+        return
+    adapter = load_metric_normalization(
+        checkpoint, saved_config_path=find_training_config(checkpoint_path),
+    )
+    if not adapter.provenance["available"]:
+        raise ValueError(
+            "Cannot resume CLaTr without its original training normalization. "
+            "Set SIMULATION_NORMALIZATION_DATA_PATH to the original reference "
+            "or use a checkpoint containing normalization; resuming with newly "
+            "fitted training-split scales would change the learned input coordinates."
+        )
+    if adapter.normalized != bool(data_module.dataset_config.get("normalize", True)):
+        raise ValueError("CLaTr resume requires the checkpoint's original normalize setting")
+    if adapter.parameters is not None:
+        data_module.load_state_dict({"normalization": adapter.parameters})
+
+
 @hydra.main(version_base=None, config_path="../config", config_name="clatr/train")
 def main(cfg: DictConfig) -> Optional[float]:
     GlobalHydra.instance().clear()
@@ -55,6 +84,10 @@ def main(cfg: DictConfig) -> Optional[float]:
         val_size=cfg.data.val_size,
         test_size=cfg.data.test_size,
     )
+    resume_ckpt = cfg.get("resume_checkpoint", None)
+    if resume_ckpt in (None, "None", ""):
+        resume_ckpt = None
+    _prepare_resume_normalization(data_module, resume_ckpt)
 
     traj_num_feats = _infer_traj_feat_dim(cfg)
     logger.info("Training CLaTr with traj_num_feats=%d", traj_num_feats)
@@ -124,10 +157,6 @@ def main(cfg: DictConfig) -> Optional[float]:
         logger=tb_logger,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
     )
-
-    resume_ckpt = cfg.get("resume_checkpoint", None)
-    if resume_ckpt in (None, "None", ""):
-        resume_ckpt = None
 
     trainer.fit(clatr_lit, datamodule=data_module, ckpt_path=resume_ckpt)
 

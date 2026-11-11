@@ -6,6 +6,7 @@ from torch import nn
 
 from .encoder import Encoder
 from .decoder import Decoder
+from .geometric_context import GeometricContext
 from .categorical_latent import (
     FIELD_COUNT, TOKEN_WIDTH, SEMANTIC_DIM, categorical_presence, validate_semantic,
 )
@@ -42,6 +43,8 @@ class LensCraft(nn.Module):
         self.semantic_token_width = TOKEN_WIDTH
         self.num_query_tokens = FIELD_COUNT
         self.memory_tokens_count = FIELD_COUNT
+        # Retained for saved-config compatibility. Explicit masks, rather than
+        # this historical training flag, determine whether poses are supplied.
         self.keyframe_pose_conditioning = keyframe_pose_conditioning
         self.subject_trajectory_projection = nn.Linear(subject_dim, latent_dim)
         self.subject_volume_projection = nn.Linear(3, latent_dim)
@@ -53,6 +56,7 @@ class LensCraft(nn.Module):
             self.decoder_output_dim, latent_dim, nhead, num_decoder_layers,
             dim_feedforward, dropout_rate, seq_length,
         )
+        self.geometric_context = GeometricContext(latent_dim)
 
     def _euler6_to_mat12(self, traj6: torch.Tensor) -> torch.Tensor:
         pos = traj6[..., :3]
@@ -75,12 +79,8 @@ class LensCraft(nn.Module):
             return None
         return self._euler6_to_mat12(target)
 
-    def _known_camera_pose_inputs(self, src, camera_source_mask, caption_embedding, memory_ratio):
-        """Expose only supplied visible camera poses to the optional query path."""
-        if not self.keyframe_pose_conditioning or (
-            caption_embedding is not None and memory_ratio >= 1.0
-        ):
-            return {}
+    def _known_camera_pose_inputs(self, src, camera_source_mask):
+        """Explicit pose constraints are independent of semantic mixing weights."""
         known_mask = torch.ones(src.shape[:2], device=src.device, dtype=torch.bool)
         if camera_source_mask is not None:
             if camera_source_mask.shape != src.shape[:2]:
@@ -92,11 +92,8 @@ class LensCraft(nn.Module):
         return {"known_camera_poses": poses, "known_pose_mask": known_mask}
 
     def _validate_pose_decode_mode(self, decode_mode):
-        if self.keyframe_pose_conditioning and decode_mode != "single_step":
-            raise ValueError(
-                "keyframe_pose_conditioning currently supports only decode_mode='single_step'; "
-                "disable the experiment for autoregressive decoding"
-            )
+        if decode_mode not in ('single_step', 'autoregressive'):
+            raise ValueError(f'Unknown decode_mode: {decode_mode}')
 
     def _prepare_subject_inputs(
         self, reference, subject_trajectory, subject_volume
@@ -111,6 +108,25 @@ class LensCraft(nn.Module):
         if subject_volume is None:
             subject_volume = reference.new_zeros(batch_size, 1, 3)
         return subject_trajectory, subject_volume
+
+    def _embed_subject(self, reference, subject_trajectory, subject_volume, *,
+                       padding_mask=None, camera_intrinsics=None,
+                       subject_orientation_available=None,
+                       subject_dimensions_available=None):
+        if subject_trajectory is None and subject_orientation_available is None:
+            subject_orientation_available = torch.zeros(reference.shape[0], device=reference.device, dtype=torch.bool)
+        if subject_volume is None and subject_dimensions_available is None:
+            subject_dimensions_available = torch.zeros(reference.shape[0], device=reference.device, dtype=torch.bool)
+        subject_trajectory, subject_volume = self._prepare_subject_inputs(
+            reference, subject_trajectory, subject_volume)
+        subject_trajectory, subject_volume, frame_context, volume_context = self.geometric_context(
+            subject_trajectory.to(reference), subject_volume.to(reference), camera_intrinsics,
+            subject_orientation_available, subject_dimensions_available, padding_mask,
+        )
+        return torch.cat((
+            self.subject_trajectory_projection(subject_trajectory) + frame_context,
+            self.subject_volume_projection(subject_volume) + volume_context,
+        ), dim=1)
 
     def _finalize_trajectory(self, raw):
         recon_matrix = self._project_svd9d(raw)        # valid SO(3), flattened
@@ -261,6 +277,9 @@ class LensCraft(nn.Module):
         caption_presence_mask: Optional[torch.Tensor] = None,
         known_camera_mask: Optional[torch.Tensor] = None,
         caption_edit_mask: Optional[torch.Tensor] = None,
+        camera_intrinsics: Optional[torch.Tensor] = None,
+        subject_orientation_available: Optional[torch.Tensor] = None,
+        subject_dimensions_available: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         editing = caption_edit_mask is not None
         if editing:
@@ -273,26 +292,20 @@ class LensCraft(nn.Module):
         camera_source_mask, known_camera_mask = self._camera_masks(
             src, src_key_mask, tgt_key_padding_mask, known_camera_mask
         )
-        subject_trajectory, subject_volume = self._prepare_subject_inputs(
-            src, subject_trajectory, subject_volume
+        subject_embedding = self._embed_subject(
+            src, subject_trajectory, subject_volume, padding_mask=tgt_key_padding_mask,
+            camera_intrinsics=camera_intrinsics,
+            subject_orientation_available=subject_orientation_available,
+            subject_dimensions_available=subject_dimensions_available,
         )
-        if tgt_key_padding_mask is not None:
-            subject_trajectory = subject_trajectory.masked_fill(
-                tgt_key_padding_mask.to(device=subject_trajectory.device, dtype=torch.bool).unsqueeze(-1), 0
-            )
-        subject_trajectory_embedding = self.subject_trajectory_projection(
-            subject_trajectory
-        )
-        subject_volume_embedding = self.subject_volume_projection(subject_volume)
-        subject_embedding = torch.cat([subject_trajectory_embedding, subject_volume_embedding], 1)
 
         pose_inputs = {} if (
             editing or not constrain_camera
         ) else self._known_camera_pose_inputs(
-            src, camera_source_mask, caption_embedding, memory_teacher_forcing_ratio
+            src, camera_source_mask
         )
-        # Sanitize before projection/attention: even masked NaNs otherwise
-        # contaminate the encoder, including when direct pose queries are off.
+        # Sanitize before projection/attention: masked NaNs otherwise
+        # contaminate the encoder, even without explicit keyframes.
         encoder_src = src.masked_fill(camera_source_mask.unsqueeze(-1), 0)
         if constrain_camera and decode_mode == 'autoregressive':
             with torch.autocast(device_type=src.device.type, enabled=False):
@@ -319,7 +332,7 @@ class LensCraft(nn.Module):
             memory=memory,
             subject_embedding=subject_embedding,
             decode_mode=decode_mode,
-            target=(None if self.keyframe_pose_conditioning else self._encode_target_for_decoder(target)),
+            target=self._encode_target_for_decoder(target),
             teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
             tgt_key_padding_mask=tgt_key_padding_mask,
             feedback_transform=self._project_svd9d,
@@ -363,6 +376,9 @@ class LensCraft(nn.Module):
         caption_presence_mask: Optional[torch.Tensor] = None,
         known_camera_mask: Optional[torch.Tensor] = None,
         caption_edit_mask: Optional[torch.Tensor] = None,
+        camera_intrinsics: Optional[torch.Tensor] = None,
+        subject_orientation_available: Optional[torch.Tensor] = None,
+        subject_dimensions_available: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """Generate poses, optionally fixing arbitrary full camera keyframes.
 
@@ -378,6 +394,10 @@ class LensCraft(nn.Module):
         Unselected caption fillers are ignored, and direct pose conditioning
         is bypassed so source poses can change. Fixed keyframes are a separate
         mode and cannot be combined with an edit mask.
+
+        ``camera_intrinsics`` contains focal millimetres and width/height
+        aspect ratio; NaN marks unknown calibration. Subject availability
+        masks distinguish observations from hidden orientation/size fillers.
         """
         if caption_edit_mask is not None:
             if camera_trajectory is None or caption_embedding is None:
@@ -389,26 +409,6 @@ class LensCraft(nn.Module):
             raise ValueError("known_camera_mask requires camera_trajectory")
         with torch.no_grad():
             device = next(self.parameters()).device
-
-            if subject_trajectory is None or subject_volume is None:
-                if camera_trajectory is not None:
-                    reference = camera_trajectory.to(device)
-                elif caption_embedding is not None:
-                    batch_size = caption_embedding.shape[1]
-                    reference = caption_embedding.new_zeros(
-                        batch_size, self.decoder.seq_length, self.pos_dim + 3
-                    ).to(device)
-                else:
-                    raise ValueError(
-                        "camera_trajectory or caption_embedding is required "
-                        "when subject inputs are absent"
-                    )
-                subject_trajectory, subject_volume = self._prepare_subject_inputs(
-                    reference, subject_trajectory, subject_volume
-                )
-
-            subject_trajectory = subject_trajectory.to(device)
-            subject_volume = subject_volume.to(device)
 
             if caption_embedding is not None:
                 caption_embedding = caption_embedding.to(device)
@@ -439,22 +439,20 @@ class LensCraft(nn.Module):
                     caption_presence_mask=caption_presence_mask,
                     known_camera_mask=known_camera_mask,
                     caption_edit_mask=caption_edit_mask,
+                    camera_intrinsics=camera_intrinsics,
+                    subject_orientation_available=subject_orientation_available,
+                    subject_dimensions_available=subject_dimensions_available,
                 )
 
             # If there is no camera trajectory, use only the decoder
             else:
-                if padding_mask is not None:
-                    subject_trajectory = subject_trajectory.masked_fill(
-                        padding_mask.to(dtype=torch.bool).unsqueeze(-1), 0
-                    )
-                subject_trajectory_embedding = self.subject_trajectory_projection(
-                    subject_trajectory
-                )
-                subject_volume_embedding = self.subject_volume_projection(
-                    subject_volume
-                )
-                subject_embedding = torch.cat(
-                    [subject_trajectory_embedding, subject_volume_embedding], 1
+                reference = caption_embedding.new_zeros(
+                    caption_embedding.shape[1], self.decoder.seq_length, 6)
+                subject_embedding = self._embed_subject(
+                    reference, subject_trajectory, subject_volume, padding_mask=padding_mask,
+                    camera_intrinsics=camera_intrinsics,
+                    subject_orientation_available=subject_orientation_available,
+                    subject_dimensions_available=subject_dimensions_available,
                 )
 
                 memory = self.prepare_embedding_memory_for_decoder(
@@ -495,22 +493,19 @@ class LensCraft(nn.Module):
         subject_volume: torch.Tensor,
         src_key_mask: Optional[torch.Tensor] = None,
         subject_key_padding_mask: Optional[torch.Tensor] = None,
+        camera_intrinsics: Optional[torch.Tensor] = None,
+        subject_orientation_available: Optional[torch.Tensor] = None,
+        subject_dimensions_available: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         with torch.no_grad():
             device = next(self.parameters()).device
-            subject_trajectory, subject_volume = self._prepare_subject_inputs(
-                camera_trajectory, subject_trajectory, subject_volume
-            )
             effective_subject_mask = subject_key_padding_mask
-            subject_trajectory = subject_trajectory.to(device)
-            if effective_subject_mask is not None:
-                subject_trajectory = subject_trajectory.masked_fill(
-                    effective_subject_mask.to(device=device, dtype=torch.bool)[..., None], 0,
-                )
-            subject_embedding = torch.cat([
-                self.subject_trajectory_projection(subject_trajectory),
-                self.subject_volume_projection(subject_volume.to(device)),
-            ], 1)
+            subject_embedding = self._embed_subject(
+                camera_trajectory.to(device), subject_trajectory, subject_volume,
+                padding_mask=effective_subject_mask, camera_intrinsics=camera_intrinsics,
+                subject_orientation_available=subject_orientation_available,
+                subject_dimensions_available=subject_dimensions_available,
+            )
             camera_embedding = self.encoder(
                 camera_trajectory.to(device),
                 subject_embedding,
