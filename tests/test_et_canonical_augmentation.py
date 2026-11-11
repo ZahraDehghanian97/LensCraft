@@ -5,10 +5,11 @@ import copy
 import pytest
 import torch
 
-from data.simulation.constants import NumericFeature
+from data.simulation.constants import CameraMovementType
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import (
-    CLIP_PARAMETERS, cinematography_struct_parameters, structured_conditioning_from_batch,
+    STRUCTURED_PARAMETERS, cinematography_struct_parameters, get_enum_index,
+    structured_conditioning_from_batch,
 )
 from training.domain_augmentation import DomainAugmentation, DomainAugmentationConfig
 
@@ -25,20 +26,17 @@ def xyz_matrix(angles):
 
 
 @pytest.fixture
-def vocabulary():
-    result = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        name = 'boolean' if kind is bool else kind.__name__
-        result[name] = {'a': torch.tensor([1., 2., 3., 4.]),
-                        'b': torch.tensor([3., 4., 5., 6.])}
-    return result
+def augmentation():
+    return DomainAugmentation({'enabled': True, 'et_coordinate_frame': 'first_camera'})
 
 
-@pytest.fixture
-def augmentation(vocabulary):
-    return DomainAugmentation({'enabled': True, 'et_coordinate_frame': 'first_camera'}, vocabulary)
+def set_movement(batch, row, movement):
+    index = [name for name, _ in cinematography_struct_parameters].index('movement_type')
+    local_id = get_enum_index(CameraMovementType, movement)
+    batch['cinematography_prompt_parameters'][row][index] = ('movement_type', movement, local_id, None)
+    batch['cinematography_ids'][row, index] = local_id
+    batch['prompt_none_mask'][row, index] = local_id >= 0
+    batch['structured_presence_mask'][row, index] = local_id >= 0
 
 
 @pytest.fixture
@@ -61,22 +59,22 @@ def batch(monkeypatch):
     camera, subject, volume = SimulationDataset.normalize_item(camera, subject, volume)
     padding = torch.tensor([[False, False, False, True], [True, False, False, False], [False] * 4])
     camera[padding], subject[padding] = 0., 0.
-    fields, split = len(CLIP_PARAMETERS), len(cinematography_struct_parameters)
-    caption = torch.arange(fields * 3 * 4, dtype=torch.float64).reshape(fields, 3, 4) / 10
-    metadata = [[(name, 'observed', 0, caption[i, b].clone())
-                 for i, (name, _) in enumerate(CLIP_PARAMETERS)] for b in range(3)]
-    movement = [name for name, _ in CLIP_PARAMETERS].index('movement_type')
-    for row, kind in zip(metadata, ('truckLeft', 'pedestalUp', 'dutchRight')):
-        row[movement] = ('movement_type', kind, 0, row[movement][3])
-    return {
+    fields, split = len(STRUCTURED_PARAMETERS), len(cinematography_struct_parameters)
+    metadata = [[(name, 'observed', 0, None)
+                 for name, _ in STRUCTURED_PARAMETERS] for _ in range(3)]
+    result = {
         'simulation_normalized': True,
         'camera_trajectory': camera, 'subject_trajectory': subject, 'subject_volume': volume,
         'padding_mask': padding,
-        'cinematography_prompt': caption[:split], 'simulation_instruction': caption[split:],
-        'prompt_none_mask': torch.ones(3, fields, dtype=torch.bool),
+        'cinematography_ids': torch.zeros(3, split, dtype=torch.long),
+        'prompt_none_mask': torch.ones(3, split, dtype=torch.bool),
+        'structured_presence_mask': torch.ones(3, fields, dtype=torch.bool),
         'cinematography_prompt_parameters': [row[:split] for row in metadata],
         'simulation_instruction_parameters': [row[split:] for row in metadata],
     }
+    for row, movement in enumerate(('truckLeft', 'pedestalUp', 'dutchRight')):
+        set_movement(result, row, movement)
+    return result
 
 
 def raw(batch):
@@ -150,27 +148,35 @@ def test_nan_padding_all_padded_rows_and_original_batch_are_preserved(batch, aug
 ])
 def test_motion_masks_are_per_example_and_update_tokens_and_metadata(batch, augmentation, movement, kept):
     names = augmentation.field_names
-    index = names.index('movement_type')
-    old = batch['cinematography_prompt_parameters'][1][index]
-    batch['cinematography_prompt_parameters'][1][index] = (old[0], movement, old[2], old[3])
+    set_movement(batch, 1, movement)
     result = augmentation.apply(batch, force_domain='et')
     caption, original = structured_conditioning_from_batch(result), structured_conditioning_from_batch(batch)
+    assert caption.shape == (10, 3, 21)
+    assert result['prompt_none_mask'].shape == (3, 10)
+    assert result['structured_presence_mask'].shape == (3, 46)
     metadata = [a + b for a, b in zip(result['cinematography_prompt_parameters'], result['simulation_instruction_parameters'])]
+    original_metadata = [a + b for a, b in zip(batch['cinematography_prompt_parameters'], batch['simulation_instruction_parameters'])]
     for name in ('movement_type', 'dynamic_direction', 'dynamic_movementMode'):
         i = names.index(name)
-        assert result['prompt_none_mask'][:, i].tolist() == [True, kept, True]
+        assert result['structured_presence_mask'][:, i].tolist() == [True, kept, True]
         if kept:
-            torch.testing.assert_close(caption[i], original[i])
+            assert all(row[i] == source[i] for row, source in zip(metadata, original_metadata))
         else:
-            torch.testing.assert_close(caption[i, 1], augmentation.unknown_tokens[i].to(caption))
             assert metadata[1][i][1:3] == (None, -1)
-            torch.testing.assert_close(caption[i, [0, 2]], original[i, [0, 2]])
+        if i < 10:
+            assert result['prompt_none_mask'][:, i].tolist() == [True, kept, True]
+            if kept:
+                torch.testing.assert_close(caption[i], original[i])
+            else:
+                assert torch.count_nonzero(caption[i, 1]) == 0
+                assert result['cinematography_ids'][1, i] == -1
+                torch.testing.assert_close(caption[i, [0, 2]], original[i, [0, 2]])
     for i, name in enumerate(names):
         if name.startswith(('constraints_lockedMovement_', 'constraints_lockedRotation_')):
-            assert not result['prompt_none_mask'][:, i].any()
+            assert not result['structured_presence_mask'][:, i].any()
             assert all(row[i][1:3] == (None, -1) for row in metadata)
     for name in ('movement_speed', 'constraints_maxSpeed', 'constraints_staticDistance'):
-        assert result['prompt_none_mask'][:, names.index(name)].all()
+        assert result['structured_presence_mask'][:, names.index(name)].all()
 
 
 def test_missing_compact_batch_metadata_fails_with_actionable_error(batch, augmentation):
@@ -179,9 +185,9 @@ def test_missing_compact_batch_metadata_fails_with_actionable_error(batch, augme
         augmentation.apply(batch, force_domain='et')
 
 
-def test_legacy_et_default_and_non_et_views_are_unchanged(batch, vocabulary, augmentation):
-    legacy = DomainAugmentation({'enabled': True}, vocabulary)
-    explicit = DomainAugmentation({'enabled': True, 'et_coordinate_frame': 'world'}, vocabulary)
+def test_legacy_et_default_and_non_et_views_are_unchanged(batch, augmentation):
+    legacy = DomainAugmentation({'enabled': True})
+    explicit = DomainAugmentation({'enabled': True, 'et_coordinate_frame': 'world'})
     assert legacy.config.et_coordinate_frame == 'world'
     for domain, left, right in (
         ('et', legacy, explicit), ('original', legacy, augmentation), ('ccdm', legacy, augmentation),

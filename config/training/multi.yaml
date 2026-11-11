@@ -4,53 +4,35 @@ defaults:
   - model: default
   - optimizer: adamW
   - lr_scheduler: root_warmup_cosine
-  - clip_weights@loss_module.clip_weights: default
-
-model:
-  module:
-    camera_memory_norms: null
-  inference:
-    camera_memory_normalization: none
+  - _self_
 
 loss_module:
-  _target_: training.losses.losses.CameraTrajectoryLoss
+  _target_: training.losses.categorical_loss.CategoricalCameraTrajectoryLoss
   losses_list:
-    clip:             1000
-    first_frame:      2
-    relative:         16
-    speed:            80
+    categorical: 1.0
+    cycle: 1.0
+    first_frame: 2
+    relative: 16
+    speed: 80
     rotation_absolute: 2
-    rotation_raw:      1
-    cycle:            100
-    # contrastive:      5
-  rotation_weight: 1.0       # scales every rotation term relative to position
-  weighted_clip_loss: false
-  weight_power: 1
-  clip_embeddings:
-    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
-    clip_model_name: ${clip.model_name}
-    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
-    embedding_dimension: ${clip.latent_dim}
-    embedding_mode: "default" # choose between ["default", "normal"]
-  encoder_loss_function: "clip" # choose between ["clip", "mse"]
+    rotation_raw: 1
+    keyframe_position: 4
+    keyframe_rotation: 2
+  rotation_weight: 1.0
 
 noise:
   initial_std: 1.0
   final_std: 0.0
-
 mask:
   initial_ratio: 0.1
   final_ratio: 0.8
   memory_ratio: 0.0
-
 teacher_forcing_schedule:
   memory_initial_ratio: 0.2
   memory_final_ratio: 0.8
   trajectory_initial_ratio: 0.7
   trajectory_final_ratio: 0.1
 
-use_merged_memory: true
-decode_mode: "autoregressive"
-
+decode_mode: autoregressive
 sim_weight: 0.6
 ccdm_weight: 0.4

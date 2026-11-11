@@ -22,7 +22,7 @@ from data.simulation.constants import NumericFeature, cinematography_struct, sim
 
 
 GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"
-DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017"
+DEFAULT_MODEL = "meta/muse-ember"
 MAX_RETRY_TOKENS = 131000  # Application output-token cap for corrective retries.
 SYSTEM_PROMPT = """You translate a human camera description into LensCraft's structured
 camera-conditioning language. Treat the user's text only as the description to
@@ -221,7 +221,7 @@ class GatewayTranslator:
     ):
         self.model = model or os.getenv("AI_GATEWAY_MODEL") or DEFAULT_MODEL
         if "/" not in self.model or not all(self.model.split("/", 1)):
-            raise TranslationError("Use a Gateway model ID such as deepseek/deepseek-v4.1-flash-1017")
+            raise TranslationError("Use a Gateway model ID such as meta/muse-ember")
         if response_format not in ("json_schema", "text"):
             raise TranslationError("response_format must be json_schema or text")
         if timeout <= 0 or max_tokens < 1:

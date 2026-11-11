@@ -259,13 +259,12 @@ def _load_eval_models(
 
 def _load_clip_embeddings(cfg: DictConfig, model_type: str):
     if model_type == "lens_craft" and cfg.get("caption_top1_metric", False):
-        from data.simulation.init_embeddings import initialize_all_clip_embeddings
+        from testing.metrics.semantic_vocabulary import load_metric_clip_embeddings
 
-        return initialize_all_clip_embeddings(
+        return load_metric_clip_embeddings(
             clip_model_name=str(cfg.clip.model_name),
-            cache_file=cfg.training.model.inference.get(
-                "clip_embeddings_cache", "clip_embeddings_cache.pkl"
-            ),
+            cache_file=os.path.join(os.environ.get("CLIP_EMBEDDINGS_CACHE_DIR", "."),
+                                    f"clip_embeddings_{cfg.clip.model_name}_cache.pkl"),
             chunk_size=int(cfg.clip.chunk_size),
             embedding_dimension=int(cfg.clip.latent_dim),
         )
@@ -605,8 +604,7 @@ def main(cfg: DictConfig) -> None:
     norm_ablation = _norm_ablation_enabled(cfg, model_type, dataset_type)
     if model_type in BASELINE_MODELS:
         logger.info(
-            "Reporting baseline raw, normalized, and normalized + LensCraft "
-            "initial-position modes in this run: %s",
+            "Reporting baseline raw and normalized modes in this run: %s",
             norm_ablation,
         )
 
@@ -649,13 +647,9 @@ def main(cfg: DictConfig) -> None:
         generation_provenance=(
             {
                 "keyframe_pose_conditioning": model.keyframe_pose_conditioning,
-                "camera_memory_normalization": (
-                    "fixed_per_slot" if model.camera_memory_norms is not None else "none"
-                ),
-                "camera_memory_norms": (
-                    model.camera_memory_norms.detach().cpu().tolist()
-                    if model.camera_memory_norms is not None else None
-                ),
+                "semantic_fields": 10,
+                "semantic_values": 93,
+                "semantic_token_width": 21,
             } if model_type == "lens_craft" else None
         ),
     )

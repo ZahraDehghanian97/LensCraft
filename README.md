@@ -1,110 +1,48 @@
 # LensCraft
 
-Evaluation uses a separately configured, frozen semantic evaluator and reports
-sparse keyframe sweeps with independent geometry/framing metrics. See
-[evaluation configuration and metric definitions](docs/evaluation.md).
-For the training recipes, reusable robustness components and the status of the
-separate full-training experiment, see the
-[training and evaluation map](docs/training_and_evaluation.md).
+LensCraft generates and edits camera trajectories through one categorical
+semantic bottleneck. This is the project's only generator architecture;
+there is no CLIP-conditioned, merged-memory or learned-ID generator mode.
 
-This project implements an autoencoder model for camera trajectories using a multi-task architecture. The model learns to reconstruct camera movements based on subject information and initial trajectory data. In addition to producing accurate trajectory reconstructions, it generates embeddings for movement types, easing functions, camera angles, and shot types. These generated embeddings are designed to be aligned with CLIP (Contrastive Language-Image Pre-training) embeddings, allowing for better integration with language-based interfaces and multi-modal applications.
+The encoder returns ten categorical distributions as `[10, batch, 21]`:
+**93 valid probabilities**, 117 fixed zero padding coordinates and 83 continuous
+degrees of freedom. A known annotation supplies one one-hot target per field.
+An unknown field is zero and excluded from attention. The field sizes are
+`[5, 8, 8, 13, 21, 4, 5, 8, 8, 13]`; movement includes `nativePan` and
+`nativeOrbit`.
 
-## Model Architecture
+The default model has **6,907,937 parameters**, hidden width 256, eight heads,
+four encoder and four decoder layers, and feedforward width 1024. The decoder
+cross-attends directly to the 21D tokens. Fixed field codes identify their
+positions only during attention. There is no embedding table, latent merger,
+external memory projection or hidden encoder-state path into the decoder.
+Subject trajectory and volume remain context; explicit keyframes remain pose
+constraints. Camera output uses position3 and an SVD9D rotation projected to SO(3).
+
+Training uses per-field cross-entropy with weight 1, detached-target
+`KL(original || cycle)` with weight 1, and the configured camera geometry losses.
+Only known categorical labels enter CE and KL. Generator training and inference
+do not load CLIP. Frozen semantic/CLaTr judges and external ET, CCDM and GenDoP
+baselines remain separate evaluation dependencies.
 
 ```mermaid
-graph TD
-    subgraph Input
-        A[Camera Trajectory<br>input_dim] --> B[Apply Noise]
-        A --> C[Apply Mask]
-        B & C --> D[Noisy & Masked<br>Trajectory]
-        S[Subject Info<br>subject_dim] --> SP[Subject Projection<br>Linear: subject_dim → latent_dim]
-    end
-
-    subgraph Encoder["Encoder (TransformerEncoder)"]
-        E[Input Projection<br>Linear: input_dim → latent_dim]
-        F[Positional Encoding]
-        G[Transformer Encoder Layers<br>num_encoder_layers, nhead]
-        H1[Movement Query Token]
-        H2[Easing Query Token]
-        H3[Camera Angle Query Token]
-        H4[Shot Type Query Token]
-        M1[Encoder Memory<br>latent_dim per token]
-    end
-
-    subgraph LatentSpace["Latent Space Processing"]
-        I1[Movement Embedding<br>latent_dim]
-        I2[Easing Embedding<br>latent_dim]
-        I3[Camera Angle Embedding<br>latent_dim]
-        I4[Shot Type Embedding<br>latent_dim]
-        J[Latent Merger<br>Linear: latent_dim*4 → latent_dim]
-        K[Merged Latent<br>latent_dim]
-    end
-
-    subgraph SingleStepDecoding
-        subgraph Decoder["Decoder (TransformerDecoder)"]
-            L[Embedding Layer<br>Linear: input_dim → latent_dim]
-            M[Positional Encoding]
-            N[Transformer Decoder Layers<br>num_decoder_layers, nhead]
-            O[Output Projection<br>Linear: latent_dim → input_dim]
-        end
-        P[Zero Input<br>full sequence]
-        M2[Decoder Memory<br>latent_dim, seq_length]
-    end
-
-    subgraph Output
-        R[Reconstructed Trajectory<br>input_dim, seq_length]
-    end
-
-    subgraph Losses
-        S1[Reconstruction Loss<br>MSE]
-        S2[CLIP Movement Loss<br>1 - CosineSimilarity]
-        S3[CLIP Easing Loss<br>1 - CosineSimilarity]
-        S4[CLIP Camera Angle Loss<br>1 - CosineSimilarity]
-        S5[CLIP Shot Type Loss<br>1 - CosineSimilarity]
-        T[Total Loss<br>Sum of all losses]
-    end
-
-    S --> SP
-    SP --> G
-    D --> E --> F --> G
-    H1 & H2 & H3 & H4 --> G
-    G --> M1
-    M1 --> I1 & I2 & I3 & I4
-    I1 & I2 & I3 & I4 --> J --> K
-    K --> M2
-    M2 --> N
-    P --> L
-    L --> M --> N
-    N --> O --> R
-    R --> S1
-    I1 --> S2
-    I2 --> S3
-    I3 --> S4
-    I4 --> S5
-    S1 & S2 & S3 & S4 & S5 --> T
-    SP --> L
-
-    classDef subgraphStyle fill:#cccccc,stroke:#ecf0f1,stroke-width:2px;
-    class Input,Encoder,LatentSpace,AutoregressiveDecoding,Output,Losses subgraphStyle;
-
-    style E fill:#3498db
-    style G fill:#3498db
-    style J fill:#2ecc71
-    style L fill:#9b59b6
-    style N fill:#9b59b6
-    style O fill:#9b59b6
-    style M1 fill:#f39c12
-    style M2 fill:#f39c12
-    style R fill:#1abc9c
-    style S1 fill:#e74c3c
-    style S2 fill:#e74c3c
-    style S3 fill:#e74c3c
-    style S4 fill:#e74c3c
-    style S5 fill:#e74c3c
-    style T fill:#e74c3c
-    style SP fill:#3498db
-
+flowchart LR
+    A[Camera trajectory + subject context] --> B[Encoder: hidden 256]
+    B --> C[10 categorical tokens: 93 valid probabilities]
+    P[Structured field IDs] --> C
+    C --> D[Decoder cross-attention: K/V width 21]
+    S[Subject context + explicit keyframes] --> D
+    D --> O[Camera position + SO3 rotation]
 ```
+
+See the [categorical representation](docs/categorical_conditioning.md),
+[training recipes](docs/training_and_evaluation.md), and
+[fixed evaluation contract](docs/evaluation.md).
+
+**Checkpoint compatibility:** the current categorical checkpoint state keys
+are preserved. Saved categorical configs are migrated by the loader. Older
+512D CLIP/merged generator checkpoints are rejected explicitly; use their
+frozen historical source outside this project to reproduce those experiments.
 
 ## Installation
 
@@ -260,7 +198,7 @@ Notes:
 - GenDoP generates one prompt at a time, so keep `data.batch_size` small —
   expect it to be much slower than the LensCraft path.
 - Metric evaluation via `src/test.py` additionally needs `ref_model` pointing
-  at a trained LensCraft checkpoint and a CLaTr backend.
+  at a separately frozen semantic judge and a CLaTr backend.
 
 ## Configuration
 
@@ -278,6 +216,7 @@ CCDM_DATA_DIR=/path/to/data/ccdm
 CCDM_CHECKPOINT_PATH=/path/to/LensCraft/third_parties/Camera-control/[2024][EG]Text+keyframe/weight/latest.pth
 GENDOP_CHECKPOINT_PATH=/path/to/LensCraft/third_parties/GenDoP/checkpoints/text_motion.safetensors
 
+# Evaluation judges / CLaTr only; not used by the generator
 CLIP_EMBEDDINGS_CACHE_DIR=/path/to/LensCraft/cache
 OUTPUT_DIR=/path/to/outputs
 LOG_DIR=./logs
@@ -329,77 +268,90 @@ Other entry points:
 
 Long training jobs are best run inside `tmux`/`screen` so they survive disconnects.
 
+### Fill a trajectory around fixed keyframes
+
+Pass `known_camera_mask` to preserve supplied camera poses exactly and predict
+the remaining frames. `True` means a fixed keyframe; `padding_mask` separately
+marks timesteps outside the clip. Current categorical checkpoints support this
+without enabling the optional `keyframe_pose_conditioning` pose-query policy.
+For a loaded LensCraft `model`, provide poses in its simulation format:
+
+```python
+import torch
+
+model.eval()
+device = next(model.parameters()).device
+frames = model.decoder.seq_length
+camera = torch.full((1, frames, 6), float("nan"), device=device)
+known = torch.zeros((1, frames), dtype=torch.bool, device=device)
+indices = [0, frames - 1]
+# [normalized x, y, z, Euler X, Y, Z in radians], using training statistics.
+camera[0, indices] = torch.tensor([
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [0.5, 0.0, 0.0, 0.0, 0.2, 0.0],
+], device=device)
+known[0, indices] = True
+generated = model.generate_camera_trajectory(
+    camera_trajectory=camera,
+    known_camera_mask=known,
+    # Supply subject_trajectory / subject_volume when available.
+)["reconstructed"]
+assert torch.equal(generated[known], camera[known])
+```
+
+Positions use the checkpoint's training normalization; Euler angles use XYZ
+order and remain in radians. Unknown poses may contain NaNs because the mask
+hides them before model computation. Keyframe indices address the model's
+configured temporal grid. The visualizer maps native frame selections onto
+that grid and records the actual supplied poses in its run metadata.
+
+Categorical caption tokens are optional; camera-only generation uses the default
+`memory_teacher_forcing_ratio=0.0`. For keyframes plus a structured caption,
+also supply one-hot `[10, batch, 21]` `caption_embedding` tokens and a mixed ratio
+such as `0.5`. The
+`key_framing` and `key_framing+prompt` training/evaluation modes pin their
+keyframes; reconstruction and prompt-only generation continue to predict their
+outputs. Shared keyframes can align clip boundaries, but velocity and
+acceleration at a join are not automatically smoothed.
+
 ## Training
 
-Simulation training uses compact batches by default to avoid transferring unused
-prompt metadata through DataLoader workers and onto the GPU. To disable them:
+The default entry trains the sole categorical model on simulation data:
 
 ```bash
-python src/train.py data.compact_batches=false
+python src/train.py
+python src/train.py data/dataset=et
+python src/train.py data/dataset=ccdm
+python src/train.py data=multi training=multi
 ```
 
-The model inputs are preserved, and test batches still include full metadata.
-Training keeps full batches when contrastive loss is enabled because that loss
-uses the metadata. Mask sampling and CLIP loss computation are vectorized to
-reduce CPU/GPU synchronization. The masking distribution and exact mask counts
-are preserved, but the random sequence differs from the previous per-sample
-implementation, so resumed runs are not bit-for-bit identical to that version.
+The default family policy samples prompt generation, reconstruction, keyframing
+and keyframes plus prompt equally. Known poses stay clean; hidden camera values
+are masked. CE supervises known field labels, and cycle KL uses detached original
+encoder probabilities. The default semantic weights are `categorical: 1` and
+`cycle: 1`; geometry weights are first-frame 2, relative 16, speed 80,
+absolute rotation 2, raw rotation 1, keyframe position 4 and keyframe rotation 2.
+Padding is excluded. `rotation_weight` scales all rotation components.
 
-The training process includes:
-1. Data augmentation (masking and adding noise to input trajectories)
-2. Single-pass (single-step) decoding: the decoder reconstructs the full
-   trajectory in one forward pass from the encoder memory (the default
-   `decode_mode: single_step`)
-3. Gradual increase in task difficulty (noise reduction and mask ratio increase)
-4. Multi-task learning (trajectory reconstruction and CLIP embedding prediction)
+Compact SIM batches retain the ten IDs and their availability. Use
+`data.compact_batches=false` for metadata-dependent augmentation policies.
+The [training map](docs/training_and_evaluation.md) describes sparse-caption,
+domain-augmentation and keyframe policies. Optimizer, scheduler, masking and
+single-step/autoregressive decoding remain configurable for the same model.
 
-Rotation losses use the same SO(3)-projected matrices as generated trajectories.
-First-frame, relative-motion, and speed losses therefore measure the rotations
-that the model actually emits. Two additional losses supervise every valid
-frame: `rotation_absolute` compares projected orientations with the targets,
-and `rotation_raw` pulls raw decoder matrices toward proper target rotations.
-The raw auxiliary discourages reflected matrices, whose temporal products can
-otherwise look correct before projection. Padded frames are excluded.
+`initialize_from_checkpoint=/path/to/categorical.ckpt` starts a new optimizer
+and schedule from current categorical weights. `resume_checkpoint=...` resumes
+optimizer and epoch state. These options are mutually exclusive. Old generator
+architectures are not adapted during either operation.
 
-The default weights are `rotation_absolute: 2` and `rotation_raw: 1`, and
-`rotation_weight` scales all rotation components. For older configurations
-that enable trajectory losses but omit these keys, the loss module supplies
-these defaults; an explicit zero disables the corresponding term. Both halves
-of multi-dataset training apply the configured trajectory weights.
-
-Existing checkpoints remain loadable, but this objective change does not repair
-their learned rotations. Run a new training or fine-tuning experiment and
-evaluate generated trajectories to measure improvement. Total losses from the
-old and new objectives are not directly comparable.
-
-### Plot training losses
-
-Generate the train/validation curves for total, cycle, CLIP, first-frame,
-relative-motion, and speed losses from Lightning CSV logs:
+Plot completed train/validation epochs from Lightning CSV logs:
 
 ```bash
-python src/plot_losses.py /path/to/run
-# Or choose a specific logger version and a reusable output directory:
-python src/plot_losses.py /path/to/run/train/lightning_logs/version_0/metrics.csv \
-  --output-dir /path/to/run/loss_plots \
-  --title "LensCraft | Training from scratch"
+python src/plot_losses.py /path/to/run --output-dir /path/to/loss_plots
 ```
 
-A directory input selects the most recently modified `metrics.csv`, searching
-inside its `train/` directory when present. The selected file is printed; logger
-versions are not merged. Pass a specific CSV to select another version.
-
-The script writes `loss_trends.png`, `loss_trends.svg`, `epoch_losses.csv`,
-`epoch_losses.json`, and `summary.json`. By default these go in a new timestamped
-`analysis_*` folder under the input directory (or beside an input CSV).
-An explicit `--output-dir` reuses that folder and replaces the generated files.
-On the training server, use an output path under `/media/external20/morteza_abolghasemi/`.
-
-Only epochs with both train and validation total-loss averages are included;
-step losses and incomplete epochs are excluded. Curves are unsmoothed, component
-losses are unweighted, and missing components are marked as not logged. The
-script uses Matplotlib from `requirements.txt`, runs without a display or GPU,
-and can be rerun while training continues.
+The plotter reports logged components, keeps incomplete epochs separate, and
+does not make losses from different objectives comparable.
 
 ### Plot native CLaTr training
 
@@ -455,8 +407,8 @@ split. The runner writes a sample manifest, per-model logs, and `summary.md` /
 `summary.json`; it reports failures while continuing the other models. These
 small-sample metrics are preliminary, especially FCD.
 
-The model is evaluated on a validation set during training. The evaluation metrics include:
-1. Trajectory reconstruction loss (MSE for positions, circular distance for angles)
-2. CLIP embedding similarity loss for movement types, easing functions, camera angles, and shot types
+Validation reports camera pose and motion errors. Final evaluation uses fixed
+semantic and CLaTr judges for CS, FCD and PRDC, together with independent
+geometry/framing metrics. Judge features never become generator conditioning.
 
 For any questions or issues, please open an issue on the GitHub repository or contact the project maintainers.

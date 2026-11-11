@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from models.clip_embeddings import CLIPEmbedder
+from testing.metrics.clip_embeddings import CLIPEmbedder
 from utils.clatr_text import prepare_text_features
 from utils.importing import ModuleImporter
 from utils.paths import third_party

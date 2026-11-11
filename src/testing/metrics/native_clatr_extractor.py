@@ -7,7 +7,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
-from models.clip_embeddings import CLIPEmbedder
+from testing.metrics.clip_embeddings import CLIPEmbedder
 from training.clatr.lightning_module import LightningCLaTr
 from utils.clatr_text import prepare_text_features
 

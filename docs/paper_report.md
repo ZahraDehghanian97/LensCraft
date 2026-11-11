@@ -1,5 +1,9 @@
 # Reproducible paper report
 
+This manuscript report consumes historical measurements. Its old ablation names
+are reporting categories, not selectable generator architectures or training
+launchers in the current categorical-only project.
+
 `scripts/build_paper_report.py` generates a complete Persian report in the experiment order of the supplied September 11, 2026 LensCraft manuscript. It uses the Python standard library and reads actual measurements; manuscript numerical claims are never imported. Missing experiments are explicitly pending. The template covers the whole paper, while the completion matrix states which experiments have actually finished.
 
 From the repository root:

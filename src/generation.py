@@ -47,9 +47,13 @@ def generate_baseline_trajectory(
 
 
 def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, memory_ratio,
-                                 *, caption_presence_mask=None):
-    """Apply a conditioning mode while keeping source visibility and padding separate."""
+                                 *, caption_presence_mask=None, known_camera_mask=None):
+    """Generate with optional exact keyframes, separate from visibility and padding."""
     camera, subject, volume, padding = view
+    keyframe_kwargs = (
+        {"known_camera_mask": known_camera_mask}
+        if known_camera_mask is not None else {}
+    )
     return model.generate_camera_trajectory(
         subject_trajectory=subject,
         subject_volume=volume,
@@ -59,4 +63,5 @@ def generate_lenscraft_trajectory(model, view, source_mask, caption_embedding, m
         memory_teacher_forcing_ratio=memory_ratio,
         caption_embedding=caption_embedding,
         caption_presence_mask=caption_presence_mask,
+        **keyframe_kwargs,
     )["reconstructed"]

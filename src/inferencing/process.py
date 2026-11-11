@@ -2,7 +2,7 @@ import torch
 from data.ccdm.alignment import align_ccdm_to_subject
 
 from data.simulation.dataset import SimulationDataset
-from data.simulation.utils import structured_conditioning_from_batch
+from data.categorical_conditioning import conditioning_from_batch, conditioning_presence_from_batch
 from data.sim_format import (
     SIM_SEQ_LENGTH,
     NUM_VISIBLE_KEYFRAMES,
@@ -22,11 +22,6 @@ def inference_batch(model, batch, device, dataset_type="simulation",
                     keyframe_sample_seeds=None):
     batch = move_batch_to_device(batch, device)
     batch_size = len(batch["text_prompts"])
-
-    caption_embedding = (
-        structured_conditioning_from_batch(batch)
-        if dataset_type in ("simulation", "et", "ccdm") else None
-    )
 
     view = to_simulation_format(
         batch, dataset_type, target_len=seq_length
@@ -50,6 +45,8 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         return ({"prompt_generation": sim_generated},
                 sim_camera, sim_subject, sim_volume, sim_padding, None)
 
+    caption_embedding = conditioning_from_batch(batch, model)
+
     keyframing_mask = build_keyframing_mask(
         batch_size, device, sim_camera.shape[1],
         num_keyframes=num_keyframes,
@@ -71,7 +68,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
             else sim_padding
         )
         mode_caption = caption_embedding
-        mode_presence = batch.get('prompt_none_mask')
+        mode_presence = conditioning_presence_from_batch(batch, model)
 
         if mode == "source_trajectory":
             # Pair each trajectory with a *different* sample's prompt.
@@ -87,6 +84,7 @@ def inference_batch(model, batch, device, dataset_type="simulation",
         results[mode] = generate_lenscraft_trajectory(
             model, view, source_mask, mode_caption, MEMORY_TEACHER_FORCING_BY_MODE[mode],
             caption_presence_mask=mode_presence,
+            known_camera_mask=(~source_mask if mode in _KEYFRAMING_MODES else None),
         )
 
     return results, sim_camera, sim_subject, sim_volume, sim_padding, keyframing_mask

@@ -14,10 +14,12 @@ def trajectory(frames=4):
 
 
 def total_loss(module, predicted, target, padding=None):
-    return module.compute_total_loss(
-        predicted, target, None, None, {},
+    terms = module.compute_trajectory_losses(
+        predicted, target,
         tgt_key_padding_mask=padding, projected_pred=predicted,
     )
+    total = sum(module.losses_list.get(name, 0) * value for name, value in terms.items())
+    return total, terms
 
 
 def test_absolute_position_detects_constant_offset_hidden_from_relative_motion():

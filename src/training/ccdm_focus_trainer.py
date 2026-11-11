@@ -15,12 +15,11 @@ class CCDMFocusTrainer(TransferRobustTrainer):
                 'enabled': True,
                 'et_probability': 0.,
                 'ccdm_probability': .75,
-                'fill': 'mean',
+                'fill': 'zero',
                 'et_coordinate_frame': 'world',
                 'ccdm_static_motion': True,
                 'ccdm_native_manifold': True,
             },
-            self.loss_module.clip_embeddings,
         )
 
     def _validate_domain_batch(self, batch, batch_idx):

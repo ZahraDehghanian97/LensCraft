@@ -316,7 +316,10 @@ def evaluate_cohort(args, cfg, model, dataset_type, output, normalization):
                 sample_seeds = [int(hashlib.sha256(f"{seed}:{name}".encode()).hexdigest()[:16], 16) for name in item_ids]
                 source_mask = build_keyframing_mask(camera.shape[0], camera.device, camera.shape[1],
                                                    num_keyframes=count, padding_mask=padding, sample_seeds=sample_seeds)
-                generated[f"keyframe_prompt_k{count}"] = generate_lenscraft_trajectory(model, view, source_mask, caption, .5, caption_presence_mask=presence)
+                generated[f"keyframe_prompt_k{count}"] = generate_lenscraft_trajectory(
+                    model, view, source_mask, caption, .5,
+                    caption_presence_mask=presence, known_camera_mask=~source_mask,
+                )
             if batch_index == 0:
                 controls = {}
                 for name, replacement in (("zero", torch.zeros_like(camera)), ("shuffled", camera[permutation]), ("none", None)):
@@ -414,7 +417,7 @@ def main(argv=None):
                 "normalization_sha256": sha256(args.output / "normalization.json"),
                 "model_inference": OmegaConf.to_container(model_cfg.training.model.inference, resolve=True),
                 "keyframe_pose_conditioning": bool(model.keyframe_pose_conditioning),
-                "caption_presence_conditioning": bool(model.caption_presence_conditioning),
+                "semantic_fields": 10, "semantic_values": 93,
                 "script_sha256": sha256(__file__),
                 "source_sha256": {str(path.relative_to(args.repo_root)): sha256(path)
                                   for path in sorted((args.repo_root / "src").rglob("*.py"))}}

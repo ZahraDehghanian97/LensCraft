@@ -5,7 +5,7 @@ import torch
 from data.convertor.convertor import convert_to_target
 from data.ccdm.alignment import align_ccdm_to_subject
 from data.simulation.dataset import SimulationDataset
-from data.simulation.utils import structured_conditioning_from_batch
+from data.categorical_conditioning import conditioning_from_batch, conditioning_presence_from_batch
 from data.sim_format import (
     MEMORY_TEACHER_FORCING_BY_MODE,
     build_keyframing_mask,
@@ -16,7 +16,6 @@ from testing.baseline_modes import (
     NO_NORM_ITEM,
     NORM_ITEM,
     NORM_LENSCRAFT_INIT_ITEM,
-    place_trajectory_at_first_position,
 )
 from testing.keyframes import parse_keyframe_mode
 from utils.device import move_batch_to_device
@@ -29,12 +28,11 @@ def _align_structured_metric_target(
     prompt_none_mask: Optional[torch.Tensor],
     target_token_count: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Align legacy 10-token and current 46-token prompts for metrics.
+    """Align ten-field or full 46-field annotation targets for frozen metrics.
 
     Added slots are neutral and explicitly absent.  This keeps zero padding
-    from contributing a cosine score while still allowing current checkpoints
-    to be evaluated on legacy E.T. annotations (and legacy checkpoints on
-    current annotations).
+    from contributing a cosine score. This concerns independent metric targets;
+    the categorical generator always receives ten 21-dimensional tokens.
     """
 
     if prompt_embedding.ndim != 3:
@@ -92,27 +90,11 @@ def _lenscraft_first_position(
     batch: Dict[str, Any],
     dataset_type: str,
 ) -> torch.Tensor:
-    caption_embedding = structured_conditioning_from_batch(batch)
-    if caption_embedding is None:
-        raise ValueError(
-            "The normalized + LensCraft-init baseline mode requires a "
-            "cinematography prompt."
-        )
-
-    _, sim_subject_trajectory, sim_subject_volume, sim_padding_mask = (
-        to_simulation_format(
-            batch, dataset_type, target_len=ref_model.decoder.seq_length
-        )
+    raise ValueError(
+        "prompt_generation_norm_lenscraft_init is no longer supported: the frozen "
+        "semantic evaluator only scores trajectories and cannot generate an initial pose. "
+        "Use prompt_generation or prompt_generation_no_norm."
     )
-    lenscraft_generation = ref_model.generate_camera_trajectory(
-        caption_embedding=caption_embedding,
-        caption_presence_mask=batch.get('prompt_none_mask'),
-        camera_trajectory=None,
-        subject_trajectory=sim_subject_trajectory,
-        subject_volume=sim_subject_volume,
-        padding_mask=sim_padding_mask,
-    )["reconstructed"]
-    return lenscraft_generation[..., :1, :3]
 
 
 def _generate_baseline_variants(
@@ -132,7 +114,9 @@ def _generate_baseline_variants(
     want_norm = NORM_ITEM in metric_items
     want_no_norm = NO_NORM_ITEM in metric_items
     want_lenscraft_init = NORM_LENSCRAFT_INIT_ITEM in metric_items
-    need_norm = want_norm or want_lenscraft_init
+    if want_lenscraft_init:
+        _lenscraft_first_position(ref_model, batch, dataset_type)
+    need_norm = want_norm
 
     variant_trajectories: Dict[str, torch.Tensor] = {}
     normalized_trajectory: Optional[torch.Tensor] = None
@@ -174,19 +158,6 @@ def _generate_baseline_variants(
             variant_trajectories[NO_NORM_ITEM] = sim_gen
             record_padding(NO_NORM_ITEM, pad_r, sim_gen)
 
-        if want_lenscraft_init:
-            first_position = _lenscraft_first_position(
-                ref_model,
-                batch,
-                dataset_type,
-            )
-            variant_trajectories[NORM_LENSCRAFT_INIT_ITEM] = (
-                place_trajectory_at_first_position(
-                    normalized_trajectory, first_position
-                )
-            )
-            record_padding(NORM_LENSCRAFT_INIT_ITEM, pad_n, normalized_trajectory)
-
         return variant_trajectories
 
     sim_generated, gen_padding_mask = generate_baseline_trajectory(
@@ -215,19 +186,6 @@ def _generate_baseline_variants(
     if want_no_norm:
         variant_trajectories[NO_NORM_ITEM] = sim_generated.clone()
         record_padding(NO_NORM_ITEM, gen_padding_mask, sim_generated)
-
-    if want_lenscraft_init:
-        first_position = _lenscraft_first_position(
-            ref_model,
-            batch,
-            dataset_type,
-        )
-        variant_trajectories[NORM_LENSCRAFT_INIT_ITEM] = (
-            place_trajectory_at_first_position(
-                normalized_trajectory, first_position
-            )
-        )
-        record_padding(NORM_LENSCRAFT_INIT_ITEM, gen_padding_mask, normalized_trajectory)
 
     return variant_trajectories
 
@@ -268,7 +226,12 @@ def _update_generation_metrics(
             text_features=text_clatr,
         )
 
-    prompt_embedding = structured_conditioning_from_batch(batch)
+    from testing.metrics.semantic_evaluator import metric_conditioning_from_batch
+
+    prompt_embedding, prompt_none_mask = metric_conditioning_from_batch(
+        batch, (getattr(ref_model, "clip_embeddings", None)
+                or getattr(metric_callback, "clip_embeddings", None)),
+    )
     if prompt_embedding is not None:
         n_high = ref_model.memory_tokens_count
         gen_embedding = ref_model.embed_trajectory(
@@ -278,7 +241,6 @@ def _update_generation_metrics(
             src_key_mask=metric_generated_mask,
             subject_key_padding_mask=sim_padding_mask,
         )
-        prompt_none_mask = batch.get("prompt_none_mask")
         prompt_embedding, prompt_none_mask = _align_structured_metric_target(
             prompt_embedding,
             prompt_none_mask,
@@ -484,7 +446,7 @@ def test_batch(
 
     for metric_item in metric_items:
         generation_mode, count = parse_keyframe_mode(metric_item, num_keyframes)
-        caption_embedding = structured_conditioning_from_batch(batch)
+        caption_embedding = conditioning_from_batch(batch, model)
         memory_teacher_forcing_ratio = MEMORY_TEACHER_FORCING_BY_MODE[generation_mode]
         if count is not None and count not in masks_by_count:
             masks_by_count[count] = build_keyframing_mask(
@@ -496,7 +458,8 @@ def test_batch(
         if cached_outputs is None:
             sim_generated_trajectory = generate_lenscraft_trajectory(
                 model, generation_view, source_mask, caption_embedding, memory_teacher_forcing_ratio,
-                caption_presence_mask=batch.get('prompt_none_mask'),
+                caption_presence_mask=conditioning_presence_from_batch(batch, model),
+                known_camera_mask=(~source_mask if count is not None else None),
             )
         else:
             item_output = cached_outputs["items"][metric_item]

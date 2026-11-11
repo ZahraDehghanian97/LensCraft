@@ -10,7 +10,7 @@ domain_augmentation:
   enabled: true
   et_probability: 0.25
   ccdm_probability: 0.25
-  fill: mean
+  fill: zero
 
 validation_domain_augmentation:
   enabled: true

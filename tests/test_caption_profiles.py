@@ -1,148 +1,108 @@
-"""High-level text may supply facts without a low-level simulator program."""
-
-import hashlib
+"""Ten-field categorical missingness stays deterministic and never restores facts."""
 import json
 
 import pytest
 import torch
 
-from data.simulation.constants import NumericFeature
-from data.simulation.utils import CLIP_PARAMETERS, cinematography_struct_parameters
+from models.categorical_latent import FIELD_NAMES, from_ids
 from training.caption_missingness import CaptionMissingness, CaptionMissingnessConfig
 
 
-@pytest.fixture
-def vocabulary():
-    result = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        name = 'boolean' if kind is bool else kind.__name__
-        result[name] = {
-            'first': torch.tensor([1., 2., 3., 4.]),
-            'second': torch.tensor([3., 4., 5., 6.]),
-        }
-    return result
+def high_level(**config):
+    return CaptionMissingness({'profile': 'high_level_only', **config})
 
 
-def high_level(vocabulary, **config):
-    return CaptionMissingness({'profile': 'high_level_only', **config}, vocabulary)
-
-
-def test_high_level_facts_survive_absent_simulator_aliases_and_prior_missing_fill(vocabulary):
-    sampler = high_level(vocabulary, min_keep_ratio=1., max_keep_ratio=1., endpoint_drop_probability=0.)
-    fields, split = len(CLIP_PARAMETERS), len(cinematography_struct_parameters)
-    caption = torch.arange(fields * 2 * 4, dtype=torch.float64).reshape(fields, 2, 4)
-    present = torch.ones(2, fields, dtype=torch.bool)
-    names = sampler.field_names
-    present[0, names.index('dynamic_type')] = False
-    present[0, names.index('dynamic_easing')] = False
-    present[1, names.index('movement_type')] = False
-    present[1, names.index('movement_speed')] = False
-    present[1, names.index('initial_cameraAngle')] = False
+def test_preserves_observed_facts_without_restoring_missing_fields_or_mutating_inputs():
+    sampler = high_level(min_keep_ratio=1., max_keep_ratio=1., endpoint_drop_probability=0.)
+    ids = torch.zeros(2, 10, dtype=torch.long)
+    ids[1, [0, 4, 5]] = -1
+    caption, present = from_ids(ids)
     before, original_presence = caption.clone(), present.clone()
     result, effective = sampler.apply(caption, present, sample_seeds=[2, 3], force=True)
-    expected = present.clone()
-    expected[:, split:] = False
-    assert torch.equal(effective, expected)
+    assert torch.equal(effective, present)
+    assert torch.equal(result, caption)
     assert torch.equal(caption, before) and torch.equal(present, original_presence)
-    assert torch.equal(result[:split], before[:split])
-    removed = (present & ~expected).T[..., None].expand_as(caption)
-    expected_fill = sampler.unknown_tokens.to(caption)[:, None, :].expand_as(caption)
-    torch.testing.assert_close(result[removed], expected_fill[removed])
-    assert torch.equal(result[~removed], before[~removed])
-    # Reapplying cannot revive a field hidden by a domain view or earlier mask.
-    again, second_presence = sampler.apply(result, effective, sample_seeds=[2, 3], force=True)
-    assert torch.equal(again, result) and torch.equal(second_presence, effective)
+    again, second = sampler.apply(result, effective, sample_seeds=[2, 3], force=True)
+    assert torch.equal(again, result) and torch.equal(second, effective)
 
 
-def test_movement_only_caption_drops_both_endpoints_and_all_instructions(vocabulary):
-    sampler = high_level(vocabulary, min_keep_ratio=1., max_keep_ratio=1., endpoint_drop_probability=1.)
+def test_movement_only_caption_drops_both_endpoints():
+    sampler = high_level(min_keep_ratio=1., max_keep_ratio=1., endpoint_drop_probability=1.)
     keep = sampler.sample_keep_mask(3, sample_seeds=[4, 5, 6], force=True)
     expected = torch.zeros_like(keep)
-    expected[:, [sampler.field_names.index(name) for name in ('movement_type', 'movement_speed')]] = True
+    expected[:, [4, 5]] = True
     assert torch.equal(keep, expected)
 
 
-def test_high_level_endpoints_can_be_observed_independently(vocabulary):
-    sampler = high_level(vocabulary, min_keep_ratio=.5, max_keep_ratio=.5, endpoint_drop_probability=0.)
-    keep = sampler.sample_keep_mask(64, sample_seeds=list(range(64)), force=True)
-    initial = keep[:, sampler.field_names.index('initial_cameraAngle')]
-    final = keep[:, sampler.field_names.index('final_cameraAngle')]
-    assert (initial & ~final).any() and (~initial & final).any()
-    assert not keep[:, len(cinematography_struct_parameters):].any()
+def test_endpoint_fields_can_be_observed_independently():
+    keep = high_level(min_keep_ratio=.5, max_keep_ratio=.5,
+                      endpoint_drop_probability=0.).sample_keep_mask(
+                          64, sample_seeds=list(range(64)), force=True)
+    assert (keep[:, 0] & ~keep[:, 6]).any() and (~keep[:, 0] & keep[:, 6]).any()
 
 
-def test_probability_zero_keeps_dense_rows_but_force_applies_profile(vocabulary):
-    sampler = high_level(vocabulary, probability=0.)
+def test_probability_zero_keeps_dense_rows_but_force_applies_missingness():
+    sampler = high_level(probability=0., min_keep_ratio=0., max_keep_ratio=0.)
     assert sampler.sample_keep_mask(3, sample_seeds=[4, 5, 6]).all()
-    forced = sampler.sample_keep_mask(3, sample_seeds=[4, 5, 6], force=True)
-    assert not forced[:, len(cinematography_struct_parameters):].any()
+    assert not sampler.sample_keep_mask(3, sample_seeds=[4, 5, 6], force=True)[:, :4].any()
 
 
-def test_profile_mask_bank_is_an_upper_bound_without_high_low_alias_closure(vocabulary, tmp_path):
-    names = [name for name, _ in CLIP_PARAMETERS]
-    row = [False] * len(names)
-    for name in ('movement_type', 'initial_cameraAngle', 'dynamic_type', 'constraints_staticDistance'):
-        row[names.index(name)] = True
-    bank = tmp_path / 'sim_training_masks.json'
-    bank.write_text(json.dumps({'field_names': names, 'presence_masks': [row]}))
-    sampler = high_level(vocabulary, mask_bank_path=str(bank))
+@pytest.mark.parametrize('probability', [0., .75])
+@pytest.mark.parametrize('force', [False, True])
+def test_speed_dropout_is_independent_and_partition_invariant(probability, force):
+    sampler = high_level(probability=probability, speed_drop_probability=.5)
+    seeds = list(range(2048))
+    state = torch.get_rng_state().clone()
+    keep = sampler.sample_keep_mask(len(seeds), sample_seeds=seeds, force=force)
+    parts = torch.cat([sampler.sample_keep_mask(700, sample_seeds=seeds[:700], force=force),
+                       sampler.sample_keep_mask(1348, sample_seeds=seeds[700:], force=force)])
+    assert torch.equal(keep, parts) and torch.equal(torch.get_rng_state(), state)
+    assert .45 < (~keep[:, 5]).float().mean().item() < .55
+    assert keep[:, 4].all()
+    if probability == 0 and not force:
+        assert keep[:, [0, 1, 2, 3, 4, 6, 7, 8, 9]].all()
+
+
+def test_dropped_and_already_missing_tokens_are_zero_without_changing_clean_targets():
+    sampler = high_level(probability=0., speed_drop_probability=1.)
+    ids = torch.zeros(2, 10, dtype=torch.long)
+    ids[1, 0] = -1
+    caption, presence = from_ids(ids)
+    before = caption.clone()
+    result, effective = sampler.apply(caption, presence, sample_seeds=[2, 3])
+    assert not effective[:, 5].any()
+    assert torch.count_nonzero(result.masked_select(~effective.T[..., None])) == 0
+    assert torch.equal(before, caption)
+
+
+def test_mask_bank_is_only_an_upper_bound(tmp_path):
+    row = [False] * 10
+    row[0] = row[4] = True
+    bank = tmp_path / 'training_masks.json'
+    bank.write_text(json.dumps({'field_names': list(FIELD_NAMES), 'presence_masks': [row]}))
+    sampler = high_level(mask_bank_path=str(bank))
     keep = sampler.sample_keep_mask(2, sample_seeds=[7, 8], force=True)
-    expected = torch.tensor([row, row])
-    expected[:, len(cinematography_struct_parameters):] = False
-    assert torch.equal(keep, expected)
-    assert keep[:, names.index('movement_type')].all()
-    assert not keep[:, names.index('movement_speed')].any()
-    # The default bank policy still closes incomplete semantic alias groups.
-    legacy = CaptionMissingness({'mask_bank_path': str(bank)}, vocabulary)
-    assert not legacy.sample_keep_mask(1, sample_seeds=[7], force=True)[0, names.index('movement_type')]
+    assert torch.equal(keep, torch.tensor([row, row]))
+    assert not keep[:, 5].any()
 
 
-@pytest.mark.parametrize('profile', ['alias_grouped', 'high_level_only'])
-def test_seeded_masks_are_partition_invariant_and_leave_training_rng_unchanged(vocabulary, profile):
-    sampler = CaptionMissingness({'profile': profile}, vocabulary)
+@pytest.mark.parametrize('profile', ['independent', 'high_level_only'])
+def test_seeded_masks_leave_training_rng_unchanged(profile):
+    sampler = CaptionMissingness({'profile': profile})
     seeds = list(range(20))
     state = torch.get_rng_state().clone()
-    full = sampler.sample_keep_mask(len(seeds), sample_seeds=seeds)
+    full = sampler.sample_keep_mask(20, sample_seeds=seeds)
     parts = torch.cat([sampler.sample_keep_mask(7, sample_seeds=seeds[:7]),
                        sampler.sample_keep_mask(13, sample_seeds=seeds[7:])])
-    assert torch.equal(full, parts)
-    assert torch.equal(torch.get_rng_state(), state)
+    assert torch.equal(full, parts) and torch.equal(torch.get_rng_state(), state)
 
 
-@pytest.mark.parametrize('force', [False, True])
-def test_default_profile_retains_legacy_rng_draw_budget(vocabulary, force):
-    # Four rows: keep-ratio draw, one draw per field, endpoint selection, and
-    # optional augmentation selection. No profile-selector draw may be added.
-    sampler = CaptionMissingness({}, vocabulary)
-    generator = torch.Generator().manual_seed(90210)
-    fields, size = len(CLIP_PARAMETERS), 4
-    torch.rand(size, 1, generator=generator)
-    torch.rand(size, fields, generator=generator)
-    torch.rand(size, 1, generator=generator)
-    if not force:
-        torch.rand(size, 1, generator=generator)
-    before = torch.get_rng_state().clone()
-    try:
-        torch.manual_seed(90210)
-        implicit = sampler.sample_keep_mask(size, force=force)
-        # Captured independently from the frozen pre-profile implementation,
-        # CPU seed 90210, default configuration, 4 rows and 46 caption fields.
-        legacy_masks = {
-            False: '3db035f6ba995e4c4ddd4eb066b9c2bd6c28aa9d8d9602f0aeba31c896cf735c',
-            True: 'f2e5f604428386e7b55f0e53debe288ec89b9519a7de272932233874ea42967c',
-        }
-        assert hashlib.sha256(implicit.numpy().tobytes()).hexdigest() == legacy_masks[force]
-        assert torch.equal(torch.get_rng_state(), generator.get_state())
-        torch.manual_seed(90210)
-        explicit = CaptionMissingness({'profile': 'alias_grouped'}, vocabulary).sample_keep_mask(size, force=force)
-        assert torch.equal(implicit, explicit)
-        assert torch.equal(torch.get_rng_state(), generator.get_state())
-    finally:
-        torch.set_rng_state(before)
+@pytest.mark.parametrize('probability', [-.1, 1.1, float('nan'), float('inf')])
+def test_invalid_speed_dropout_rejected(probability):
+    with pytest.raises(ValueError, match='speed_drop_probability'):
+        CaptionMissingnessConfig(speed_drop_probability=probability)
 
 
-def test_invalid_profile_rejected_before_training():
-    with pytest.raises(ValueError, match='profile'):
-        CaptionMissingnessConfig(profile='native_et_test')
+def test_mean_fill_is_no_longer_a_conditioning_option():
+    with pytest.raises(ValueError, match='zero'):
+        CaptionMissingnessConfig(fill='mean')

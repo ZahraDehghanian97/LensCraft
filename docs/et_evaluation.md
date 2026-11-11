@@ -1,5 +1,9 @@
 # ET evaluation with fresh human-prompt translation
 
+Current commands require a categorical generator checkpoint. The dated scores
+below describe historical frozen executions and are not new categorical-model
+measurements. Metric CLIP assets belong to the frozen judges only.
+
 LensCraft can evaluate ET through `src/test.py data/dataset=et`. Explicitly set
 `data.dataset.config.split=test data.val_size=0 data.test_size=1`; the default
 ET dataset configuration loads the native training split and randomly holds out
@@ -30,7 +34,7 @@ python src/translate_prompt.py \
   --output /path/to/et-evaluation/fresh_annotations.json \
   --metadata-output /path/to/et-evaluation/fresh_annotations.metadata.json \
   --cache-dir /path/to/et-evaluation/gateway_cache \
-  --model deepseek/deepseek-v4.1-flash-1017
+  --model meta/muse-ember
 
 python scripts/prepare_et_gateway_evaluation.py \
   --dataset-root "$ET_DATA_DIR" --output-dir /path/to/et-evaluation \

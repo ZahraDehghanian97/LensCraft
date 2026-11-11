@@ -1,11 +1,7 @@
+"""Camera geometry terms shared by the categorical training objective."""
 import torch
-from .contrastive_loss import ContrastiveLoss
-from .clip_loss import ClipLoss
 
-from data.simulation.utils import load_clip_means
-from utils.naming import clip_embedding_name
 from utils.pytorch3d_transform import euler_angles_to_matrix, symmetric_orthogonalization
-
 
 TRAJECTORY_LOSS_KEYS = (
     "first_frame", "relative", "speed", "rotation_absolute", "rotation_raw"
@@ -15,154 +11,33 @@ OPTIONAL_POSITION_LOSS_KEYS = ("position_absolute",)
 
 
 class CameraTrajectoryLoss:
-    def __init__(self,
-                 contrastive_loss_margin: int=5,
-                 losses_list: dict=None,
-                 weighted_clip_loss: bool=False,
-                 weight_power: int=1,
-                 clip_weights: dict=None,
-                 contrastive_loss_version: int=1,
-                 clip_embeddings: dict=None,
-                 encoder_loss_function: str="clip",
-                 rotation_weight: float=1.0
-                 ):
-        self.clip_loss = ClipLoss(clip_weights=clip_weights, weight_power=weight_power)
-        # contrastive_loss_margin remains accepted for saved Hydra configs;
-        # the implemented contrastive objectives do not use a margin.
+    """Geometry-only helper; categorical CE and KL live in categorical_loss."""
+
+    def __init__(self, losses_list=None, rotation_weight=1.0):
         self.losses_list = dict(losses_list or {})
-        # Saved training configs predate these terms. Keep the correction
-        # active when those configs are reused, while honoring explicit zeros
-        # and leaving encoder-only objectives alone.
         if any(self.losses_list.get(key, 0) for key in TRAJECTORY_LOSS_KEYS):
             self.losses_list.setdefault("rotation_absolute", 2.0)
             self.losses_list.setdefault("rotation_raw", 1.0)
-        self.weighted_clip_loss = weighted_clip_loss
-        self.clip_weights = clip_weights
-        self.clip_embeddings = clip_embeddings
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        self.embedding_means = None
-        self.contrastive_loss = None
-        self.contrastive_loss_version = contrastive_loss_version
-        if self.contrastive_loss_version not in (1, 2, 3):
-            raise ValueError(f"Contrastive loss version should be 1, 2 or 3, you passed {self.contrastive_loss_version}")
-        if self.losses_list.get("contrastive", 0):
-            self._initialize_contrastive_loss()
-
-        self.encoder_loss_function = encoder_loss_function
         self.rotation_weight = rotation_weight
 
-    def _initialize_contrastive_loss(self):
-        self.embedding_means = load_clip_means()
-        self.contrastive_loss = ContrastiveLoss(
-            clip_embeddings=self.clip_embeddings,
-            device=self.device,
-            embedding_means=self.embedding_means,
-            get_embedding_name_func=clip_embedding_name,
-        )
-        self._compute_contrastive = {
-            1: self.contrastive_loss.compute_v1,
-            2: self.contrastive_loss.compute_v2,
-            3: self.contrastive_loss.compute_v3,
-        }[self.contrastive_loss_version]
+    def _euler_traj_to_matrix(self, trajectory):
+        with torch.autocast(device_type=trajectory.device.type, enabled=False):
+            trajectory = trajectory if trajectory.dtype == torch.float64 else trajectory.float()
+            rotation = euler_angles_to_matrix(trajectory[..., 3:6], "XYZ")
+            return torch.cat([trajectory[..., :3], rotation.flatten(-2)], dim=-1)
 
-    def compute_contrastive_loss(self, clip_pred, clip_target, batch):
-        if self.contrastive_loss is None:
-            self._initialize_contrastive_loss()
-        return self._compute_contrastive(clip_pred, clip_target, batch)
-
-    def __call__(self, model_output, camera_trajectory, clip_target, batch,
+    def __call__(self, model_output, camera_trajectory, semantic_target=None, batch=None,
                  tgt_key_padding_mask=None, known_mask=None):
-        clip_pred = model_output['embeddings']
-        cycle_embeddings = model_output.get('cycle_embeddings', None)
-
-        trajectory_pred = model_output['reconstructed_raw_matrix']
-        trajectory_target = self._euler_traj_to_matrix(camera_trajectory)
-
-        return self.compute_total_loss(
-            trajectory_pred,
-            trajectory_target,
-            clip_pred,
-            clip_target,
-            batch,
-            cycle_embeddings,
+        terms = self.compute_trajectory_losses(
+            model_output['reconstructed_raw_matrix'], self._euler_traj_to_matrix(camera_trajectory),
             tgt_key_padding_mask=tgt_key_padding_mask,
             projected_pred=model_output.get('reconstructed_rot_matrix'),
-            known_mask=(model_output.get('known_mask') if known_mask is None else known_mask),
-            cycle_prompt_mask=model_output.get('cycle_prompt_mask'),
+            known_mask=model_output.get('known_mask') if known_mask is None else known_mask,
         )
-
-    def _euler_traj_to_matrix(self, traj6):
-        with torch.autocast(device_type=traj6.device.type, enabled=False):
-            traj6 = traj6 if traj6.dtype == torch.float64 else traj6.float()
-            pos = traj6[..., :3]
-            rot = euler_angles_to_matrix(traj6[..., 3:6], "XYZ")
-            return torch.cat([pos, rot.reshape(*traj6.shape[:-1], 9)], dim=-1)
-
-    def compute_total_loss(
-        self, trajectory_pred, trajectory_target, clip_pred, clip_target, batch,
-        cycle_embeddings=None, tgt_key_padding_mask=None, projected_pred=None,
-        known_mask=None,
-        cycle_prompt_mask=None,
-    ):
-        loss_dict = dict()
-
-        if self.losses_list.get("clip", 0):
-            clip_losses, total_clip_loss = self.clip_loss.compute(
-                clip_target=clip_target,
-                clip_pred=clip_pred,
-                weighted_clip_loss=self.weighted_clip_loss,
-                prompt_none_mask=batch.get("prompt_none_mask", None),
-                encoder_loss_function=self.encoder_loss_function
-            )
-
-            loss_dict["clip"] = total_clip_loss
-            loss_dict["clip_elements"] = {i: clip_losses[i] for i in range(len(clip_losses))}
-
-
-
-        if self.losses_list.get("cycle", 0) and cycle_embeddings is not None:
-            cycle_losses, total_cycle_loss = self.clip_loss.compute(
-                clip_target=clip_pred,
-                clip_pred=cycle_embeddings,
-                weighted_clip_loss=self.weighted_clip_loss,
-                encoder_loss_function=self.encoder_loss_function,
-                prompt_none_mask=cycle_prompt_mask,
-            )
-
-            loss_dict["cycle"] = total_cycle_loss
-            loss_dict["cycle_elements"] = {i: cycle_losses[i] for i in range(len(cycle_losses))}
-
-        elif self.losses_list.get("cycle", 0) and cycle_embeddings is None:
-            loss_dict["cycle"] = trajectory_pred.new_zeros(())
-
-
-        if any(self.losses_list.get(key, 0)
-               for key in TRAJECTORY_LOSS_KEYS + KEYFRAME_LOSS_KEYS + OPTIONAL_POSITION_LOSS_KEYS):
-            loss_dict.update(self.compute_trajectory_losses(
-                trajectory_pred, trajectory_target,
-                tgt_key_padding_mask=tgt_key_padding_mask,
-                projected_pred=projected_pred,
-                known_mask=known_mask,
-            ))
-
-
-        if self.losses_list.get("contrastive", 0):
-            contrastive_loss = self.compute_contrastive_loss(clip_pred, clip_target, batch)
-            loss_dict["contrastive"] = contrastive_loss
-
-
-
-        total_loss = trajectory_pred.new_zeros(
-            (), dtype=torch.float64 if trajectory_pred.dtype == torch.float64 else torch.float32,
-        )
-        for loss_key in self.losses_list:
-            total_loss = total_loss + self.losses_list[loss_key] * loss_dict.get(loss_key, 0)
-
-        loss_dict["total"] = total_loss.item()
-        return total_loss, loss_dict
-
+        total = sum((weight * terms[name] for name, weight in self.losses_list.items()
+                     if weight and name in terms), camera_trajectory.new_zeros(()))
+        terms['total'] = total.detach().item()
+        return total, terms
 
     def compute_trajectory_losses(
         self, pred, target, tgt_key_padding_mask=None, projected_pred=None,
@@ -181,8 +56,7 @@ class CameraTrajectoryLoss:
         is the mean squared chordal distance between proper SO(3) matrices,
         ``8 sin(theta / 2)^2 / 9``, scaled by ``rotation_weight``. This avoids
         the endpoint derivatives of acos; evaluation reports geodesic degrees.
-        These terms are opt-in through losses_list, so old configurations retain
-        their original total objective.
+        Terms contribute according to their configured geometry coefficients.
 
         ``position_absolute`` is an optional all-valid-frame position MSE.
         It anchors offsets throughout the path, independently of frame zero
@@ -281,12 +155,3 @@ class CameraTrajectoryLoss:
             if self.losses_list.get("position_absolute", 0):
                 losses["position_absolute"] = position_error(p_pred, p_tgt, valid)
             return losses
-
-    def compute_trajectory_loss(
-        self, pred, target, tgt_key_padding_mask=None, projected_pred=None,
-    ):
-        """Compatibility wrapper returning the three original geometry terms."""
-        terms = self.compute_trajectory_losses(
-            pred, target, tgt_key_padding_mask, projected_pred,
-        )
-        return tuple(terms[key] for key in ("first_frame", "relative", "speed"))

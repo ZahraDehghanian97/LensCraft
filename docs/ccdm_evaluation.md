@@ -1,5 +1,9 @@
 # LensCraft on native CCDM
 
+Current commands require a categorical generator checkpoint. The dated scores
+below describe historical frozen executions and are not new categorical-model
+measurements. Metric CLIP assets belong to the frozen judges only.
+
 CCDM can be evaluated with the same generator and frozen evaluators as ET.
 The released `data.npy` contains 27,810 trajectories and has no official split
 IDs. The September 18 review uses 2,781 source indices selected with NumPy
@@ -20,7 +24,7 @@ python src/translate_prompt.py \
   --output /path/to/ccdm/cohort10pct/fresh_annotations.json \
   --metadata-output /path/to/ccdm/cohort10pct/translation_metadata.json \
   --cache-dir /path/to/ccdm/gateway_cache \
-  --model deepseek/deepseek-v4.1-flash-1017 --reasoning-effort low
+  --model meta/muse-ember --reasoning-effort low
 
 python scripts/prepare_ccdm_evaluation.py \
   --data-path "$CCDM_DATA_DIR/data.npy" \

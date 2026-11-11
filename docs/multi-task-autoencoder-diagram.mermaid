@@ -1,96 +1,24 @@
-graph TD
-    subgraph Input
-        A[Camera Trajectory<br>input_dim] --> B[Apply Noise]
-        A --> C[Apply Mask]
-        B & C --> D[Noisy & Masked<br>Trajectory]
-        S[Subject Info<br>subject_dim] --> SP[Subject Projection<br>Linear: subject_dim → latent_dim]
-    end
-
-    subgraph Encoder["Encoder (TransformerEncoder)"]
-        E[Input Projection<br>Linear: input_dim → latent_dim]
-        F[Positional Encoding]
-        G[Transformer Encoder Layers<br>num_encoder_layers, nhead]
-        H1[Movement Query Token]
-        H2[Easing Query Token]
-        H3[Camera Angle Query Token]
-        H4[Shot Type Query Token]
-        M1[Encoder Memory<br>latent_dim per token]
-    end
-
-    subgraph LatentSpace["Latent Space Processing"]
-        I1[Movement Embedding<br>latent_dim]
-        I2[Easing Embedding<br>latent_dim]
-        I3[Camera Angle Embedding<br>latent_dim]
-        I4[Shot Type Embedding<br>latent_dim]
-        J[Latent Merger<br>Linear: latent_dim*4 → latent_dim]
-        K[Merged Latent<br>latent_dim]
-    end
-
-    subgraph AutoregressiveDecoding
-        subgraph Decoder["Decoder (TransformerDecoder)"]
-            L[Embedding Layer<br>Linear: input_dim → latent_dim]
-            M[Positional Encoding]
-            N[Transformer Decoder Layers<br>num_decoder_layers, nhead]
-            O[Output Projection<br>Linear: latent_dim → input_dim]
-        end
-        P[Initial Zero Input]
-        Q[Teacher Forcing]
-        R1[Output t]
-        M2[Decoder Memory<br>latent_dim, seq_length]
-    end
-
-    subgraph Output
-        R[Reconstructed Trajectory<br>input_dim, seq_length]
-    end
-
-    subgraph Losses
-        S1[Reconstruction Loss<br>MSE]
-        S2[CLIP Movement Loss<br>1 - CosineSimilarity]
-        S3[CLIP Easing Loss<br>1 - CosineSimilarity]
-        S4[CLIP Camera Angle Loss<br>1 - CosineSimilarity]
-        S5[CLIP Shot Type Loss<br>1 - CosineSimilarity]
-        T[Total Loss<br>Sum of all losses]
-    end
-
-    S --> SP
-    SP --> G
-    D --> E --> F --> G
-    H1 & H2 & H3 & H4 --> G
-    G --> M1
-    M1 --> I1 & I2 & I3 & I4
-    I1 & I2 & I3 & I4 --> J --> K
-    K --> M2
-    M2 --> N
-    P --> L
-    L --> M --> N
-    N --> O --> R1
-    R1 --> L
-    Q -.-> L
-    R1 --> R
-    R --> S1
-    I1 --> S2
-    I2 --> S3
-    I3 --> S4
-    I4 --> S5
-    S1 & S2 & S3 & S4 & S5 --> T
-    SP --> L
-
-    classDef subgraphStyle fill:#cccccc,stroke:#ecf0f1,stroke-width:2px;
-    class Input,Encoder,LatentSpace,AutoregressiveDecoding,Output,Losses subgraphStyle;
-
-    style E fill:#3498db
-    style G fill:#3498db
-    style J fill:#2ecc71
-    style L fill:#9b59b6
-    style N fill:#9b59b6
-    style O fill:#9b59b6
-    style M1 fill:#f39c12
-    style M2 fill:#f39c12
-    style R1 fill:#1abc9c
-    style S1 fill:#e74c3c
-    style S2 fill:#e74c3c
-    style S3 fill:#e74c3c
-    style S4 fill:#e74c3c
-    style S5 fill:#e74c3c
-    style T fill:#e74c3c
-    style SP fill:#3498db
+flowchart LR
+    Camera[Camera trajectory] --> Mask[Noise and valid-frame masking]
+    Subject[Subject trajectory and volume] --> Context[Projected subject context]
+    Mask --> Encoder[Transformer encoder: 256 hidden, 8 heads, 4 layers]
+    Context --> Encoder
+    Queries[Ten fixed query codes] --> Encoder
+    Encoder --> Logits[Shared 21D logits with field category masks]
+    Logits --> Semantic[10 tokens: 93 probabilities, 117 fixed zeros]
+    Labels[Ten categorical IDs and presence] --> Targets[Per-field one-hot targets]
+    Targets --> CE[Masked cross-entropy]
+    Logits --> CE
+    Semantic --> Memory[Probability memory; fixed field codes only for attention]
+    Targets --> Memory
+    Memory --> Decoder[Transformer decoder: native K/V 21, hidden 256]
+    Context --> Decoder
+    Poses[Optional explicit keyframes] --> Decoder
+    Decoder --> Output[Position3 and projected SVD9D rotation]
+    Output --> Geometry[Pose and motion losses]
+    Output --> Cycle[Re-encode generated trajectory]
+    Cycle --> KL[KL original to cycle; original target detached]
+    Semantic --> KL
+    CE --> Loss[Total objective]
+    Geometry --> Loss
+    KL --> Loss

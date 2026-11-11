@@ -3,39 +3,27 @@
 import pytest
 import torch
 
-from data.simulation.constants import NumericFeature
 from data.simulation.dataset import SimulationDataset
-from data.simulation.utils import CLIP_PARAMETERS, cinematography_struct_size
+from models.categorical_latent import FIELD_NAMES, from_ids
+
+cinematography_struct_size = len(FIELD_NAMES)
 from training.base_trainer import MaskConfig, NoiseConfig, TeacherForcingConfig
 from training.ccdm_focus_trainer import CCDMFocusTrainer
-from training.losses.losses import CameraTrajectoryLoss
+from training.losses.categorical_loss import CategoricalCameraTrajectoryLoss
 from training.transfer_robust_trainer import TransferRobustTrainer
 
-
-def vocabulary(width=8):
-    result = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        name = 'boolean' if kind is bool else kind.__name__
-        result[name] = {'first': torch.ones(width), 'second': -torch.ones(width)}
-    return result
 
 
 def make_trainer(control):
     model = torch.nn.Linear(6, 6)
-    model.caption_presence_conditioning = True
     return CCDMFocusTrainer(
         model=model, optimizer=None, lr_scheduler=None,
-        loss_module=CameraTrajectoryLoss(
-            losses_list={'clip': 1., 'cycle': 1.},
-            encoder_loss_function='mse', clip_embeddings=vocabulary(),
-        ),
+        loss_module=CategoricalCameraTrajectoryLoss(losses_list={'categorical': 1., 'cycle': 1.}),
         noise=NoiseConfig(0., 0.), mask=MaskConfig(0., 0.),
         teacher_forcing_schedule=TeacherForcingConfig(1., 1., 0., 0.),
         compile_enabled=False, conditioning={'keyframe_counts': [2]},
         validation_conditioning={'keyframe_counts': [2], 'max_batches': 2},
-        caption_missingness={'probability': 1., 'fill': 'mean'},
+        caption_missingness={'probability': 1., 'fill': 'zero'},
         validation_caption_missingness={'max_batches': 2},
         domain_augmentation={
             'enabled': True, 'et_probability': 0., 'ccdm_probability': .75,
@@ -51,17 +39,17 @@ def example_batch():
     camera[..., 0] = torch.arange(frames).float() / 10
     camera[..., 2] = 5.
     subject = torch.zeros_like(camera)
-    caption = torch.ones(len(CLIP_PARAMETERS), size, width)
+    ids = torch.zeros(size, 10, dtype=torch.long)
+    caption, presence = from_ids(ids)
     return {
         'camera_trajectory': camera, 'subject_trajectory': subject,
         'subject_volume': torch.ones(size, 1, 3),
         'padding_mask': torch.zeros(size, frames, dtype=torch.bool),
-        'cinematography_prompt': caption[:cinematography_struct_size],
-        'simulation_instruction': caption[cinematography_struct_size:],
-        'prompt_none_mask': torch.ones(size, len(CLIP_PARAMETERS), dtype=torch.bool),
+        'cinematography_ids': ids,
+        'prompt_none_mask': presence,
         'cinematography_prompt_parameters': [
-            [(name, 'dollyIn' if name == 'movement_type' else None)
-             for name, _ in CLIP_PARAMETERS[:cinematography_struct_size]]
+            [(name, 'dollyIn' if name == 'movement_type' else 'observed', 0, None)
+             for name in FIELD_NAMES]
             for _ in range(size)
         ],
     }
@@ -82,7 +70,7 @@ def test_recipes_share_validation_targets_and_captions_and_restore_training(monk
     for trainer in trainers:
         trainer._validate_domain_batch(batch, 0)
     for key in ('camera_trajectory', 'subject_trajectory', 'subject_volume',
-                'cinematography_prompt', 'simulation_instruction', 'prompt_none_mask'):
+                'cinematography_ids', 'prompt_none_mask'):
         torch.testing.assert_close(calls[0][key], calls[1][key])
     for trainer, operator in zip(trainers, training_operators):
         assert trainer.domain_augmentation is operator

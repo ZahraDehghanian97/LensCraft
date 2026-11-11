@@ -13,7 +13,7 @@ SPEC.loader.exec_module(runner)
 class PaperRunnerTests(unittest.TestCase):
     def args(self, directory):
         return runner.parse_args(["--dataset-path", directory, "--lenscraft-checkpoint", directory + "/best=099.ckpt",
-            "--lenscraft-config", directory + "/config.yaml", "--clatr-checkpoint", directory + "/clatr.ckpt", "--output-dir", directory])
+            "--lenscraft-config", directory + "/config.yaml", "--semantic-evaluator-checkpoint", directory + "/evaluator.ckpt", "--clatr-checkpoint", directory + "/clatr.ckpt", "--output-dir", directory])
 
     def test_full_stage_protocol(self):
         args = self.args("/tmp/paper-runner")
@@ -28,11 +28,11 @@ class PaperRunnerTests(unittest.TestCase):
             self.assertIn("+data.dataset.config.allowed_movement_types=[]", cmd)
             self.assertNotIn("+limit_test_batches=1", cmd)
             self.assertTrue(any(arg.startswith("test_movement_types=[") for arg in cmd))
-            self.assertIn(runner.override("ref_model.inference.checkpoint_path", args.lenscraft_checkpoint), cmd)
+            self.assertIn(runner.override("ref_model.inference.checkpoint_path", args.semantic_evaluator_checkpoint), cmd)
         for stage in stages[8:12]:
             self.assertIn("data.batch_size=16", stage["command"])
         self.assertEqual(len(runner.expected_modes("lenscraft")), 13)
-        self.assertEqual(len(runner.expected_modes("ccdm")), 3)
+        self.assertEqual(len(runner.expected_modes("ccdm")), 2)
 
     def test_invalid_metric_and_fingerprint_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

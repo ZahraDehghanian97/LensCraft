@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
+import torch
+
+from testing.metrics.semantic_evaluator import (
+    FROZEN_ENCODER_SOURCE_SHA256,
+    FROZEN_POSITION_SOURCE_SHA256,
+    FrozenSemanticEvaluator,
+)
+from testing.metrics.semantic_vocabulary import load_metric_clip_embeddings
 
 
 def checkpoint_identity(path: str | Path) -> dict:
@@ -72,13 +81,13 @@ def _evaluator_model_config(ref_cfg: DictConfig) -> tuple[DictConfig, dict, dict
 
 
 def load_semantic_evaluator(
-    ref_cfg: DictConfig, device, *, input_clip: DictConfig, model_loader=None
+    ref_cfg: DictConfig, device, *, input_clip: DictConfig
 ):
-    """Always instantiate a separate, frozen model from explicit evaluator inputs.
+    """Load only the historical trajectory encoder, never a generator.
 
     LensCraft checkpoints do not save their architecture hyperparameters. The
-    optional saved config therefore supplies the architecture; without one, the
-    self-contained ref_model defaults apply and checkpoint loading stays strict.
+    saved config supplies encoder dimensions; its historical generator target
+    and decoder settings are provenance only and are never instantiated.
     """
     checkpoint_path = ref_cfg.inference.get("checkpoint_path")
     if checkpoint_path in (None, "", "None"):
@@ -101,25 +110,31 @@ def load_semantic_evaluator(
         or clip_model_name != _clip_name(str(input_clip.model_name))
     ):
         raise ValueError(
-            "Semantic evaluator and dataset structured targets must use the "
+            "Semantic evaluator and metric targets must use the "
             "same CLIP model and embedding dimension; evaluator expects "
-            f"{clip_model_name} ({embedding_dim}), dataset uses "
+            f"{clip_model_name} ({embedding_dim}), metric config uses "
             f"{input_clip.model_name} ({input_clip.latent_dim})."
         )
 
-    if model_loader is None:
-        from utils.load_lens_craft import load_lens_craft_model
-
-        model_loader = load_lens_craft_model
-
-    # We have already selected/resolved the correct architecture. Prevent the
-    # general loader from selecting a different ref_model from the saved YAML.
-    inference = OmegaConf.create({
-        "checkpoint_path": checkpoint["path"],
-        "config": None,
-    })
-    evaluator = model_loader(
-        model_module=module, model_inference=inference, device=device
+    encoder_keys = (
+        "input_dim", "subject_dim", "nhead", "num_encoder_layers",
+        "dim_feedforward", "dropout_rate", "seq_length", "latent_dim",
+        "num_query_tokens",
+    )
+    encoder_definition = {key: module[key] for key in encoder_keys if key in module}
+    evaluator = FrozenSemanticEvaluator(**encoder_definition)
+    payload = torch.load(checkpoint["path"], map_location="cpu", weights_only=False)
+    evaluator.load_metric_checkpoint(payload).to(device)
+    raw_clip_name = str(clip["model_name"])
+    cache_file = clip.get("cache_file") or os.path.join(
+        os.environ.get("CLIP_EMBEDDINGS_CACHE_DIR", "."),
+        f"clip_embeddings_{raw_clip_name}_cache.pkl",
+    )
+    evaluator.clip_embeddings = load_metric_clip_embeddings(
+        clip_model_name=raw_clip_name,
+        cache_file=cache_file,
+        chunk_size=int(clip.get("chunk_size", 100)),
+        embedding_dimension=embedding_dim,
     )
     evaluator.eval()
     evaluator.requires_grad_(False)
@@ -133,6 +148,14 @@ def load_semantic_evaluator(
         "clip_model_name": clip_model_name,
         "embedding_dim": embedding_dim,
         "frozen": True,
+        "implementation": {
+            "target": "testing.metrics.semantic_evaluator.FrozenSemanticEvaluator",
+            "encoder_definition": encoder_definition,
+            "historical_encoder_source_sha256": FROZEN_ENCODER_SOURCE_SHA256,
+            "historical_position_source_sha256": FROZEN_POSITION_SOURCE_SHA256,
+            "checkpoint_load": evaluator.checkpoint_load_info,
+            "generation_supported": False,
+        },
         "fingerprint": _config_hash({
             "checkpoint_sha256": checkpoint["sha256"],
             "model_definition_sha256": definition_hash,

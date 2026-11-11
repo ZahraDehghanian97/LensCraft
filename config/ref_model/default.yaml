@@ -1,23 +1,19 @@
-data_format: 
+# Frozen semantic judge only; this encoder cannot generate trajectories.
+data_format:
   type: simulation
   seq_length: 30
 
-
-# Fixed evaluator architecture. These defaults must not inherit the generator's
-# training settings; SEMANTIC_EVALUATOR_CONFIG_PATH can supply a saved schema.
 module:
-  _target_: models.camera_trajectory_model.LensCraft
+  _target_: testing.metrics.semantic_evaluator.FrozenSemanticEvaluator
   input_dim: 6
   subject_dim: 6
+  latent_dim: 512
   nhead: 8
   num_encoder_layers: 4
-  num_decoder_layers: 4
+  num_query_tokens: 46
   dim_feedforward: 2048
   dropout_rate: 0.3
   seq_length: 30
-  latent_dim: 512
-  use_merged_memory: false
-  denormalize_memory: false
 
 clip:
   model_name: clip-vit-base-patch32

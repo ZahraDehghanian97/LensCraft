@@ -16,7 +16,7 @@ TRAJECTORY_CACHE_VERSION = 6
 # Only E.T.'s cache key changes when its generation protocol changes.
 ET_GENERATION_SEED_VERSION = 2
 
-LENSCRAFT_GENERATION_VERSION = 2
+LENSCRAFT_GENERATION_VERSION = 3
 CCDM_COORDINATE_FRAME_VERSION = 3
 _LENSCRAFT_FORMATS = frozenset({"simulation", "lens_craft"})
 
@@ -24,7 +24,6 @@ _PATH_INPUT_KEYS = frozenset(
     {
         "cache_file",
         "checkpoint_path",
-        "clip_embeddings_cache",
         "config",
         "data_dir",
         "data_path",
@@ -213,102 +212,40 @@ def configured_input_provenance(
 ) -> dict[str, Any]:
     """Return provenance for inputs that can change generated trajectories."""
 
-    sections: list[tuple[str, Any]] = []
-    lenscraft_models: list[tuple[str, Mapping[str, Any]]] = []
+    sections = []
     data = config.get("data")
     if isinstance(data, Mapping):
         sections.append(("data", data))
-
-    training = config.get("training")
-    model_type = "simulation"
-    if isinstance(training, Mapping):
-        model = training.get("model")
-        if isinstance(model, Mapping):
-            data_format = model.get("data_format")
-            if isinstance(data_format, Mapping):
-                model_type = str(data_format.get("type", model_type))
-            inference = model.get("inference")
-            if isinstance(inference, Mapping):
-                sections.append(("training.model.inference", inference))
-            if model_type in _LENSCRAFT_FORMATS:
-                lenscraft_models.append(("training.model", model))
-
-    # Baseline trajectories can use the fixed reference for initial-position
-    # alignment. LensCraft generation is independent of semantic scoring.
-    if model_type not in _LENSCRAFT_FORMATS:
-        reference = config.get("ref_model")
-        if isinstance(reference, Mapping):
-            lenscraft_models.append(("ref_model", reference))
-            inference = reference.get("inference")
-            if isinstance(inference, Mapping):
-                sections.append(("ref_model.inference", inference))
-
-    provenance = {}
-    vocabulary_labels = set()
-    for model_prefix, model in lenscraft_models:
-        module = model.get("module")
+    model = config.get("training", {}).get("model", {})
+    if isinstance(model, Mapping):
+        sections.append(("training.model", model))
         inference = model.get("inference", {})
-        if not isinstance(inference, Mapping):
-            inference = {}
-        normalization = inference.get("camera_memory_normalization")
-        if normalization == "vocabulary":
-            vocabulary_labels.add(f"{model_prefix}.inference.clip_embeddings_cache")
-        saved_path = inference.get("config")
-        # Loading a saved architecture also restores its norm recipe. The YAML
-        # fingerprint alone cannot detect replacement of a vocabulary referenced
-        # by that recipe, particularly when it differs from today's defaults.
-        module_prefix = f"{model_prefix}.module"
-        if saved_path and str(saved_path) not in ("None", "none", "null"):
+        model_type = model.get("data_format", {}).get("type", "simulation")
+        saved_path = inference.get("config") if isinstance(inference, Mapping) else None
+        if model_type in _LENSCRAFT_FORMATS and saved_path not in (None, "", "None"):
+            # The same schema migration as checkpoint loading removes retired
+            # factories before resolving a saved categorical architecture.
+            from omegaconf import OmegaConf
+            from utils.load_lens_craft import categorical_model_configuration
             try:
-                resolved_path = Path(resolve_path(os.path.expanduser(str(saved_path))))
-                if resolved_path.is_file():
-                    from omegaconf import OmegaConf
-
-                    saved = OmegaConf.load(resolved_path)
-                    saved_module = OmegaConf.select(saved, "training.model.module")
-                    if saved_module is None:
-                        saved_module = OmegaConf.select(saved, "ref_model.module")
-                    if saved_module is not None:
-                        # An explicit inference override discards the archived
-                        # recipe before resolving it, just as the loader does.
-                        if normalization is not None and "camera_memory_norms" in saved_module.keys():
-                            del saved_module["camera_memory_norms"]
-                        module = OmegaConf.to_container(saved_module, resolve=True)
-                        module_prefix = f"{model_prefix}.inference.config.module"
-            except (OSError, RuntimeError, TypeError, ValueError) as error:
-                provenance[f"{module_prefix}.savedConfig"] = {
-                    "configuredPath": str(saved_path),
-                    "resolutionError": type(error).__name__,
-                }
-        if isinstance(module, Mapping):
-            module = dict(module)
-            if normalization is not None:
-                module.pop("camera_memory_norms", None)
-            sections.append((module_prefix, module))
-
-    for section_prefix, section in sections:
-        for label, raw_path, include_globs in _iter_configured_input_paths(
-            section, section_prefix
-        ):
+                saved_inference = dict(inference, config=str(resolve_path(os.path.expanduser(str(saved_path)))))
+                module = categorical_model_configuration(
+                    OmegaConf.create(model.get("module", {})), OmegaConf.create(saved_inference))
+                sections.append(("training.model.inference.config.module",
+                                 OmegaConf.to_container(module, resolve=True)))
+            except (OSError, RuntimeError, TypeError, ValueError):
+                # The configuration path itself is still recorded below; the
+                # model loader will report an invalid architecture explicitly.
+                pass
+    provenance = {}
+    for prefix, section in sections:
+        for label, raw_path, include_globs in _iter_configured_input_paths(section, prefix):
             try:
-                # Match the model loader: a relative-path resolver would
-                # otherwise turn ~/bank.pkl into <cwd>/~/bank.pkl.
-                resolved = resolve_path(os.path.expanduser(str(raw_path)))
                 provenance[label] = stat_path_provenance(
-                    resolved, include_globs=include_globs
-                )
-                if (label in vocabulary_labels or
-                        (".camera_memory_norms." in label and label.endswith(".cache_file"))):
-                    # CLIP validates this sidecar before deciding whether its
-                    # cached vocabulary must be rebuilt.
-                    provenance[f"{label}.metadata"] = stat_path_provenance(
-                        f"{resolved}.meta.json"
-                    )
+                    resolve_path(os.path.expanduser(str(raw_path))), include_globs=include_globs)
             except (OSError, RuntimeError, TypeError, ValueError) as error:
-                provenance[label] = {
-                    "configuredPath": str(raw_path),
-                    "resolutionError": type(error).__name__,
-                }
+                provenance[label] = {"configuredPath": str(raw_path),
+                                     "resolutionError": type(error).__name__}
     return provenance
 
 

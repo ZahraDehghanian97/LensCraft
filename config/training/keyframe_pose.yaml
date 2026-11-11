@@ -1,4 +1,4 @@
-# Optional architecture ablation. Train/fine-tune before judging its quality.
+# Optional explicit keyframe pose-query policy for the same categorical model.
 defaults:
   - default
   - _self_

@@ -9,10 +9,6 @@ optimizer:
   lr: 1.0e-5
 lr_scheduler: null
 
-model:
-  module:
-    caption_presence_conditioning: true
-
 validation_conditioning:
   motion_score_weight: 1.0
   rotation_baselines: true
@@ -25,9 +21,9 @@ caption_missingness:
   max_keep_ratio: 0.45
   endpoint_drop_probability: 0.75
   preserve_movement_type: true
-  fill: mean
+  fill: zero
   # Optional JSON {field_names: [...], presence_masks: [[true, false, ...]]}.
-  # Use training annotations only; field order must match CLIP_PARAMETERS.
+  # Use training annotations only; field order must match the ten categorical field names.
   mask_bank_path: null
 
 validation_caption_missingness:

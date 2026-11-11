@@ -13,8 +13,8 @@ from data.ccdm.dataset import collate_fn as ccdm_collate_fn
 def compact_simulation_collate_fn(batch):
     """Keep model inputs and observation provenance while dropping text metadata.
 
-    An opt-in export's availability masks and physical ``geometry_reference``
-    survive compaction, so a placeholder cannot become an observed body pose.
+    Categorical IDs, presence masks, and an opt-in export's availability masks
+    and physical ``geometry_reference`` survive compaction.
     """
     result = collate_fn(batch)
     for key in (

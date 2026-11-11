@@ -8,7 +8,6 @@ NORM_LENSCRAFT_INIT_ITEM = "prompt_generation_norm_lenscraft_init"
 BASELINE_ITEMS = (
     NO_NORM_ITEM,
     NORM_ITEM,
-    NORM_LENSCRAFT_INIT_ITEM,
 )
 
 

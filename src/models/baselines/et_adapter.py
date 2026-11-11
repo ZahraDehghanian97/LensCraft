@@ -25,7 +25,7 @@ class ETAdapter:
         self._next_generation_seed = seed
         self._load_models(config["project_config_dir"], config["dataset_dir"], config["et_type"])
         set_random_seed(seed)
-        from data.et.caption_encoder import CaptionEncoder
+        from models.baselines.text_encoder import CaptionEncoder
 
         self.caption_encoder = CaptionEncoder(device=device)
 

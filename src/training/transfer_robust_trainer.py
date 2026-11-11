@@ -49,14 +49,10 @@ class TransferRobustTrainer(LightningLensCraft):
             raise ValueError('Transfer robustness uses only the simulation train/validation splits')
         if not self._validate_conditioning or not self._validate_caption_missingness:
             raise ValueError('Transfer robustness requires clean conditioning and sparse caption validation')
-        if not getattr(self.model, 'caption_presence_conditioning', False):
-            raise ValueError('Transfer robustness requires caption_presence_conditioning=true')
-        if self.loss_module.losses_list.get('contrastive', 0):
-            raise ValueError('Domain augmentation does not support metadata-based contrastive supervision')
         if not domain_augmentation or not domain_augmentation.get('enabled', True):
             raise ValueError('Transfer robustness requires enabled domain_augmentation')
         self.domain_augmentation = DomainAugmentation(
-            domain_augmentation, self.loss_module.clip_embeddings,
+            domain_augmentation,
         )
         self.validation_domain_augmentation = DomainValidation(
             **dict(validation_domain_augmentation or {}),
@@ -125,7 +121,7 @@ class TransferRobustTrainer(LightningLensCraft):
             view = self.domain_augmentation.apply(batch, sample_seeds=seeds, force_domain=domain)
             camera = view['camera_trajectory']
             padding = view.get('padding_mask')
-            caption = self._prepare_clip_embeddings(view)
+            caption = self._prepare_conditioning(view)
             for mode in TRAINING_MODES:
                 output = self._forward_step(
                     camera, view['subject_trajectory'], view['subject_volume'], caption, padding,

@@ -13,8 +13,6 @@ class CCDMDataset(Dataset):
     def __init__(
         self,
         data_path: str,
-        clip_model_name: str = "openai/clip-vit-base-patch32",
-        embedding_dim: int = 512,
         normalize: bool = True,
         original_seq_len: int = 300,
         hfov_deg: float | None = None,
@@ -22,18 +20,12 @@ class CCDMDataset(Dataset):
         device: str | torch.device | None = None,
         annotations_path: str | None = None,
         sample_indices_path: str | None = None,
-        fill_none_with_mean: bool = True,
     ) -> None:
-        from models.clip_embeddings import CLIPEmbedder
-
         self.data_path = Path(data_path)
         CCDMDataset.get_normalization_parameters(self.data_path.parent)
-        self.embedding_dim = embedding_dim
-        self.clip_model_name = clip_model_name
         self.normalize = normalize
         self.original_seq_len = original_seq_len
         self.sample_indices_path = sample_indices_path
-        self.fill_none_with_mean = fill_none_with_mean
         self.annotations = None
 
         from data.ccdm.convertor import CCDMConvertor
@@ -42,20 +34,16 @@ class CCDMDataset(Dataset):
         self.vfov_deg = projection.vfov_deg
         self.aspect = projection.aspect
 
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.clip_embedder = CLIPEmbedder(model_name=self.clip_model_name, device=self.device)
+        self.device = torch.device(device or "cpu")
         self.padding_masks = []
 
         self._load_camera_trajectory_data()
         if annotations_path is not None:
             self._load_annotations(annotations_path)
-        self._precompute_text_embeddings()
+        self.texts = [" ".join(description) for description in self.text_descriptions]
 
     def _load_annotations(self, annotations_path):
         from annotator.gateway import validate_translation_schema
-        from data.simulation.init_embeddings import initialize_all_clip_embeddings
-        from data.simulation.utils import load_clip_means
-
         rows = json.loads(Path(annotations_path).read_text())
         self.annotations = {}
         for row in rows:
@@ -73,17 +61,20 @@ class CCDMDataset(Dataset):
             # Persisted benchmark annotations retain their original motion aliases.
             # Fresh Gateway translations are checked during preparation; loading
             # older cohorts validates their schema without revising their content.
-            validate_translation_schema({key: row[key] for key in
-                                         ("cinematographyPrompts", "simulationInstructions")})
-        cache_dir = Path(os.environ.get("CLIP_EMBEDDINGS_CACHE_DIR", "."))
-        self.clip_embeddings = initialize_all_clip_embeddings(
-            clip_model_name=self.clip_model_name,
-            cache_file=str(cache_dir / f"clip_embeddings_{self.clip_model_name}_cache.pkl"),
-            embedding_dimension=self.embedding_dim,
-            embedding_mode="default",
-        )
-        self.embedding_means = load_clip_means() if self.fill_none_with_mean else None
+            translation = {key: row[key] for key in ("cinematographyPrompts", "simulationInstructions")}
+            shots = translation["cinematographyPrompts"]
+            shot = shots[0] if isinstance(shots, list) and len(shots) == 1 else None
+            movement = shot.get("movement") if isinstance(shot, dict) else None
+            movement = movement.get("type") if isinstance(movement, dict) else None
+            if isinstance(movement, str) and movement in {"nativePan", "nativeOrbit"}:
+                # The categorical schema adds two explicit native labels.
+                # Validate the remaining stored schema with the historical
+                # validator without mutating the annotation or legacy enum.
+                from copy import deepcopy
 
+                translation = deepcopy(translation)
+                translation["cinematographyPrompts"][0]["movement"]["type"] = None
+            validate_translation_schema(translation)
 
     @staticmethod
     def get_normalization_parameters(data_path: str | Path = None) -> dict[str, torch.Tensor]:
@@ -163,15 +154,6 @@ class CCDMDataset(Dataset):
             self.padding_masks.append(padding_mask)
             self.camera_trajectories[index] = camera_trajectory
 
-    def _precompute_text_embeddings(self) -> None:
-        self.texts = [" ".join(text_description) for text_description in self.text_descriptions]
-        unique_texts = list(dict.fromkeys(self.texts))
-        lookup = {text: i for i, text in enumerate(unique_texts)}
-        with torch.no_grad():
-            embeddings = self.clip_embedder.extract_clip_embeddings(unique_texts).cpu()
-        self.text_embeddings = embeddings[[lookup[text] for text in self.texts]]
-        self.clip_embedder = None
-
     def __len__(self) -> int:
         return len(self.camera_trajectories)
 
@@ -186,43 +168,29 @@ class CCDMDataset(Dataset):
             camera_trajectory, _, _ = CCDMDataset.normalize_item(camera_trajectory, None, None, True)
 
         text = self.texts[index]
-        text_embedding = self.text_embeddings[index]
-
         result = {
             "camera_trajectory": camera_trajectory,
             "subject_trajectory": subject_trajectory,
             "subject_volume": subject_volume,
             "padding_mask": padding_mask,
-            "caption_feat": text_embedding,
             "text_prompts": text,
             "item_id": f"ccdm-{self.source_indices[index]:06d}",
         }
-        if self.annotations is not None:
-            from data.simulation.utils import fix_prompts_and_instructions
+        from data.categorical_conditioning import metadata_from_prompt
 
-            row = self.annotations[result["item_id"]]
-            prompt = row["cinematographyPrompts"][0]
-            instruction = row["simulationInstructions"][0]
-            values = fix_prompts_and_instructions(
-                instruction, prompt, self.clip_embeddings,
-                self.fill_none_with_mean, self.embedding_means,
-            )
-            result.update(zip(("simulation_instruction", "cinematography_prompt",
-                               "prompt_none_mask", "simulation_instruction_parameters",
-                               "cinematography_prompt_parameters"), values))
-            result.update(raw_prompt=prompt, raw_instruction=instruction)
+        row = self.annotations[result["item_id"]] if self.annotations is not None else None
+        prompt = row["cinematographyPrompts"][0] if row is not None else {}
+        instruction = row["simulationInstructions"][0] if row is not None else {}
+        result.update(metadata_from_prompt(prompt, instruction), raw_prompt=prompt, raw_instruction=instruction)
         return result
 
 def collate_fn(batch):
     result = {
         **collate_trajectories(batch),
-        "caption_feat": torch.stack([item["caption_feat"] for item in batch]),
         "text_prompts": [item["text_prompts"] for item in batch],
         "item_ids": [item["item_id"] for item in batch],
     }
-    if "cinematography_prompt" in batch[0]:
-        result.update(collate_structured_conditioning(batch))
-        result["prompt_none_mask"] = torch.stack([item["prompt_none_mask"] for item in batch])
-        result["raw_prompt"] = [item["raw_prompt"] for item in batch]
-        result["raw_instruction"] = [item["raw_instruction"] for item in batch]
+    result.update(collate_structured_conditioning(batch))
+    result["raw_prompt"] = [item["raw_prompt"] for item in batch]
+    result["raw_instruction"] = [item["raw_instruction"] for item in batch]
     return result

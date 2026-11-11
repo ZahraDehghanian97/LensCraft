@@ -40,7 +40,6 @@ class BaseTrainer(L.LightningModule):
         teacher_forcing_schedule: TeacherForcingConfig,
         compile_mode: str = "default",
         compile_enabled: bool = True,
-        use_merged_memory: bool = True,
         moving_avg_window: int = 10,
         conditioning: Optional[Dict[str, Any]] = None,
         caption_missingness: Optional[Dict[str, Any]] = None,
@@ -56,15 +55,14 @@ class BaseTrainer(L.LightningModule):
         self.compile_mode = compile_mode
         self.compiled = not compile_enabled
         self.loss_module = loss_module
-        self.use_merged_memory = use_merged_memory
         self.conditioning = ConditioningPolicy(**dict(conditioning)) if conditioning is not None else None
         self.caption_missingness = (
-            CaptionMissingness(caption_missingness, getattr(loss_module, 'clip_embeddings', None))
+            CaptionMissingness(caption_missingness)
             if caption_missingness is not None and caption_missingness.get('enabled', True) else None
         )
 
         self.moving_avg_window = moving_avg_window
-        self.metric_history = {"ff": [], "sp": [], "re": [], "cl": [], "cy": [], "co": []}
+        self.metric_history = {"ff": [], "sp": [], "re": [], "ce": [], "cy": []}
 
     def setup(self, stage: Optional[str] = None) -> None:
         if not self.compiled:
@@ -187,6 +185,12 @@ class BaseTrainer(L.LightningModule):
             {'caption_presence_mask': effective_caption_mask}
             if decoder_caption is not None else {}
         )
+        # Only keyframe modes pin supplied poses. Reconstruction must still
+        # predict every valid frame, even though its full source is visible.
+        keyframe_kwargs = (
+            {'known_camera_mask': known_mask}
+            if conditioning_mode in ('key_framing', 'key_framing+prompt') else {}
+        )
 
         output = self.model(
             src=model_input,
@@ -210,6 +214,7 @@ class BaseTrainer(L.LightningModule):
             ),
             decode_mode=decode_mode,
             **caption_kwargs,
+            **keyframe_kwargs,
         )
         output['known_mask'] = known_mask
         output['conditioning_mode'] = conditioning_mode or 'scheduled'
@@ -221,8 +226,13 @@ class BaseTrainer(L.LightningModule):
 
         if compute_cycle_embeddings:
             if conditioning_mode is not None:
-                cycle_key_mask = src_key_mask
-                cycle_input = output['reconstructed'].masked_fill(cycle_key_mask[..., None], 0)
+                # Judge the generated path, including filled frames. Reusing
+                # the source observation mask would leave only fixed poses
+                # and remove every decoder prediction from the cycle loss.
+                cycle_key_mask = tgt_key_padding_mask
+                cycle_input = output['reconstructed']
+                if cycle_key_mask is not None:
+                    cycle_input = cycle_input.masked_fill(cycle_key_mask[..., None], 0)
             elif is_training:
                 cycle_input, cycle_key_mask = apply_mask_and_noise(
                     output["reconstructed"],
@@ -260,7 +270,7 @@ class BaseTrainer(L.LightningModule):
         elif stage == "val":
             progress_metrics["ve"] = loss
 
-        metric_keys = {"first_frame": "ff", "speed": "sp", "relative": "re", "clip": "cl", "cycle": "cy", "contrastive": "co"}
+        metric_keys = {"first_frame": "ff", "speed": "sp", "relative": "re", "categorical": "ce", "cycle": "cy"}
         for key, p_key in metric_keys.items():
             if key in loss_dict:
                 current_value = loss_dict[key] if isinstance(loss_dict[key], float) else loss_dict[key].item()

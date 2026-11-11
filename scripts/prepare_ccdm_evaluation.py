@@ -57,7 +57,7 @@ def prepare(data_path, output, sample_count=None, seed=42):
         "unique_captions": len({r["prompt"] for r in rows}),
         "protocol": "Simulation-trained LensCraft cross-dataset evaluation; no CCDM training or checkpoint selection",
         "split_note": "Released data has no official split IDs; this is a newly seeded evaluation cohort",
-        "translation_model": "deepseek/deepseek-v4.1-flash-1017", "reasoning_effort": "low",
+        "translation_model": "meta/muse-ember", "reasoning_effort": "low",
         "native_caption_sha256": {r["id"]: hashlib.sha256(r["prompt"].encode()).hexdigest() for r in rows},
         "pose_assumptions": {"vertical_fov_deg": 45, "aspect": 16 / 9,
                              "stored_screen_y": "positive down",
@@ -87,7 +87,7 @@ def finalize(output, annotations, metadata):
         item_id, text = row["id"], row["prompt"]
         info = provenance[item_id]
         if (info["source_prompt"] != text.strip() or info["schema_hash"] != SCHEMA_HASH
-                or info["requested_model"] != "deepseek/deepseek-v4.1-flash-1017"
+                or info["requested_model"] != "meta/muse-ember"
                 or info["reasoning_effort"] != "low"):
             raise ValueError(f"Translation provenance mismatch: {item_id}")
         validate_translation(translated[item_id])

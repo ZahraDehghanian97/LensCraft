@@ -20,8 +20,12 @@ lr_scheduler:
   base_lr: [0.0003]
 
 # Predeclared 50% pure prompt batches, 50% divided among reference families.
-# Caption omission remains 75% high-level-only and 25% unmodified captions;
+# Caption omission selects 75% high-level-only and 25% dense captions;
 # original / ET-shaped / CCDM-shaped SIM views remain 50% / 25% / 25%.
+# Independently omit speed and its easing alias in 50% of caption conditions.
+caption_missingness:
+  speed_drop_probability: 0.5
+
 conditioning:
   mode_weights:
     prompt_generation: 3.0

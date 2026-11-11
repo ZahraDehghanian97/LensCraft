@@ -3,7 +3,9 @@ import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
 from data.convertor.convertor import convert_to_target
-from data.simulation.utils import structured_conditioning_from_batch
+from data.categorical_conditioning import (
+    conditioning_from_batch, conditioning_presence_from_batch,
+)
 from training.conditioning import ConditioningValidation, TRAINING_MODES
 from training.conditioning_metrics import (
     METRIC_NAMES, conditioning_pose_score, deterministic_caption_shuffle,
@@ -25,7 +27,6 @@ class LightningLensCraft(BaseTrainer):
         compile_mode: str = "default",
         compile_enabled: bool = True,
         dataset_mode: str = 'simulation',
-        use_merged_memory: bool = True,
         decode_mode: str = 'single_step',
         use_cycle_consistency: bool = False,
         conditioning: Optional[Dict[str, Any]] = None,
@@ -43,7 +44,6 @@ class LightningLensCraft(BaseTrainer):
             teacher_forcing_schedule,
             compile_mode,
             compile_enabled,
-            use_merged_memory,
             conditioning=conditioning,
             caption_missingness=caption_missingness,
         )
@@ -61,13 +61,8 @@ class LightningLensCraft(BaseTrainer):
         if self._validate_caption_missingness and self.caption_missingness is None:
             raise ValueError('Sparse caption validation requires enabled caption_missingness')
 
-    def _prepare_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        caption = structured_conditioning_from_batch(batch)
-        if caption is None:
-            caption = batch['caption_feat']
-            if caption.dim() == 2:
-                caption = caption.unsqueeze(0)
-        return caption
+    def _prepare_conditioning(self, batch):
+        return conditioning_from_batch(batch)
 
     def _convert_to_simulation(
         self, batch: Dict[str, Any], source: str
@@ -100,7 +95,8 @@ class LightningLensCraft(BaseTrainer):
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
 
-        caption_embedding = self._prepare_clip_embeddings(batch)
+        caption_embedding = self._prepare_conditioning(batch)
+        caption_presence = conditioning_presence_from_batch(batch)
 
         compute_cycle = self.use_cycle_consistency and self.dataset_mode in (
             'simulation', 'et', 'ccdm'
@@ -116,14 +112,15 @@ class LightningLensCraft(BaseTrainer):
             decode_mode=self.decode_mode,
             compute_cycle_embeddings=compute_cycle,
             conditioning_mode=('prompt_generation' if stage != 'train' and self._validate_conditioning else None),
-            caption_presence_mask=batch.get('prompt_none_mask'),
+            caption_presence_mask=caption_presence,
         )
 
+        loss_batch = dict(batch, prompt_none_mask=caption_presence)
         loss, loss_dict = self.loss_module(
             output,
             camera_trajectory,
             caption_embedding,
-            batch,
+            loss_batch,
             tgt_key_padding_mask
         )
 
@@ -183,7 +180,8 @@ class LightningLensCraft(BaseTrainer):
             return
         camera = batch['camera_trajectory']
         padding = batch.get('padding_mask')
-        caption = self._prepare_clip_embeddings(batch)
+        caption = self._prepare_conditioning(batch)
+        caption_presence = conditioning_presence_from_batch(batch)
         # Stable across epochs and independent of training RNG. Within a fixed
         # distributed sampler layout, each rank gets a disjoint seed interval.
         start = cfg.seed + self._conditioning_sample_offset + self.global_rank * 10**9
@@ -194,7 +192,7 @@ class LightningLensCraft(BaseTrainer):
                 camera, batch['subject_trajectory'], batch['subject_volume'], caption, padding,
                 is_training=False, decode_mode=self.decode_mode, compute_cycle_embeddings=False,
                 conditioning_mode=mode, keyframe_count=count, keyframe_sample_seeds=seeds,
-                caption_presence_mask=batch.get('prompt_none_mask'),
+                caption_presence_mask=caption_presence,
             )
             totals = pose_metric_totals(output['reconstructed'], camera, padding, output['known_mask'])
             for key, pair in totals.items():
@@ -204,7 +202,7 @@ class LightningLensCraft(BaseTrainer):
                 for key, pair in totals.items():
                     self._conditioning_diagnostic_totals[f'rotation_baseline/{name}'][key] += pair
         if cfg.caption_shuffle:
-            shuffled = deterministic_caption_shuffle(caption, batch.get('prompt_none_mask'), start)
+            shuffled = deterministic_caption_shuffle(caption, caption_presence, start)
             if shuffled is not None:
                 shuffled_caption, shuffled_mask = shuffled
                 shuffled_output = self._forward_step(
@@ -260,9 +258,9 @@ class LightningLensCraft(BaseTrainer):
         self._caption_missingness_sample_offset += len(camera)
         output = self._forward_step(
             camera, batch['subject_trajectory'], batch['subject_volume'],
-            self._prepare_clip_embeddings(batch), padding,
+            self._prepare_conditioning(batch), padding,
             is_training=False, decode_mode=self.decode_mode, conditioning_mode='prompt_generation',
-            caption_presence_mask=batch.get('prompt_none_mask'),
+            caption_presence_mask=conditioning_presence_from_batch(batch),
             caption_missingness_seeds=seeds, force_caption_missingness=True,
         )
         totals = pose_metric_totals(output['reconstructed'], camera, padding, output['known_mask'])

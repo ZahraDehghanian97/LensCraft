@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 
-MODEL = "deepseek/deepseek-v4.1-flash-1017"
+MODEL = "meta/muse-ember"
 REASONING_EFFORT = "low"
 # config.yaml -> traj+caption+char -> caption/caption.yaml. ETDataset uses
 # caption_raw.caption, whose raw_caption_dir is ${dataset.dataset_dir}/caption.

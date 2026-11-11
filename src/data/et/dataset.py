@@ -5,32 +5,25 @@ import torch
 from torch.utils.data import Dataset
 
 from data.et.config import STANDARDIZATION_CONFIG_TORCH
-from data.simulation.utils import fix_prompts_and_instructions, load_clip_means
+from data.categorical_conditioning import metadata_from_prompt
 from data.collate_utils import collate_structured_conditioning, collate_trajectories
 
 from .load import load_et_dataset
 
 
 class ETDataset(Dataset):
-    def __init__(self, project_config_dir: str, dataset_dir: str, et_cin_lang_path: str, fill_none_with_mean: bool,
-                 clip_embeddings: Dict, set_name: str, split: str, normalize: bool):
+    def __init__(self, project_config_dir: str, dataset_dir: str, et_cin_lang_path: str,
+                 set_name: str, split: str, normalize: bool = True):
         self.original_dataset = load_et_dataset(
             project_config_dir, dataset_dir, set_name, split)
 
         self.focal_length = self.original_dataset[0]['intrinsics'][0]
-        self.fill_none_with_mean = fill_none_with_mean
-        self.clip_embeddings = clip_embeddings
         self.normalize = normalize
 
         with open(et_cin_lang_path, 'r') as f:
             prompt_data = json.load(f)
 
         self.prompt_lookup = {item['custom_id']: item for item in prompt_data}
-
-        if self.fill_none_with_mean:
-            self.embedding_means = load_clip_means()
-        else:
-            self.embedding_means = None
 
     def __len__(self) -> int:
         return len(self.original_dataset)
@@ -97,14 +90,6 @@ class ETDataset(Dataset):
 
         return camera_trajectory, subject_trajectory, subject_volume
 
-    def _get_average_caption_feat(self, item):
-        caption_feat = item['caption_feat']
-        clip_seq_mask = item['caption_raw']['clip_seq_mask']
-        clip_seq_mask = clip_seq_mask.bool().unsqueeze(0)
-        valid_sum = (caption_feat * clip_seq_mask).sum(dim=1)
-        num_valid_tokens = clip_seq_mask.sum().clamp(min=1)
-        return valid_sum / num_valid_tokens
-
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = self.original_dataset[index]
         item_id = os.path.splitext(item['traj_filename'])[0]
@@ -113,16 +98,7 @@ class ETDataset(Dataset):
         instruction = item_data["simulationInstructions"][0]
         prompt = item_data["cinematographyPrompts"][0]
 
-        (
-            simulation_instruction_tensor,
-            cinematography_prompt_tensor,
-            prompt_none_mask,
-            simulation_instruction_parameters,
-            cinematography_prompt_parameters,
-        ) = fix_prompts_and_instructions(
-            instruction, prompt, self.clip_embeddings,
-            self.fill_none_with_mean, self.embedding_means,
-        )
+        conditioning = metadata_from_prompt(prompt, instruction)
 
         camera_trajectory = item["traj_feat"].permute(1, 0)
         subject_trajectory = item['char_feat'].permute(1, 0)
@@ -132,36 +108,30 @@ class ETDataset(Dataset):
                 camera_trajectory, subject_trajectory, None, False
             )
 
-        caption_feat = self._get_average_caption_feat(item)
-
-        return {
+        result = {
             'camera_trajectory': camera_trajectory,
             'subject_trajectory': subject_trajectory,
             'subject_volume': None,
             'padding_mask': ~item['padding_mask'].to(torch.bool),
-            'caption_feat': caption_feat,
             'intrinsics': torch.tensor(item['intrinsics'], dtype=torch.float32),
-            "simulation_instruction": simulation_instruction_tensor,
-            "cinematography_prompt": cinematography_prompt_tensor,
-            "simulation_instruction_parameters": simulation_instruction_parameters,
-            "cinematography_prompt_parameters": cinematography_prompt_parameters,
-            "prompt_none_mask": prompt_none_mask,
+            **conditioning,
             "raw_prompt": prompt,
             "raw_instruction": instruction,
             'text_prompts': item['caption_raw']['caption'],
             'item_id': os.path.splitext(item['traj_filename'])[0],
         }
+        return result
 
 
 def collate_fn(batch):
-    return {
+    conditioning = collate_structured_conditioning(batch)
+    result = {
         **collate_trajectories(batch),
-        'caption_feat': torch.stack([item['caption_feat'] for item in batch]),
         'intrinsics': torch.stack([item['intrinsics'] for item in batch]),
-        **collate_structured_conditioning(batch),
-        "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
+        **conditioning,
         "raw_prompt": [item["raw_prompt"] for item in batch],
         "raw_instruction": [item["raw_instruction"] for item in batch],
         'text_prompts': [item['text_prompts'] for item in batch],
         'item_ids': [item['item_id'] for item in batch],
     }
+    return result

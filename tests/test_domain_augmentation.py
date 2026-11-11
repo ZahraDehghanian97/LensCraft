@@ -6,29 +6,17 @@ import torch
 
 from data.ccdm.convertor import CCDMConvertor
 from data.et.convertor import ETConvertor
-from data.simulation.constants import NumericFeature
 from data.simulation.convertor import SIMConvertor
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import (
-    CLIP_PARAMETERS, cinematography_struct_parameters, structured_conditioning_from_batch,
+    STRUCTURED_PARAMETERS, cinematography_struct_parameters, structured_conditioning_from_batch,
 )
 from training.domain_augmentation import DomainAugmentation, DomainAugmentationConfig
 
 
 @pytest.fixture
-def vocabulary():
-    result = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        name = 'boolean' if kind is bool else kind.__name__
-        result[name] = {'a': torch.tensor([1., 2., 3., 4.]), 'b': torch.tensor([3., 4., 5., 6.])}
-    return result
-
-
-@pytest.fixture
-def augmentation(vocabulary):
-    return DomainAugmentation({'enabled': True}, vocabulary)
+def augmentation():
+    return DomainAugmentation({'enabled': True})
 
 
 @pytest.fixture
@@ -54,20 +42,19 @@ def batch(monkeypatch):
     padding = torch.tensor([[False, False, False, True], [False] * 4, [False, False, True, True]])
     camera[padding] = 0.
     subject[padding] = 0.
-    fields = len(CLIP_PARAMETERS)
+    fields = len(STRUCTURED_PARAMETERS)
     split = len(cinematography_struct_parameters)
-    caption = torch.arange(fields * 3 * 4, dtype=torch.float64).reshape(fields, 3, 4) / 10
-    metadata = [[(name, 'observed', 0, caption[i, b].clone())
-                 for i, (name, _) in enumerate(CLIP_PARAMETERS)] for b in range(3)]
+    ids = torch.zeros(3, 10, dtype=torch.long)
+    metadata = [[(name, 'observed', 0, None)
+                 for i, (name, _) in enumerate(STRUCTURED_PARAMETERS)] for b in range(3)]
     return {
         'simulation_normalized': True,
         'camera_trajectory': camera,
         'subject_trajectory': subject,
         'subject_volume': volume,
         'padding_mask': padding,
-        'cinematography_prompt': caption[:split],
-        'simulation_instruction': caption[split:],
-        'prompt_none_mask': torch.ones(3, fields, dtype=torch.bool),
+        'cinematography_ids': ids,
+        'prompt_none_mask': torch.ones(3, 10, dtype=torch.bool),
         'cinematography_prompt_parameters': [row[:split] for row in metadata],
         'simulation_instruction_parameters': [row[split:] for row in metadata],
     }
@@ -173,22 +160,24 @@ def test_invalid_captions_have_absent_masks_neutral_tokens_and_missing_metadata(
     metadata = [a + b for a, b in zip(result['cinematography_prompt_parameters'], result['simulation_instruction_parameters'])]
     for name in dropped:
         index = names.index(name)
-        assert not result['prompt_none_mask'][:, index].any(), name
-        torch.testing.assert_close(caption[index], augmentation.unknown_tokens[index].to(caption).expand(3, -1))
+        assert not result['structured_presence_mask'][:, index].any(), name
+        if index < 10:
+            assert torch.count_nonzero(caption[index]) == 0
         assert all(row[index][1:3] == (None, -1) for row in metadata)
     for name in retained:
         index = names.index(name)
-        assert result['prompt_none_mask'][:, index].all(), name
-        torch.testing.assert_close(caption[index], original_caption[index])
+        assert result['structured_presence_mask'][:, index].all(), name
+        if index < 10:
+            torch.testing.assert_close(caption[index], original_caption[index])
 
 
-def test_existing_missing_field_keeps_its_dataset_fill(batch, augmentation):
+def test_existing_missing_field_stays_unknown(batch, augmentation):
     index = augmentation.field_names.index('initial_shotSize')
+    batch['cinematography_ids'][:, index] = -1
     batch['prompt_none_mask'][:, index] = False
-    batch['cinematography_prompt'][index] = 123.
     result = augmentation.apply(batch, force_domain='ccdm')
     assert not result['prompt_none_mask'][:, index].any()
-    torch.testing.assert_close(result['cinematography_prompt'][index], batch['cinematography_prompt'][index])
+    assert (result['cinematography_ids'][:, index] == -1).all()
 
 
 def test_mixed_batch_preserves_originals_exactly(batch, augmentation, monkeypatch):
@@ -196,8 +185,7 @@ def test_mixed_batch_preserves_originals_exactly(batch, augmentation, monkeypatc
     result = augmentation.apply(batch)
     for name in ('camera_trajectory', 'subject_trajectory', 'subject_volume', 'prompt_none_mask'):
         assert torch.equal(result[name][0], batch[name][0])
-    for name in ('cinematography_prompt', 'simulation_instruction'):
-        assert torch.equal(result[name][:, 0], batch[name][:, 0])
+    assert torch.equal(result['cinematography_ids'][0], batch['cinematography_ids'][0])
     assert torch.equal(result['domain_augmentation_view'], torch.tensor([0, 1, 2]))
 
 
@@ -212,8 +200,8 @@ def test_seeded_views_are_partition_invariant_and_do_not_advance_rng(augmentatio
     assert set(full.tolist()) == {0, 1, 2}
 
 
-def test_disabled_and_original_view_do_not_transform_batch(batch, vocabulary, augmentation):
-    for transform in (DomainAugmentation({}, vocabulary), augmentation):
+def test_disabled_and_original_view_do_not_transform_batch(batch, augmentation):
+    for transform in (DomainAugmentation({}), augmentation):
         result = transform.apply(batch, force_domain='original')
         assert not result['domain_augmentation_view'].any()
         for name in batch:

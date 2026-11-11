@@ -1,155 +1,58 @@
+"""LensCraft camera trajectories with one ten-field categorical bottleneck."""
 from typing import Optional, Dict
 
-import pickle
 import torch
-import torch.nn as nn
+from torch import nn
 
 from .encoder import Encoder
 from .decoder import Decoder
-from data.simulation.constants import NumericFeature
-from data.simulation.utils import (
-    CLIP_PARAMETERS,
-    cinematography_struct_size,
-    simulation_struct_size,
+from .categorical_latent import (
+    FIELD_COUNT, TOKEN_WIDTH, SEMANTIC_DIM, categorical_presence, validate_semantic,
 )
 from utils.pytorch3d_transform import (
-    euler_angles_to_matrix,
-    matrix_to_euler_angles,
-    symmetric_orthogonalization,
+    euler_angles_to_matrix, matrix_to_euler_angles, symmetric_orthogonalization,
 )
 
 
 class LensCraft(nn.Module):
+    """Encode and decode ten independent categorical probability distributions.
+
+    Model states have 256 channels by default; the sole camera-conditioning
+    interface has ten 21-channel tokens with 93 valid categorical entries.
+    Missing fields remain zero and impose no decoder constraint.
+    """
+
     def __init__(
         self,
         input_dim: int = 6,
         subject_dim: int = 6,
-        nhead: int = 4,
-        num_encoder_layers: int = 3,
-        num_decoder_layers: int = 3,
-        dim_feedforward: int = 2048,
+        nhead: int = 8,
+        num_encoder_layers: int = 4,
+        num_decoder_layers: int = 4,
+        dim_feedforward: int = 1024,
         dropout_rate: float = 0.1,
         seq_length: int = 30,
-        latent_dim: int = 512,
-        use_merged_memory: bool = False,
-        denormalize_memory: bool = False,
-        camera_memory_norms=None,
+        latent_dim: int = 256,
         keyframe_pose_conditioning: bool = False,
-        caption_presence_conditioning: bool = False,
     ):
-        super(LensCraft, self).__init__()
-
+        super().__init__()
         self.pos_dim = 3
-        self.decoder_output_dim = self.pos_dim + 9   # 3 pos + 9D (svd9d) rotation matrix
-
-        self.num_query_tokens = cinematography_struct_size + simulation_struct_size
-        self.memory_tokens_count = self.num_query_tokens
-
-        slot_position = torch.arange(self.num_query_tokens, dtype=torch.float32)
-        slot_frequency = torch.exp(
-            torch.arange(0, latent_dim, 2, dtype=torch.float32)
-            * (-torch.log(torch.tensor(10000.0)) / latent_dim)
-        )
-        slot_phase = slot_position[:, None] * slot_frequency[None, :]
-        slot_encoding = torch.zeros(
-            self.num_query_tokens, 1, latent_dim, dtype=torch.float32
-        )
-        slot_encoding[:, 0, 0::2] = torch.sin(slot_phase)
-        slot_encoding[:, 0, 1::2] = torch.cos(
-            slot_phase[:, : slot_encoding[:, 0, 1::2].shape[-1]]
-        )
-        self.register_buffer(
-            "structured_slot_encoding", slot_encoding, persistent=False
-        )
-        # Explicit unknown values live in embedding space, independently of
-        # the dataset's mean/zero fill. A fixed code adds no checkpoint weights
-        # and keeps old state_dicts loadable; learning its meaning requires
-        # training with caption_presence_conditioning enabled.
-        missing_encoding = torch.ones(latent_dim, dtype=torch.float32)
-        missing_encoding[1::2] = -1
-        self.register_buffer(
-            "missing_caption_encoding", missing_encoding / latent_dim ** 0.5,
-            persistent=False,
-        )
-
+        self.decoder_output_dim = 12
+        self.semantic_dim = SEMANTIC_DIM
+        self.semantic_token_width = TOKEN_WIDTH
+        self.num_query_tokens = FIELD_COUNT
+        self.memory_tokens_count = FIELD_COUNT
+        self.keyframe_pose_conditioning = keyframe_pose_conditioning
         self.subject_trajectory_projection = nn.Linear(subject_dim, latent_dim)
         self.subject_volume_projection = nn.Linear(3, latent_dim)
-
         self.encoder = Encoder(
-            input_dim,
-            latent_dim,
-            nhead,
-            num_encoder_layers,
-            dim_feedforward,
-            dropout_rate,
-            self.num_query_tokens
+            input_dim, latent_dim, nhead, num_encoder_layers,
+            dim_feedforward, dropout_rate, FIELD_COUNT,
         )
-
         self.decoder = Decoder(
-            self.decoder_output_dim,
-            latent_dim,
-            nhead,
-            num_decoder_layers,
-            dim_feedforward,
-            dropout_rate,
-            seq_length
+            self.decoder_output_dim, latent_dim, nhead, num_decoder_layers,
+            dim_feedforward, dropout_rate, seq_length,
         )
-
-        self.embedding_merger = nn.Sequential(
-            nn.Linear(self.num_query_tokens * latent_dim, latent_dim),
-            nn.ReLU(),
-            nn.Linear(latent_dim, latent_dim)
-        )
-
-        self.use_merged_memory = use_merged_memory
-        self.denormalize_memory = denormalize_memory
-        self.keyframe_pose_conditioning = keyframe_pose_conditioning
-        self.caption_presence_conditioning = caption_presence_conditioning
-        self.register_buffer("camera_memory_norms", None, persistent=False)
-        self.set_camera_memory_norms(camera_memory_norms)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
-        if self.denormalize_memory:
-            self.embedding_means, self.embedding_stds = self.load_means_and_stds()
-        self.memory_feature_types = []
-        for _, value_type in CLIP_PARAMETERS:
-            if isinstance(value_type, NumericFeature):
-                self.memory_feature_types.append(None)
-            elif value_type is bool:
-                self.memory_feature_types.append("boolean")
-            else:
-                self.memory_feature_types.append(value_type.__name__)
-
-    def set_camera_memory_norms(self, norms):
-        """Configure camera-to-decoder calibration; None restores raw memory."""
-        if norms is None:
-            self.camera_memory_norms = None
-            return
-        if self.use_merged_memory or self.denormalize_memory:
-            raise ValueError(
-                "Camera memory calibration requires unmerged, non-denormalized memory; "
-                "use camera_memory_norms=null and inference.camera_memory_normalization=none "
-                "for legacy merged/denormalized checkpoints"
-            )
-        norms = torch.as_tensor(norms, dtype=torch.float32,
-                                device=self.structured_slot_encoding.device).detach().clone()
-        if (norms.shape != (self.num_query_tokens,)
-                or not torch.isfinite(norms).all() or (norms <= 0).any()):
-            raise ValueError(
-                f"camera_memory_norms must contain {self.num_query_tokens} finite positive values"
-            )
-        self.camera_memory_norms = norms
-
-    def _calibrate_camera_memory(self, memory):
-        if self.camera_memory_norms is None:
-            return memory
-        if memory.ndim != 3 or memory.shape[0] != self.num_query_tokens:
-            raise ValueError("Camera memory calibration requires every structured token")
-        values = memory.float()
-        lengths = values.norm(dim=-1, keepdim=True)
-        calibrated = values / lengths.clamp_min(1e-6)
-        calibrated = calibrated * self.camera_memory_norms.float()[:, None, None]
-        calibrated = torch.where(lengths > 1e-6, calibrated, torch.zeros_like(calibrated))
-        return calibrated.to(dtype=memory.dtype)
 
     def _euler6_to_mat12(self, traj6: torch.Tensor) -> torch.Tensor:
         pos = traj6[..., :3]
@@ -214,6 +117,58 @@ class LensCraft(nn.Module):
         reconstructed = self._mat12_to_euler6(recon_matrix)
         return reconstructed, recon_matrix
 
+    def _camera_masks(self, src, source_mask, padding_mask, known_camera_mask):
+        """Separate hidden source context from explicitly fixed camera poses.
+
+        A supplied known-camera mask is authoritative: only those poses may
+        enter the encoder, and temporal padding can never become a constraint.
+        Without it, source visibility retains its usual reconstruction meaning.
+        """
+        def normalize(mask, name):
+            if mask is None:
+                return None
+            if (not torch.is_tensor(mask) or mask.dtype != torch.bool
+                    or mask.shape != src.shape[:2]):
+                raise ValueError(f"{name} must be boolean [batch, frames]")
+            return mask.to(device=src.device)
+
+        source_mask = normalize(source_mask, 'src_key_mask')
+        padding = normalize(padding_mask, 'padding_mask')
+        known = normalize(known_camera_mask, 'known_camera_mask')
+        if padding is None:
+            padding = torch.zeros(src.shape[:2], device=src.device, dtype=torch.bool)
+        if known is None:
+            known = torch.zeros_like(padding)
+        else:
+            known = known & ~padding
+            if source_mask is not None and ((source_mask != ~known) & ~padding).any():
+                raise ValueError("src_key_mask must agree with known_camera_mask on valid frames")
+            source_mask = ~known
+            supplied = src.masked_fill(~known.unsqueeze(-1), 0)
+            if not torch.isfinite(supplied).all():
+                raise ValueError("Known camera poses must contain only finite values")
+
+        source_mask = padding if source_mask is None else source_mask | padding
+        return source_mask, known
+
+    def _constrain_trajectory(self, raw, reconstructed, rotation_matrix, src, known):
+        """Pin each emitted representation, preserving the original Euler values.
+
+        Merge after projection/conversion so equivalent Euler representations
+        (including angles outside [-pi, pi]) stay exactly as supplied. Geometry
+        losses see the same fixed poses as inference and cycle reconstruction.
+        """
+        supplied = src.masked_fill(~known.unsqueeze(-1), 0)
+        # Autocast must not round a supplied rotation while forming its matrix.
+        with torch.autocast(device_type=src.device.type, enabled=False):
+            supplied_matrix = self._euler6_to_mat12(supplied)
+        mask = known.unsqueeze(-1)
+        return (
+            torch.where(mask, supplied_matrix, raw),
+            torch.where(mask, supplied, reconstructed),
+            torch.where(mask, supplied_matrix, rotation_matrix),
+        )
+
     def prepare_embedding_memory_for_decoder(
         self,
         camera_embedding: Optional[torch.Tensor] = None,
@@ -221,155 +176,74 @@ class LensCraft(nn.Module):
         teacher_forcing_ratio: float = 0.0,
         mask_memory_prob: float = 0.0,
         caption_presence_mask: Optional[torch.Tensor] = None,
+        caption_edit_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if caption_embedding is not None:
-            caption_embedding = self._prepare_caption_tokens(
-                caption_embedding, caption_presence_mask,
-                condition_presence=(camera_embedding is None or teacher_forcing_ratio > 0),
-            )
+        """Compose semantic probabilities without adding attention field codes.
 
-        if camera_embedding is None:
-            if caption_embedding is None:
-                raise ValueError("camera_embedding and caption_embedding cannot both be None")
-            memory = caption_embedding
-            if self.use_merged_memory:
-                memory = self._merge_token_memory(memory)
-            if self.denormalize_memory:
-                memory = self._denormalize_features(memory)
-            if not self.use_merged_memory:
-                # Slot identity is model-space information, so add it after
-                # any feature-space denormalization rather than scaling it by
-                # the statistics of the serialized value.
-                memory = self._add_structured_slot_identity(memory)
-            return self._apply_memory_mask(memory, mask_memory_prob)
+        Unknown caption fields provide no constraint. A partial blend retains
+        available camera information there; caption-only generation excludes
+        them entirely. Field identity is added only inside the decoder.
+        """
+        if not 0 <= teacher_forcing_ratio <= 1 or not 0 <= mask_memory_prob <= 1:
+            raise ValueError("Categorical mixing and masking ratios must be in [0,1]")
+        reference = camera_embedding if camera_embedding is not None else caption_embedding
+        if reference is None:
+            raise ValueError("camera_embedding and caption_embedding cannot both be None")
+        if (not torch.is_tensor(reference) or reference.ndim != 3
+                or reference.shape[0] != FIELD_COUNT or reference.shape[-1] != TOKEN_WIDTH):
+            raise ValueError("Categorical memory must have shape [10,batch,21]")
+        batch_size = reference.shape[1]
 
-        if caption_embedding is None or teacher_forcing_ratio < 1.0:
-            camera_embedding = self._calibrate_camera_memory(camera_embedding)
+        def field_mask(value, name):
+            if (not torch.is_tensor(value) or value.dtype != torch.bool
+                    or value.shape != (batch_size, FIELD_COUNT)):
+                raise ValueError(f"{name} must be boolean [batch,10]")
+            return value.to(device=reference.device)
 
-        if self.use_merged_memory:
-            memory = self._merge_token_memory(camera_embedding)
-            if caption_embedding is not None:
-                caption_embedding = self._merge_token_memory(caption_embedding)
-        else:
-            memory = camera_embedding[:self.memory_tokens_count]
-
-        if teacher_forcing_ratio > 0 and caption_embedding is not None:
-            memory = self._blend_caption(memory, caption_embedding, teacher_forcing_ratio)
-
-        if not self.use_merged_memory:
-            # Adding one shared slot code after blending preserves the exact
-            # field identity for camera-only, caption-only, and mixed memory.
-            memory = self._add_structured_slot_identity(memory)
-
-        return self._apply_memory_mask(memory, mask_memory_prob)
-
-    def _add_structured_slot_identity(self, memory):
-        if memory.shape[0] == 1:
-            # A single pooled free-text token has no structured field slot.
-            return memory
-        if memory.shape[0] != self.num_query_tokens:
-            raise ValueError(
-                f"Cannot add slot identity to {memory.shape[0]} tokens; "
-                f"expected 1 or {self.num_query_tokens}"
-            )
-        return memory + self.structured_slot_encoding.to(
-            device=memory.device, dtype=memory.dtype
-        )
-
-    def _prepare_caption_tokens(self, caption_embedding, caption_presence_mask=None,
-                                *, condition_presence=True):
-        if caption_embedding.ndim != 3:
-            raise ValueError("caption_embedding must have shape [fields, batch, embedding]")
-        token_count = caption_embedding.shape[0]
-        if token_count not in (1, cinematography_struct_size, self.num_query_tokens):
-            raise ValueError(
-                f"Expected 1, {cinematography_struct_size}, or "
-                f"{self.num_query_tokens} caption tokens; got {token_count}"
-            )
-        use_presence = self.caption_presence_conditioning and condition_presence
-        presence = None
-        if use_presence:
-            if caption_presence_mask is None:
-                if token_count != 1:
-                    raise ValueError(
-                        "caption_presence_conditioning requires caption_presence_mask "
-                        "for structured captions; pass the dataset prompt_none_mask"
-                    )
-            else:
-                if (not torch.is_tensor(caption_presence_mask)
-                        or caption_presence_mask.dtype != torch.bool
-                        or caption_presence_mask.shape != (caption_embedding.shape[1], token_count)):
-                    raise ValueError("caption_presence_mask must be boolean [batch, caption fields]")
-                presence = caption_presence_mask.to(device=caption_embedding.device)
-        if token_count == cinematography_struct_size:
-            neutral = caption_embedding.new_zeros(
-                self.num_query_tokens - token_count,
-                *caption_embedding.shape[1:],
-            )
-            caption_embedding = torch.cat([caption_embedding, neutral], dim=0)
+        def semantic(value, presence=None):
+            if (not torch.is_tensor(value) or value.shape != reference.shape
+                    or value.device != reference.device):
+                raise ValueError("Categorical memories must have matching shape and device")
             if presence is not None:
-                absent = torch.zeros(
-                    presence.shape[0], self.num_query_tokens - token_count,
-                    dtype=torch.bool, device=presence.device,
-                )
-                presence = torch.cat([presence, absent], dim=1)
-        if presence is not None:
-            caption_embedding = torch.where(
-                presence.T[..., None], caption_embedding,
-                self.missing_caption_encoding.to(caption_embedding)[None, None, :],
-            )
-        return caption_embedding
+                # Unspecified fillers may contain NaNs; remove them before
+                # validation or arithmetic, without modifying caller inputs.
+                value = value.masked_fill(~presence.T[..., None], 0)
+            validate_semantic(value, atol=(5e-3 if value.dtype in (torch.float16, torch.bfloat16) else 1e-5))
+            return value
 
-    def _merge_token_memory(self, memory):
-        if memory.shape[0] == 1:
-            return memory
-        if memory.shape[0] != self.num_query_tokens:
-            raise ValueError(
-                f"Cannot merge {memory.shape[0]} tokens; expected "
-                f"{self.num_query_tokens}"
-            )
-        batch_size = memory.shape[1]
-        flat = memory.transpose(0, 1).reshape(batch_size, -1)
-        return self.embedding_merger(flat).unsqueeze(0)
+        caption_presence = None
+        if caption_presence_mask is not None:
+            caption_presence = field_mask(caption_presence_mask, "caption_presence_mask")
 
-    def _denormalize_features(self, memory):
-        memory = memory.clone()
-        for i in range(memory.shape[0]):
-            if i >= len(self.memory_feature_types):
-                continue
-            feature = self.memory_feature_types[i]
-            if (
-                feature is None
-                or feature not in self.embedding_means
-                or feature not in self.embedding_stds
-            ):
-                continue
-            mean, std = self.get_mean_and_std(feature)
-            memory[i] = memory[i] * std + mean
+        if caption_edit_mask is not None:
+            if camera_embedding is None or caption_embedding is None:
+                raise ValueError("caption_edit_mask requires camera and caption memories")
+            edits = field_mask(caption_edit_mask, "caption_edit_mask")
+            if caption_presence is not None and (edits & ~caption_presence).any():
+                raise ValueError("caption_edit_mask must be a subset of caption_presence_mask")
+            camera = semantic(camera_embedding)
+            caption = semantic(caption_embedding, edits)
+            if (edits & ~categorical_presence(caption)).any():
+                raise ValueError("Edited fields must contain a supplied categorical distribution")
+            memory = torch.where(edits.T[..., None], caption, camera)
+        elif camera_embedding is None or (caption_embedding is not None and teacher_forcing_ratio == 1):
+            memory = semantic(caption_embedding, caption_presence)
+        elif caption_embedding is None or teacher_forcing_ratio == 0:
+            memory = semantic(camera_embedding)
+        else:
+            camera = semantic(camera_embedding)
+            caption = semantic(caption_embedding, caption_presence)
+            # Normalize by available-field mass so missing zero captions do
+            # not turn a valid distribution into a field summing below one.
+            camera_weight = (1 - teacher_forcing_ratio) * categorical_presence(camera).T[..., None]
+            caption_weight = teacher_forcing_ratio * categorical_presence(caption).T[..., None]
+            total_weight = camera_weight + caption_weight
+            denominator = torch.where(total_weight > 0, total_weight, torch.ones_like(total_weight))
+            memory = (camera_weight * camera + caption_weight * caption) / denominator
+        if mask_memory_prob > 0:
+            keep = torch.rand(FIELD_COUNT, device=memory.device) > mask_memory_prob
+            memory = memory.masked_fill(~keep[:, None, None], 0)
         return memory
-
-    def _blend_caption(self, memory, caption_embedding, ratio):
-        if self.denormalize_memory:
-            memory = self._denormalize_features(memory)
-            caption_embedding = self._denormalize_features(caption_embedding)
-
-        if ratio >= 1.0:
-            # Besides documenting the caption-only evaluation contract, this
-            # avoids retaining a numerical/data dependency on ground-truth
-            # camera memory through ``0 * memory``.
-            return caption_embedding
-        if ratio <= 0.0:
-            return memory
-
-        # A true convex blend makes the scheduled ratio deterministic and
-        # gives validation the same conditioning objective as training.
-        return (1.0 - ratio) * memory + ratio * caption_embedding
-
-    def _apply_memory_mask(self, memory, mask_memory_prob):
-        if mask_memory_prob <= 0.0:
-            return memory
-        keep = torch.rand(memory.shape[0], device=memory.device) > mask_memory_prob
-        return memory * keep.float().unsqueeze(1).unsqueeze(2)
 
     def forward(
         self,
@@ -385,12 +259,24 @@ class LensCraft(nn.Module):
         mask_memory_prob: float = 0.0,
         decode_mode: str = 'single_step',
         caption_presence_mask: Optional[torch.Tensor] = None,
+        known_camera_mask: Optional[torch.Tensor] = None,
+        caption_edit_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
+        editing = caption_edit_mask is not None
+        if editing:
+            if src is None or caption_embedding is None:
+                raise ValueError("caption_edit_mask requires source camera trajectory and caption_embedding")
+            if known_camera_mask is not None:
+                raise ValueError("caption_edit_mask cannot be combined with known_camera_mask")
         self._validate_pose_decode_mode(decode_mode)
+        constrain_camera = known_camera_mask is not None
+        camera_source_mask, known_camera_mask = self._camera_masks(
+            src, src_key_mask, tgt_key_padding_mask, known_camera_mask
+        )
         subject_trajectory, subject_volume = self._prepare_subject_inputs(
             src, subject_trajectory, subject_volume
         )
-        if self.keyframe_pose_conditioning and tgt_key_padding_mask is not None:
+        if tgt_key_padding_mask is not None:
             subject_trajectory = subject_trajectory.masked_fill(
                 tgt_key_padding_mask.to(device=subject_trajectory.device, dtype=torch.bool).unsqueeze(-1), 0
             )
@@ -400,35 +286,23 @@ class LensCraft(nn.Module):
         subject_volume_embedding = self.subject_volume_projection(subject_volume)
         subject_embedding = torch.cat([subject_trajectory_embedding, subject_volume_embedding], 1)
 
-        # Temporal padding is never valid source-camera context.  Treat a
-        # caller-provided source mask as an additional mask (for example,
-        # keyframing), while keeping the subject stream masked only by real
-        # temporal padding.
-        camera_source_mask = src_key_mask
-        if tgt_key_padding_mask is not None:
-            padding_mask = tgt_key_padding_mask.to(
-                device=src.device, dtype=torch.bool
-            )
-            camera_source_mask = (
-                padding_mask
-                if camera_source_mask is None
-                else camera_source_mask.to(
-                    device=src.device, dtype=torch.bool
-                ) | padding_mask
-            )
-
-        pose_inputs = self._known_camera_pose_inputs(
+        pose_inputs = {} if (
+            editing or not constrain_camera
+        ) else self._known_camera_pose_inputs(
             src, camera_source_mask, caption_embedding, memory_teacher_forcing_ratio
         )
-        encoder_src = src
-        if self.keyframe_pose_conditioning and camera_source_mask is not None:
-            encoder_src = src.masked_fill(
-                camera_source_mask.to(device=src.device, dtype=torch.bool).unsqueeze(-1), 0
-            )
-        camera_embedding = self.encoder(
-            encoder_src,
-            subject_embedding,
-            camera_source_mask,
+        # Sanitize before projection/attention: even masked NaNs otherwise
+        # contaminate the encoder, including when direct pose queries are off.
+        encoder_src = src.masked_fill(camera_source_mask.unsqueeze(-1), 0)
+        if constrain_camera and decode_mode == 'autoregressive':
+            with torch.autocast(device_type=src.device.type, enabled=False):
+                fixed_poses = self._euler6_to_mat12(encoder_src)
+            pose_inputs = {
+                'known_camera_poses': fixed_poses,
+                'known_pose_mask': known_camera_mask,
+            }
+        camera_embedding, embedding_logits = self.encoder.encode_with_logits(
+            encoder_src, subject_embedding, camera_source_mask,
             subject_key_padding_mask=tgt_key_padding_mask,
         )
 
@@ -438,6 +312,7 @@ class LensCraft(nn.Module):
             teacher_forcing_ratio=memory_teacher_forcing_ratio,
             mask_memory_prob=mask_memory_prob,
             caption_presence_mask=caption_presence_mask,
+            caption_edit_mask=caption_edit_mask,
         )
 
         reconstructed_raw = self.decoder(
@@ -448,20 +323,25 @@ class LensCraft(nn.Module):
             teacher_forcing_ratio=trajectory_teacher_forcing_ratio,
             tgt_key_padding_mask=tgt_key_padding_mask,
             feedback_transform=self._project_svd9d,
+            memory_presence_mask=categorical_presence(memory),
             **pose_inputs,
         )
         reconstructed, recon_matrix = self._finalize_trajectory(reconstructed_raw)
+        if constrain_camera:
+            reconstructed_raw, reconstructed, recon_matrix = self._constrain_trajectory(
+                reconstructed_raw, reconstructed, recon_matrix, src, known_camera_mask
+            )
 
         output = {
             'subject_embedding': subject_embedding,
             'embeddings': camera_embedding,
             'reconstructed': reconstructed,                 # euler from valid SO(3): cycle / inference
-            'reconstructed_raw_matrix': reconstructed_raw,  # raw matrices for the target auxiliary loss
+            'reconstructed_raw_matrix': reconstructed_raw,  # decoder matrices with exact keyframe constraints
             'reconstructed_rot_matrix': recon_matrix,       # projected SO(3) geometry for trajectory losses
+            'known_camera_mask': known_camera_mask,
+            'embedding_logits': embedding_logits,
         }
 
-        if self.use_merged_memory:
-            output['cls_embedding'] = memory[0]
         if self.keyframe_pose_conditioning:
             output['known_pose_mask'] = pose_inputs.get(
                 'known_pose_mask', torch.zeros(src.shape[:2], device=src.device, dtype=torch.bool)
@@ -481,8 +361,32 @@ class LensCraft(nn.Module):
         padding_mask: Optional[torch.Tensor] = None,
         decode_mode: str = 'single_step',
         caption_presence_mask: Optional[torch.Tensor] = None,
+        known_camera_mask: Optional[torch.Tensor] = None,
+        caption_edit_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
+        """Generate poses, optionally fixing arbitrary full camera keyframes.
+
+        ``known_camera_mask`` is boolean [batch, frames], with True at supplied
+        poses in ``camera_trajectory``. Unknown poses may contain NaN fillers.
+        This mask also controls source visibility; if ``src_key_mask`` is given
+        it must agree (True means hidden there). Padding is never preserved.
+        Omitting the known mask retains predictive reconstruction/text modes.
+
+        ``caption_edit_mask`` selects caption fields per example, replacing
+        only those slots of encoded ``camera_trajectory``. It overrides the
+        scalar memory ratio.
+        Unselected caption fillers are ignored, and direct pose conditioning
+        is bypassed so source poses can change. Fixed keyframes are a separate
+        mode and cannot be combined with an edit mask.
+        """
+        if caption_edit_mask is not None:
+            if camera_trajectory is None or caption_embedding is None:
+                raise ValueError("caption_edit_mask requires camera_trajectory and caption_embedding")
+            if known_camera_mask is not None:
+                raise ValueError("caption_edit_mask cannot be combined with known_camera_mask")
         self._validate_pose_decode_mode(decode_mode)
+        if known_camera_mask is not None and camera_trajectory is None:
+            raise ValueError("known_camera_mask requires camera_trajectory")
         with torch.no_grad():
             device = next(self.parameters()).device
 
@@ -533,11 +437,13 @@ class LensCraft(nn.Module):
                     tgt_key_padding_mask=padding_mask,
                     decode_mode=decode_mode,
                     caption_presence_mask=caption_presence_mask,
+                    known_camera_mask=known_camera_mask,
+                    caption_edit_mask=caption_edit_mask,
                 )
 
             # If there is no camera trajectory, use only the decoder
             else:
-                if self.keyframe_pose_conditioning and padding_mask is not None:
+                if padding_mask is not None:
                     subject_trajectory = subject_trajectory.masked_fill(
                         padding_mask.to(dtype=torch.bool).unsqueeze(-1), 0
                     )
@@ -564,6 +470,7 @@ class LensCraft(nn.Module):
                     tgt_key_padding_mask=padding_mask,
                     teacher_forcing_ratio=0.0,
                     feedback_transform=self._project_svd9d,
+                    memory_presence_mask=categorical_presence(memory),
                 )
                 reconstructed, recon_matrix = self._finalize_trajectory(reconstructed_raw)
 
@@ -571,13 +478,15 @@ class LensCraft(nn.Module):
                     'reconstructed': reconstructed,
                     'reconstructed_raw_matrix': reconstructed_raw,
                     'reconstructed_rot_matrix': recon_matrix,
+                    'known_camera_mask': torch.zeros(
+                        reconstructed.shape[:2], device=reconstructed.device, dtype=torch.bool
+                    ),
                 }
                 if self.keyframe_pose_conditioning:
                     output['known_pose_mask'] = torch.zeros(
                         reconstructed.shape[:2], device=reconstructed.device, dtype=torch.bool
                     )
                 return output
-
 
     def embed_trajectory(
         self,
@@ -592,38 +501,20 @@ class LensCraft(nn.Module):
             subject_trajectory, subject_volume = self._prepare_subject_inputs(
                 camera_trajectory, subject_trajectory, subject_volume
             )
+            effective_subject_mask = subject_key_padding_mask
+            subject_trajectory = subject_trajectory.to(device)
+            if effective_subject_mask is not None:
+                subject_trajectory = subject_trajectory.masked_fill(
+                    effective_subject_mask.to(device=device, dtype=torch.bool)[..., None], 0,
+                )
             subject_embedding = torch.cat([
-                self.subject_trajectory_projection(subject_trajectory.to(device)),
+                self.subject_trajectory_projection(subject_trajectory),
                 self.subject_volume_projection(subject_volume.to(device)),
             ], 1)
             camera_embedding = self.encoder(
                 camera_trajectory.to(device),
                 subject_embedding,
                 src_key_mask,
-                subject_key_padding_mask=(
-                    src_key_mask
-                    if subject_key_padding_mask is None
-                    else subject_key_padding_mask
-                ),
+                subject_key_padding_mask=effective_subject_mask,
             )
             return camera_embedding[:self.memory_tokens_count]
-
-    def load_means_and_stds(self):
-        with open("embedding_means.pkl", 'rb') as f:
-            embedding_means_raw = pickle.load(f)
-        with open("embedding_stds.pkl", "rb") as f:
-            embedding_stds_raw = pickle.load(f)
-
-        embedding_means = {}
-        embedding_stds = {}
-        for feature, value in embedding_means_raw.items():
-            embedding_means[feature] = torch.tensor(value, device=self.device)
-
-        for feature, value in embedding_stds_raw.items():
-            embedding_stds[feature] = torch.tensor(value, device=self.device)
-
-        return embedding_means, embedding_stds
-
-
-    def get_mean_and_std(self, feature):
-        return self.embedding_means[feature], self.embedding_stds[feature]

@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--input", type=Path, help="JSON array or JSONL with {id, prompt} rows")
     parser.add_argument("--output", type=Path, help="Write conditioning JSON; batch outputs are keyed by input id")
     parser.add_argument("--metadata-output", type=Path, help="Write translation provenance separately")
-    parser.add_argument("--model", help="Gateway provider/model ID; default AI_GATEWAY_MODEL or deepseek/deepseek-v4.1-flash-1017")
+    parser.add_argument("--model", help="Gateway provider/model ID; default AI_GATEWAY_MODEL or meta/muse-ember")
     parser.add_argument("--env-file", type=Path, default=Path(__file__).resolve().parents[1] / ".env")
     parser.add_argument("--cache-dir", type=Path, help="Optional resumable cache, keyed by prompt/model/schema/settings")
     parser.add_argument("--workers", type=int, default=4, help="Concurrent batch requests (default 4)")

@@ -8,12 +8,12 @@ environment variables. The key is never written to annotations or provenance.
 ```bash
 python src/translate_prompt.py \
   --prompt 'The camera trucks right while the character remains stationary.' \
-  --model deepseek/deepseek-v4.1-flash-1017 \
+  --model meta/muse-ember \
   --output outputs/prompt.json \
   --metadata-output outputs/prompt.metadata.json
 ```
 
-The default model is `deepseek/deepseek-v4.1-flash-1017`.
+The default model is `meta/muse-ember`.
 Available models are listed in the
 [Gateway model catalog](https://ai-gateway.vercel.sh/v1/models).
 `--model` or `AI_GATEWAY_MODEL` can explicitly select another Gateway model ID.

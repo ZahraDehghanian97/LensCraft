@@ -19,7 +19,6 @@ def load_module(name, relative_path):
 
 caption = load_module("human_caption", "src/data/simulation/caption.py")
 runner = load_module("human_paper_runner", "scripts/run_paper_evaluation.py")
-ablation = load_module("human_ablation_runner", "scripts/run_ablation_study.py")
 
 
 class HumanMotionCaptionTests(unittest.TestCase):
@@ -82,14 +81,13 @@ class HumanMotionCaptionTests(unittest.TestCase):
         self.assertIn("transitioning from a full shot to a close-up", first)
         self.assertIn("repositioning from left side to center of the frame", first)
 
-    def test_both_evaluation_runners_include_all_human_motion_in_dynamic_cohort(self):
-        self.assertEqual(runner.COHORTS, ablation.COHORTS)
+    def test_evaluation_runner_includes_all_human_motion_in_dynamic_cohort(self):
         self.assertEqual(runner.COHORTS["static"], ["static"])
         self.assertTrue(set(self.MOTIONS).issubset(runner.COHORTS["dynamic"]))
         self.assertNotIn("static", runner.COHORTS["dynamic"])
         args = runner.parse_args([
             "--dataset-path", "/tmp/human-eval/data", "--lenscraft-checkpoint", "/tmp/human-eval/model.ckpt",
-            "--lenscraft-config", "/tmp/human-eval/config.yaml", "--clatr-checkpoint", "/tmp/human-eval/clatr.ckpt",
+            "--lenscraft-config", "/tmp/human-eval/config.yaml", "--semantic-evaluator-checkpoint", "/tmp/human-eval/evaluator.ckpt", "--clatr-checkpoint", "/tmp/human-eval/clatr.ckpt",
             "--output-dir", "/tmp/human-eval/output",
         ])
         for stage in runner.build_stages(args):
@@ -102,7 +100,7 @@ class HumanMotionCaptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             args = runner.parse_args([
                 "--dataset-path", temporary, "--lenscraft-checkpoint", temporary + "/model.ckpt",
-                "--lenscraft-config", temporary + "/config.yaml", "--clatr-checkpoint", temporary + "/clatr.ckpt",
+                "--lenscraft-config", temporary + "/config.yaml", "--semantic-evaluator-checkpoint", temporary + "/evaluator.ckpt", "--clatr-checkpoint", temporary + "/clatr.ckpt",
                 "--output-dir", temporary,
             ])
             stage = next(item for item in runner.build_stages(args)

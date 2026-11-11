@@ -54,7 +54,8 @@ Model conditions retain subject XYZ and the primary motion type. The optional
 `movementSpeed: "unavailable"` declaration also hides the diagnostic speed
 token; earlier declarations without it retain supplied speed. Subject
 Euler angles become zero placeholders, dimensions become the ET adapter's
-default, and all 36 technical plus eight endpoint tokens become absent.
+default, and all 36 technical metadata fields plus eight endpoint categories
+become absent.
 `subject_orientation_available` and `subject_dimensions_available` are false;
 the current core model does not interpret these flags as a learned cue.
 The generator's optional `observedMotionText` supplies the sparse text caption.
@@ -178,14 +179,13 @@ paths to the configured target length instead of truncating them.
    repo's OpenCV-style standard 4×4 by negating rotation columns 1–2
    (`_GL2CV = (1, −1, −1)`); positions pass through unchanged.
 3. **Euler order** is dropped at serialization; it is always "XYZ".
-4. **Primitive labels survive encoding.** Parameter dictionary values may be
-   strings, booleans, or finite numbers. Booleans and nested lock constraints
-   are CLIP-conditioned like other categorical tokens. `importance` is mapped
-   linearly from [1, 10]; `maxSpeed` and `maxAccelerate` use `log1p` over
-   [0, 20] and clip outliers before deterministic Fourier encoding. Missing or
-   invalid values receive a zero/mean neutral token and a false presence mask.
-   `frameCount` and `subjectIndex` are intentionally omitted: the former is
-   observable from the trajectory and every export contains exactly one subject.
+4. **Primitive labels survive decoding.** Parameter dictionary values may be
+   strings, booleans, or finite numbers. Booleans, nested lock constraints, and
+   finite numeric limits remain raw simulator metadata. The model consumes only
+   ten categorical cinematography fields; simulator metadata does not become
+   a model semantic token. `frameCount` and `subjectIndex` are intentionally
+   omitted: the former is observable from the trajectory and every export
+   contains exactly one subject.
 5. `focalLength` (default 37.52) and `aspectRatio` (16/9) are stored per
    camera frame but ignored by the loader (features are 6-DoF only).
 6. **One instruction, one subject.** The exporter enforces this invariant so
@@ -227,29 +227,32 @@ parameter-dictionary and simulation-file name/size/mtime inventory. Payload
 contents are not hashed. A missing or nonmatching sidecar causes the stats to be
 regenerated.
 
-### 4.2 Prompt / instruction → CLIP token grids
+### 4.2 Prompt / instruction → categorical IDs and raw metadata
 
-Reconstructed dicts are flattened against two fixed structs; each present
-enum value becomes the CLIP text embedding of its English description (cached
-in `clip_embeddings_cache.pkl`; D = the configured CLIP text width, 512 in
-the shipped configs). Missing tensor slots use a zero neutral embedding, or the
-per-enum-type mean when `fill_none_with_mean=True`; their parameter index and
-presence metadata remain −1/false (`embedding_means.pkl` /
-`embedding_stds.pkl` are written to the working directory).
+Reconstructed prompts produce ten independent category IDs, ordered as initial
+{cameraAngle, shotSize, subjectView, subjectFraming}, movement {type, speed},
+then the same four final fields. Their vocabulary widths are
+`[5, 8, 8, 13, 21, 4, 5, 8, 8, 13]`, totaling 93 valid values. The movement
+vocabulary includes `nativePan` at ID 19 and `nativeOrbit` at ID 20. Missing
+or unrecognized values use ID −1 and a false presence mask.
 
-- `cinematography_prompt` — 10 tokens: initial {cameraAngle, shotSize,
-  subjectView, subjectFraming} · movement {type, speed} · final {same 4}.
-- `simulation_instruction` — 36 tokens: setup (6) · dynamic (12, including
-  type/randomness) · constraints (18, including all locks and three numeric
-  limits/weights).
-- `prompt_none_mask` — (46,) bool, prompt tokens first, True = value present.
+- `cinematography_ids` — `(10,)` signed integer IDs; batches have shape
+  `(B, 10)`.
+- `prompt_none_mask` — `(10,)` bool, True = a model category is present.
+- `cinematography_prompt_parameters` — ten ordered
+  `(field_name, raw_value, local_id, None)` metadata tuples.
+- `simulation_instruction_parameters` — 36 raw metadata tuples: setup (6),
+  dynamic (12), and constraints (18). Explicit boolean `false` and finite
+  speed/acceleration/importance values remain available here.
+- `structured_presence_mask` — `(46,)` bool for the ten cinematography and
+  36 simulator metadata fields.
 
-Generator exports preserve boolean constraint values (including explicit
-`false`) and the finite numeric speed/acceleration/importance limits.
-`dutchAngleScale` remains optional. `MovementMode` mirrors the simulator's
-transition, rotation, arc, crane, and roll vocabulary. The
-`clip_embeddings_cache.pkl` file has no dataset-provenance sidecar and is
-separate from the two dataset-derived caches in §2.
+The shared conditioning helper converts IDs to ten one-hot tokens of width 21
+with zeros beyond each field's valid width. Unknown fields are all zero and
+act as DONTCARE. The encoder and decoder use this categorical representation;
+dataset loading does not initialize a text model or load embedding caches.
+`dutchAngleScale` remains optional raw metadata. `MovementMode` mirrors the
+simulator's transition, rotation, arc, crane, and roll vocabulary.
 
 Schema-v2 manifests store normalized effective movement/class probabilities,
 the dynamic Car/Bicycle conditional probabilities, realized finite-sample
@@ -290,7 +293,7 @@ The low-level instruction's setup (and interpolation complement) is aligned
 to those same observed endpoints while its movement, easing, constraints, and
 numeric limits remain untouched. Candidates whose endpoints cannot be
 projected are deterministically rejection-sampled. Thus neither a floor clamp
-nor an incompatible random endpoint can leave prompt/instruction tokens that
+nor an incompatible random endpoint can leave prompt/instruction metadata that
 contradict the stored frames.
 
 ## 5. Item schema — `SimulationDataset[i]`
@@ -301,16 +304,17 @@ contradict the stored frames.
 | `subject_trajectory` | (30, 6) float32 | first subject only |
 | `subject_volume` | (1, 3) float32 | normalized (w, h, d) |
 | `padding_mask` | (30,) bool | all False |
-| `cinematography_prompt` | (10, D) float32 | CLIP tokens, neutral zero/mean rows = unknown |
-| `simulation_instruction` | (36, D) float32 | categorical CLIP and numeric Fourier tokens |
-| `prompt_none_mask` | (46,) bool | True = valid slot |
+| `cinematography_ids` | (10,) long | field-local category IDs, −1 = unknown |
+| `prompt_none_mask` | (10,) bool | True = available model category |
+| `structured_presence_mask` | (46,) bool | availability of all raw metadata fields |
 | `original_frame_count` | integer | source clip length before resampling |
-| `*_parameters` | list of tuples | (name, value, enum index, embedding) per slot |
+| `*_parameters` | list of tuples | (name, value, local index, None) per field |
 | `raw_prompt` / `raw_instruction` | dict | reconstructed native primitive values (§3.4) |
 | `text_prompt` | str | templated caption (§4.3) |
 
-`collate_fn` stacks everything, transposes both token grids to
-(tokens, batch, D), and exposes the captions as `text_prompts`.
+`collate_fn` stacks IDs and masks with the batch dimension first, retains raw
+metadata per sample, and exposes the captions as `text_prompts`. The shared
+conditioning helper creates model tokens of shape `(10, batch, 21)` from IDs.
 
 ## 6. Subject motion vocabulary (generator v4)
 
@@ -396,7 +400,7 @@ authoritative provenance for exact generation distributions; LensCraft is
 responsible only for strict decoding, validation, normalization, and temporal
 resampling.
 
-Schema v2 expands the model from 29 to 46 structured query tokens. Existing
-checkpoints therefore have incompatible query-token and merger tensor shapes
-and must be retrained (or migrated explicitly); silently loading them is not
-supported.
+Schema v2 preserves 46 raw metadata fields. Model semantics use the ten
+cinematography fields and 93 valid probabilities described in §4.2. Historical
+embedding-conditioned checkpoints have incompatible model shapes and cannot
+be loaded into this categorical architecture.

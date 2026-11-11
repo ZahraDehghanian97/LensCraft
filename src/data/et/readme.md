@@ -142,6 +142,14 @@ EDM training/sampling loop.
 | `caption_raw.clip_seq_mask` | `(77,)` float32 | 1 = valid token |
 | `char_padding_mask`, `caption_padding_mask` | `(300,)` | copies of `padding_mask` |
 
+The table describes the upstream DIRECTOR dataset. LensCraft's categorical
+`load_et_dataset` wrapper instantiates only trajectory and character modalities
+and reads caption text from the raw `.txt` file. It neither instantiates the
+caption modality nor reads its precomputed feature caches. `ETDataset` adds
+ten cinematography IDs, their presence mask, and raw annotation metadata from
+the supplied translation JSON; cached caption features are absent from its
+items and batches.
+
 ⚠ DIRECTOR's `TrajectoryDataset.get_feature/get_matrix` **bundle** the
 z-scoring with the geometric encode/decode — the features they take and
 return are the normalized ones.

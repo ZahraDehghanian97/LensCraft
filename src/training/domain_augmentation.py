@@ -17,10 +17,9 @@ from data.ccdm.convertor import CCDMConvertor
 from data.simulation.convertor import SIMConvertor
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import (
-    CLIP_PARAMETERS, cinematography_struct_parameters,
-    structured_conditioning_from_batch,
+    STRUCTURED_PARAMETERS, cinematography_struct_parameters,
 )
-from training.caption_missingness import CaptionMissingness
+from data.categorical_conditioning import cinematography_ids_from_batch
 
 
 @dataclass
@@ -28,7 +27,7 @@ class DomainAugmentationConfig:
     enabled: bool = False
     et_probability: float = 0.25
     ccdm_probability: float = 0.25
-    fill: str = 'mean'
+    fill: str = 'zero'
     et_coordinate_frame: str = 'world'
     ccdm_static_motion: bool = False
     ccdm_native_manifold: bool = False
@@ -40,8 +39,8 @@ class DomainAugmentationConfig:
                 raise ValueError(f'{name} must be finite and in [0, 1]')
         if self.et_probability + self.ccdm_probability >= 1:
             raise ValueError('Domain probabilities must sum to less than 1 to retain original examples')
-        if self.fill not in ('mean', 'zero'):
-            raise ValueError('Domain augmentation fill must be mean or zero')
+        if self.fill != 'zero':
+            raise ValueError('Missing categorical fields use zero fill')
         if self.et_coordinate_frame not in ('world', 'first_camera'):
             raise ValueError('ET coordinate frame must be world or first_camera')
         for name in ('ccdm_static_motion', 'ccdm_native_manifold'):
@@ -88,14 +87,9 @@ class DomainAugmentation:
         'constraints_maxSpeed', 'constraints_maxAccelerate',
     })
 
-    def __init__(self, config, clip_embeddings):
+    def __init__(self, config):
         self.config = DomainAugmentationConfig(**dict(config))
-        self.field_names = [name for name, _ in CLIP_PARAMETERS]
-        # Match the same inference-compatible unknown embeddings used by
-        # caption missingness, including zero-valued numeric unknown fields.
-        self.unknown_tokens = CaptionMissingness(
-            {'fill': self.config.fill}, clip_embeddings,
-        ).unknown_tokens
+        self.field_names = [name for name, _ in STRUCTURED_PARAMETERS]
         self.field_keep = self._field_keep()
 
     def _field_keep(self):
@@ -356,42 +350,41 @@ class DomainAugmentation:
         return keep
 
     def _apply_caption_mask(self, result, batch, views, *, ccdm_motion_rows=None):
-        caption = structured_conditioning_from_batch(batch)
-        if (caption is None or caption.ndim != 3 or caption.shape[:2] != (len(self.field_names), len(views))
-                or caption.shape[2] != self.unknown_tokens.shape[1]):
-            raise ValueError('Domain augmentation needs all structured caption fields [fields, batch, embedding]')
-        present = batch.get('prompt_none_mask')
-        if present is None:
-            present = torch.ones(len(views), len(self.field_names), dtype=torch.bool, device=caption.device)
-        elif present.dtype != torch.bool or present.shape != (len(views), len(self.field_names)):
-            raise ValueError('Domain augmentation presence mask must be boolean [batch, fields]')
-        present = present.to(caption.device)
-        keep = self.field_keep[views].to(caption.device)
+        ids = cinematography_ids_from_batch(batch).to(result['camera_trajectory'].device)
+        split = len(cinematography_struct_parameters)
+        supplied = batch.get('prompt_none_mask')
+        if supplied is not None:
+            if supplied.dtype != torch.bool or supplied.shape != ids.shape:
+                raise ValueError('Caption presence must be boolean [batch,10]')
+            ids = ids.masked_fill(~supplied.to(ids.device), -1)
+        present = torch.zeros(len(views), len(self.field_names), dtype=torch.bool, device=ids.device)
+        for key, start in (('cinematography_prompt_parameters', 0),
+                           ('simulation_instruction_parameters', split)):
+            metadata = batch.get(key)
+            if metadata is not None:
+                if len(metadata) != len(views):
+                    raise ValueError('Domain annotation metadata must match the batch')
+                for row, entries in enumerate(metadata):
+                    for offset, entry in enumerate(entries):
+                        present[row, start + offset] = entry[2] >= 0
+        present[:, :split] = ids >= 0
+        keep = self.field_keep[views].to(ids.device)
         if self.config.et_coordinate_frame == 'first_camera':
             keep = self._first_camera_field_keep(batch, views, keep)
         if self.config.ccdm_static_motion:
             keep = self._ccdm_static_field_keep(batch, views, keep, ccdm_motion_rows)
-        dropped = present & ~keep
-        unknown = self.unknown_tokens.to(device=caption.device, dtype=caption.dtype)[:, None, :]
-        modified = torch.where(dropped.T[..., None], unknown, caption)
-        split = len(cinematography_struct_parameters)
-        result['cinematography_prompt'] = modified[:split]
-        result['simulation_instruction'] = modified[split:]
-        result['prompt_none_mask'] = present & keep
-
-        # Contrastive losses also consume annotation indices. Never leave an
-        # invalidated field in their candidate pool after masking its tokens.
-        drop_rows = dropped.detach().cpu().tolist()
-        for key, start, stop in (
-            ('cinematography_prompt_parameters', 0, split),
-            ('simulation_instruction_parameters', split, len(self.field_names)),
-        ):
-            if key not in batch:
-                continue
-            if len(batch[key]) != len(views) or any(len(row) != stop - start for row in batch[key]):
-                raise ValueError(f'Domain augmentation annotation metadata shape mismatch: {key}')
-            result[key] = [
-                [(entry[0], None, -1, None) if drop_rows[b][start + i] else entry
-                 for i, entry in enumerate(row)]
-                for b, row in enumerate(batch[key])
-            ]
+        retained = present & keep
+        result['cinematography_ids'] = ids.masked_fill(~retained[:, :split], -1)
+        result['prompt_none_mask'] = retained[:, :split]
+        result['structured_presence_mask'] = retained
+        result.pop('cinematography_prompt', None)
+        result.pop('simulation_instruction', None)
+        # Raw simulator metadata remains available for geometry certification;
+        # only the first ten retained categorical IDs condition the model.
+        dropped = (present & ~keep).cpu().tolist()
+        for key, start in (('cinematography_prompt_parameters', 0),
+                           ('simulation_instruction_parameters', split)):
+            if key in batch:
+                result[key] = [[(entry[0], None, -1, None) if dropped[row][start + offset]
+                                else entry for offset, entry in enumerate(entries)]
+                               for row, entries in enumerate(batch[key])]

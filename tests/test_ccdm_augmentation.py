@@ -6,11 +6,12 @@ import pytest
 import torch
 
 from data.ccdm.convertor import CCDMConvertor
-from data.simulation.constants import NumericFeature
+from data.simulation.constants import CameraMovementType
 from data.simulation.convertor import SIMConvertor
 from data.simulation.dataset import SimulationDataset
 from data.simulation.utils import (
-    CLIP_PARAMETERS, cinematography_struct_parameters, structured_conditioning_from_batch,
+    STRUCTURED_PARAMETERS, cinematography_struct_parameters, get_enum_index,
+    structured_conditioning_from_batch,
 )
 from training.domain_augmentation import DomainAugmentation, DomainAugmentationConfig
 
@@ -22,22 +23,20 @@ def rotation_y(angle, reference):
 
 
 @pytest.fixture
-def vocabulary():
-    result = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        name = 'boolean' if kind is bool else kind.__name__
-        result[name] = {'a': torch.tensor([1., 2., 3., 4.]),
-                        'b': torch.tensor([3., 4., 5., 6.])}
-    return result
-
-
-@pytest.fixture
-def augmentation(vocabulary):
+def augmentation():
     return DomainAugmentation({
         'enabled': True, 'ccdm_static_motion': True, 'ccdm_native_manifold': True,
-    }, vocabulary)
+    })
+
+
+def set_movement(batch, movement):
+    index = [name for name, _ in cinematography_struct_parameters].index('movement_type')
+    local_id = get_enum_index(CameraMovementType, movement)
+    for row in batch['cinematography_prompt_parameters']:
+        row[index] = ('movement_type', movement, local_id, None)
+    batch['cinematography_ids'][:, index] = local_id
+    batch['prompt_none_mask'][:, index] = local_id >= 0
+    batch['structured_presence_mask'][:, index] = local_id >= 0
 
 
 @pytest.fixture
@@ -63,22 +62,21 @@ def batch(monkeypatch):
     camera[..., :3, 3] = (frame @ native[..., :3, 3, None]).squeeze(-1) + subject[..., :3, 3]
     raw = SIMConvertor().from_standard(camera, subject, subject.new_tensor([[.9, 2.2, .6]]).expand(3, 3))
     camera, subject, volume = SimulationDataset.normalize_item(*raw)
-    fields, split = len(CLIP_PARAMETERS), len(cinematography_struct_parameters)
-    captions = torch.arange(fields * 3 * 4, dtype=subject.dtype).reshape(fields, 3, 4) / 10
-    metadata = [[(name, 'observed', 0, captions[i, b].clone())
-                 for i, (name, _) in enumerate(CLIP_PARAMETERS)] for b in range(3)]
-    movement = [name for name, _ in CLIP_PARAMETERS].index('movement_type')
-    for row in metadata:
-        row[movement] = ('movement_type', 'truckLeft', 0, row[movement][3])
-    return {
+    fields, split = len(STRUCTURED_PARAMETERS), len(cinematography_struct_parameters)
+    metadata = [[(name, 'observed', 0, None)
+                 for name, _ in STRUCTURED_PARAMETERS] for _ in range(3)]
+    result = {
         'simulation_normalized': True,
         'camera_trajectory': camera, 'subject_trajectory': subject, 'subject_volume': volume,
         'padding_mask': torch.tensor([[False, False, False, True], [False] * 4, [False] * 4]),
-        'cinematography_prompt': captions[:split], 'simulation_instruction': captions[split:],
-        'prompt_none_mask': torch.ones(3, fields, dtype=torch.bool),
+        'cinematography_ids': torch.zeros(3, split, dtype=torch.long),
+        'prompt_none_mask': torch.ones(3, split, dtype=torch.bool),
+        'structured_presence_mask': torch.ones(3, fields, dtype=torch.bool),
         'cinematography_prompt_parameters': [row[:split] for row in metadata],
         'simulation_instruction_parameters': [row[split:] for row in metadata],
     }
+    set_movement(result, 'truckLeft')
+    return result
 
 
 def standard(batch):
@@ -147,10 +145,16 @@ def test_stationary_upright_subject_preserves_rigid_motion_and_caption_easing(ba
     relative = actual[:, :-1, :3, :3].transpose(-1, -2) @ actual[:, 1:, :3, :3]
     torch.testing.assert_close(relative[pairs], old_relative[pairs])
     caption, original = structured_conditioning_from_batch(result), structured_conditioning_from_batch(batch)
+    assert caption.shape == (10, 3, 21)
+    metadata = [a + b for a, b in zip(result['cinematography_prompt_parameters'], result['simulation_instruction_parameters'])]
+    original_metadata = [a + b for a, b in zip(batch['cinematography_prompt_parameters'], batch['simulation_instruction_parameters'])]
     for name in augmentation.CCDM_STATIC_MOTION_FIELDS:
         index = augmentation.field_names.index(name)
-        assert result['prompt_none_mask'][:, index].all(), name
-        torch.testing.assert_close(caption[index], original[index])
+        assert result['structured_presence_mask'][:, index].all(), name
+        assert all(row[index] == source[index] for row, source in zip(metadata, original_metadata))
+        if index < 10:
+            assert result['prompt_none_mask'][:, index].all(), name
+            torch.testing.assert_close(caption[index], original[index])
     for name in ('initial_shotSize', 'final_shotSize', 'initial_subjectFraming', 'final_subjectFraming'):
         assert not result['prompt_none_mask'][:, augmentation.field_names.index(name)].any()
 
@@ -161,9 +165,7 @@ def test_yaw_frame_keeps_pedestal_up_on_gravity_axis(batch, augmentation):
     camera[:, :, 1, 3] += camera.new_tensor([0., .2, .4, .6])
     pedestal = set_standard(batch, camera=camera)
     movement = augmentation.field_names.index('movement_type')
-    for row in pedestal['cinematography_prompt_parameters']:
-        entry = row[movement]
-        row[movement] = (entry[0], 'pedestalUp', entry[2], entry[3])
+    set_movement(pedestal, 'pedestalUp')
     actual, _, _ = standard(augmentation.apply(pedestal, force_domain='ccdm'))
     pairs = ~batch['padding_mask'][:, 1:] & ~batch['padding_mask'][:, :-1]
     step = actual[:, 1:, :3, 3] - actual[:, :-1, :3, 3]
@@ -193,10 +195,7 @@ def test_roll_removal_retains_only_position_motion_facts(batch, augmentation, mo
     camera[..., :3, :3] = frame @ native[..., :3, :3]
     camera[..., :3, 3] = (frame @ native[..., :3, 3, None]).squeeze(-1) + source_subject[..., :3, 3]
     changed = set_standard(batch, camera=camera)
-    index = augmentation.field_names.index('movement_type')
-    for row in changed['cinematography_prompt_parameters']:
-        entry = row[index]
-        row[index] = (entry[0], movement, entry[2], entry[3])
+    set_movement(changed, movement)
     result = augmentation.apply(changed, force_domain='ccdm')
     actual, _, _ = standard(result)
     source_camera, source_subject, _ = standard(changed)
@@ -217,7 +216,7 @@ def test_roll_removal_retains_only_position_motion_facts(batch, augmentation, mo
                                    azimuth.new_full((int(pairs.sum()),), .15))
     for name in augmentation.CCDM_STATIC_MOTION_FIELDS:
         index = augmentation.field_names.index(name)
-        assert result['prompt_none_mask'][:, index].tolist() == [
+        assert result['structured_presence_mask'][:, index].tolist() == [
             name in augmentation.CCDM_POSITION_MOTION_FIELDS,
         ] * 3, name
 
@@ -225,9 +224,7 @@ def test_roll_removal_retains_only_position_motion_facts(batch, augmentation, mo
 @pytest.mark.parametrize('movement', ['follow', 'track', 'dutchLeft', None])
 def test_subject_inherited_roll_or_unknown_motion_is_not_restored(batch, augmentation, movement):
     index = augmentation.field_names.index('movement_type')
-    for row in batch['cinematography_prompt_parameters']:
-        entry = row[index]
-        row[index] = (entry[0], movement, entry[2], entry[3])
+    set_movement(batch, movement)
     result = augmentation.apply(batch, force_domain='ccdm')
     assert not result['prompt_none_mask'][:, index].any()
 
@@ -245,7 +242,7 @@ def test_moving_or_tilted_subject_does_not_restore_motion(batch, augmentation, c
         subject[..., :3, :3] = x_rotation @ subject[..., :3, :3]
     result = augmentation.apply(set_standard(batch, subject=subject), force_domain='ccdm')
     for name in augmentation.CCDM_STATIC_MOTION_FIELDS:
-        assert not result['prompt_none_mask'][:, augmentation.field_names.index(name)].any(), name
+        assert not result['structured_presence_mask'][:, augmentation.field_names.index(name)].any(), name
 
 
 def test_native_subject_is_target_independent_and_missing_tokens_stay_missing(batch, augmentation):
@@ -255,11 +252,17 @@ def test_native_subject_is_target_independent_and_missing_tokens_stay_missing(ba
     torch.testing.assert_close(first['subject_trajectory'], second['subject_trajectory'])
     torch.testing.assert_close(first['subject_volume'], second['subject_volume'])
     index = augmentation.field_names.index('movement_speed')
+    batch['cinematography_ids'][:, index] = -1
     batch['prompt_none_mask'][:, index] = False
-    batch['cinematography_prompt'][index] = 123.
+    batch['structured_presence_mask'][:, index] = False
+    for row in batch['cinematography_prompt_parameters']:
+        row[index] = ('movement_speed', None, -1, None)
     result = augmentation.apply(batch, force_domain='ccdm')
     assert not result['prompt_none_mask'][:, index].any()
-    torch.testing.assert_close(result['cinematography_prompt'][index], batch['cinematography_prompt'][index])
+    assert (result['cinematography_ids'][:, index] == -1).all()
+    assert torch.count_nonzero(structured_conditioning_from_batch(result)[index]) == 0
+    assert all(row[index] == ('movement_speed', None, -1, None)
+               for row in result['cinematography_prompt_parameters'])
 
 
 def test_nan_padding_and_insufficient_valid_frames_are_ignored(batch, augmentation):

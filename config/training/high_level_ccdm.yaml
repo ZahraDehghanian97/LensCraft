@@ -11,6 +11,10 @@ optimizer:
   lr: 1.0e-5
 lr_scheduler: null
 
+# This continuation retains its original speed-conditioning policy.
+caption_missingness:
+  speed_drop_probability: 0.0
+
 domain_augmentation:
   et_probability: 0.10
   ccdm_probability: 0.65

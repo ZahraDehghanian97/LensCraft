@@ -1,9 +1,7 @@
-from .clip_loss import ClipLoss
-from .contrastive_loss import ContrastiveLoss
 from .losses import CameraTrajectoryLoss
+from .categorical_loss import CategoricalCameraTrajectoryLoss
 
 __all__ = [
-    'ClipLoss',
-    'ContrastiveLoss',
-    'CameraTrajectoryLoss'
+    'CameraTrajectoryLoss',
+    'CategoricalCameraTrajectoryLoss',
 ]

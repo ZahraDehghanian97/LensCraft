@@ -4,9 +4,6 @@ info:
 config:
   _target_: data.ccdm.CCDMDataset
   data_path: ${oc.env:CCDM_DATA_DIR}/data.npy
-  clip_model_name: ${clip.model_name}
-  embedding_dim: ${clip.latent_dim}
   normalize: true
   annotations_path: null
   sample_indices_path: null
-  fill_none_with_mean: true

@@ -31,7 +31,8 @@ def parse_args(argv=None):
     for field in ("dataset-path", "lenscraft-checkpoint", "lenscraft-config", "clatr-checkpoint", "output-dir"):
         p.add_argument("--" + field, type=Path, required=True)
     for field in ("semantic-evaluator-checkpoint", "semantic-evaluator-config", "split-manifest"):
-        p.add_argument("--" + field, type=Path)
+        env_name = field.replace("-", "_").upper() + ("_PATH" if field != "split-manifest" else "")
+        p.add_argument("--" + field, type=Path, default=os.environ.get(env_name))
     p.add_argument("--n-boot", type=int, default=500)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--num-workers", type=int, default=8)
@@ -45,11 +46,8 @@ def parse_args(argv=None):
         p.error("n-boot must be zero or at least two; workers nonnegative; batch-size positive")
     if not 0 < args.test_fraction <= 1:
         p.error("--test-fraction must lie in (0, 1]")
-    if args.semantic_evaluator_checkpoint is not None and args.semantic_evaluator_config is None:
-        p.error("A custom --semantic-evaluator-checkpoint requires --semantic-evaluator-config")
-    # Explicit fixed full-model default; the evaluator is loaded independently.
-    args.semantic_evaluator_checkpoint = args.semantic_evaluator_checkpoint or args.lenscraft_checkpoint
-    args.semantic_evaluator_config = args.semantic_evaluator_config or args.lenscraft_config
+    if args.semantic_evaluator_checkpoint is None:
+        p.error("Supply --semantic-evaluator-checkpoint or SEMANTIC_EVALUATOR_CHECKPOINT_PATH; the categorical generator is not a frozen CLIP judge")
     for field, value in vars(args).items():
         if isinstance(value, Path):
             setattr(args, field, value.expanduser().resolve())
@@ -192,7 +190,7 @@ def preflight(args, stages):
 
 def expected_modes(model):
     if model != "lenscraft":
-        return {"prompt_generation", "prompt_generation_no_norm", "prompt_generation_norm_lenscraft_init"}
+        return {"prompt_generation", "prompt_generation_no_norm"}
     return {"prompt_generation", "reconstruction", "hybrid_generation"} | {
         f"{mode}_k{k}" for mode in ("key_framing", "key_framing+prompt") for k in (1, 2, 4, 8, 26)}
 

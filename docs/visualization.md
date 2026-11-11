@@ -82,13 +82,13 @@ Set paths in the project `.env` file. A typical LensCraft setup includes:
 
 ```dotenv
 SIMULATION_DATA_PATH=/path/to/simulation-data
-CLIP_EMBEDDINGS_CACHE_DIR=/path/to/clip-cache
 TEST_CHECKPOINT_PATH=/path/to/lenscraft.ckpt
 TEST_CONFIG_PATH=/path/to/train/.hydra/config.yaml
 ```
 
-Use the training configuration matching your checkpoint, especially when its
-model architecture differs from the current defaults.
+Use the saved configuration matching the current categorical checkpoint.
+Legacy 512D/merged generator checkpoints are not supported. Metric CLIP assets
+are needed only for separately requested evaluation, not LensCraft generation.
 
 ```bash
 # Inspect LensCraft on a held-out simulation sample.

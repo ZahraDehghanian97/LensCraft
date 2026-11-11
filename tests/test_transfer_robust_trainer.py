@@ -3,44 +3,32 @@
 import pytest
 import torch
 
-from data.simulation.constants import NumericFeature
 from data.simulation.dataset import SimulationDataset
-from data.simulation.utils import CLIP_PARAMETERS, cinematography_struct_size
+from models.categorical_latent import FIELD_NAMES, from_ids
+
+cinematography_struct_size = len(FIELD_NAMES)
 from training.autoencoder_trainer import LightningLensCraft
 from training.base_trainer import BaseTrainer, MaskConfig, NoiseConfig, TeacherForcingConfig
 from training.caption_missingness import CaptionMissingness
 from training.conditioning import TRAINING_MODES, prepare_conditioning
-from training.losses.losses import CameraTrajectoryLoss
+from training.losses.categorical_loss import CategoricalCameraTrajectoryLoss
 from training.module_factory import checkpoint_monitor
 from training.transfer_robust_trainer import TransferRobustTrainer
 
-
-def vocabulary(width=8):
-    result = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        name = 'boolean' if kind is bool else kind.__name__
-        result[name] = {'first': torch.ones(width), 'second': -torch.ones(width)}
-    return result
 
 
 @pytest.fixture
 def trainer(monkeypatch):
     model = torch.nn.Linear(6, 6)
-    model.caption_presence_conditioning = True
     module = TransferRobustTrainer(
         model=model, optimizer=None, lr_scheduler=None,
-        loss_module=CameraTrajectoryLoss(
-            losses_list={'clip': 1., 'cycle': 1.},
-            encoder_loss_function='mse', clip_embeddings=vocabulary(),
-        ),
+        loss_module=CategoricalCameraTrajectoryLoss(losses_list={'categorical': 1., 'cycle': 1.}),
         noise=NoiseConfig(0., 0.), mask=MaskConfig(0., 0.),
         teacher_forcing_schedule=TeacherForcingConfig(1., 1., 0., 0.),
         compile_enabled=False,
         conditioning={'keyframe_counts': [2]},
         validation_conditioning={'keyframe_counts': [2], 'max_batches': 2},
-        caption_missingness={'probability': 1., 'fill': 'mean'},
+        caption_missingness={'probability': 1., 'fill': 'zero'},
         validation_caption_missingness={'max_batches': 2, 'score_weight': 3.},
         domain_augmentation={'enabled': True, 'et_probability': .25, 'ccdm_probability': .25},
         validation_domain_augmentation={'max_batches': 2, 'keyframe_count': 2, 'score_weight': 2.},
@@ -65,15 +53,14 @@ def batch():
     subject = torch.zeros_like(camera)
     subject[..., 0] = torch.arange(frames).float() / 20
     subject[..., 4] = torch.arange(frames).float() / 10
-    caption = torch.arange(len(CLIP_PARAMETERS) * size * width, dtype=torch.float32)
-    caption = caption.reshape(len(CLIP_PARAMETERS), size, width) / 100
+    ids = torch.zeros(size, 10, dtype=torch.long)
+    caption, presence = from_ids(ids)
     return {
         'camera_trajectory': camera, 'subject_trajectory': subject,
         'subject_volume': torch.ones(size, 1, 3),
         'padding_mask': torch.zeros(size, frames, dtype=torch.bool),
-        'cinematography_prompt': caption[:cinematography_struct_size],
-        'simulation_instruction': caption[cinematography_struct_size:],
-        'prompt_none_mask': torch.ones(size, len(CLIP_PARAMETERS), dtype=torch.bool),
+        'cinematography_ids': ids,
+        'prompt_none_mask': presence,
     }
 
 
@@ -304,6 +291,7 @@ def test_scratch_recipe_restores_original_scheduler_and_explicit_prompt_monitor(
     assert config.callbacks.val_checkpoint.monitor == 'val_transfer_prompt_score'
     assert config.training.caption_missingness.profile == 'high_level_only'
     assert config.training.caption_missingness.mask_bank_path is None
+    assert config.training.caption_missingness.speed_drop_probability == .5
     weights = config.training.conditioning.mode_weights
     assert weights.prompt_generation / sum(weights.values()) == .5
     assert config.training.domain_augmentation.et_coordinate_frame == 'world'
@@ -335,7 +323,7 @@ def test_checkpoint_selection_rejects_missing_proxy_family(trainer, domain, mode
 
 def test_invalid_domain_labels_contribute_no_clip_or_prompt_cycle_gradient(trainer, batch, monkeypatch):
     view = trainer.domain_augmentation.apply(batch, force_domain='ccdm')
-    caption = trainer._prepare_clip_embeddings(view)
+    caption = trainer._prepare_conditioning(view)
     present = view['prompt_none_mask']
     assert present.any() and (~present).any()
 
@@ -373,34 +361,13 @@ def test_invalid_domain_labels_contribute_no_clip_or_prompt_cycle_gradient(train
     assert cycle.grad[~invalid].abs().sum().item() > 0
 
 
-def test_presence_enabled_model_strictly_loads_existing_checkpoint(tmp_path):
-    from models.camera_trajectory_model import LensCraft
-    from utils.checkpoint import load_checkpoint
-
-    options = dict(nhead=2, num_encoder_layers=1, num_decoder_layers=1,
-                   dim_feedforward=16, dropout_rate=0., seq_length=5, latent_dim=8)
-    previous = LensCraft(**options, caption_presence_conditioning=False)
-    robust = LensCraft(**options, caption_presence_conditioning=True)
-    checkpoint = tmp_path / 'previous.ckpt'
-    torch.save({'state_dict': {'model.' + key: value for key, value in previous.state_dict().items()}}, checkpoint)
-    load_checkpoint(checkpoint, robust, torch.device('cpu'))
-    assert set(previous.state_dict()) == set(robust.state_dict())
-    for name, value in previous.state_dict().items():
-        torch.testing.assert_close(value, robust.state_dict()[name])
-    tokens = torch.ones(len(CLIP_PARAMETERS), 2, 8)
-    present = torch.ones(2, len(CLIP_PARAMETERS), dtype=torch.bool)
-    present[:, 0] = False
-    output = robust._prepare_caption_tokens(tokens, present)
-    torch.testing.assert_close(output[0], robust.missing_caption_encoding.expand(2, -1))
-    torch.testing.assert_close(output[1:], tokens[1:])
-
 
 def test_high_level_profile_cycle_masks_dropped_fields_but_clean_encoder_keeps_targets(trainer, batch, monkeypatch):
     trainer.caption_missingness = CaptionMissingness({
         'profile': 'high_level_only', 'probability': 1.,
-        'min_keep_ratio': 1., 'max_keep_ratio': 1., 'endpoint_drop_probability': 0.,
-    }, vocabulary())
-    caption = trainer._prepare_clip_embeddings(batch)
+        'min_keep_ratio': 1., 'max_keep_ratio': 1., 'endpoint_drop_probability': 1.,
+    })
+    caption = trainer._prepare_conditioning(batch)
     original_caption = caption.clone()
     original_presence = batch['prompt_none_mask'].clone()
 
@@ -422,12 +389,12 @@ def test_high_level_profile_cycle_masks_dropped_fields_but_clean_encoder_keeps_t
     )
     effective = trainer.model.kwargs['caption_presence_mask']
     assert torch.equal(output['cycle_prompt_mask'], effective)
-    assert effective[:, :cinematography_struct_size].all()
-    assert not effective[:, cinematography_struct_size:].any()
+    assert effective[:, 4:6].all()
+    assert not effective[:, [0, 1, 2, 3, 6, 7, 8, 9]].any()
     assert torch.equal(caption, original_caption)
     assert torch.equal(batch['prompt_none_mask'], original_presence)
-    assert torch.equal(trainer.model.kwargs['caption_embedding'][:cinematography_struct_size],
-                       original_caption[:cinematography_struct_size])
+    assert torch.equal(trainer.model.kwargs['caption_embedding'],
+                       original_caption.masked_fill(~effective.T[..., None], 0))
 
     prediction = torch.full_like(caption, .5, requires_grad=True)
     cycle = torch.full_like(caption, 2., requires_grad=True)

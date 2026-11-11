@@ -3,7 +3,6 @@ defaults:
   - trainer: default
   - data: default
   - output: default
-  - clip: default
   - hydra: default
   - _self_
 

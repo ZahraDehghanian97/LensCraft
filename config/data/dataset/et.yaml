@@ -8,11 +8,4 @@ config:
   et_cin_lang_path: ${oc.env:ET_CIN_LANG_PATH}
   set_name: mixed
   split: train
-  fill_none_with_mean: true
   normalize: true
-  clip_embeddings:
-    _target_: data.simulation.init_embeddings.initialize_all_clip_embeddings
-    clip_model_name: ${clip.model_name}
-    cache_file: ${oc.env:CLIP_EMBEDDINGS_CACHE_DIR,.}/clip_embeddings_${clip.model_name}_cache.pkl
-    embedding_dimension: ${clip.latent_dim}
-    embedding_mode: "default" # choose between ["default", "normal"]

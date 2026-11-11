@@ -25,7 +25,7 @@ from .metadata import (
     load_dataset_manifest,
     resolve_dataset_root,
 )
-from .utils import fix_prompts_and_instructions, load_clip_means
+from data.categorical_conditioning import metadata_from_prompt
 from .observation import ModelObservationPolicy
 from data.collate_utils import (
     collate_structured_conditioning,
@@ -42,9 +42,6 @@ class SimulationDataset(Dataset):
     def __init__(
         self,
         data_path: str,
-        embedding_dim: int,
-        fill_none_with_mean: bool,
-        clip_embeddings: Dict,
         allowed_movement_types: List[str] = None,
         normalize: bool = True,
         target_frame_count: int = SIMULATION_FRAME_COUNT,
@@ -52,9 +49,6 @@ class SimulationDataset(Dataset):
         reference_frame_count: Optional[int] = None,
     ):
         self.data_path = resolve_dataset_root(Path(data_path))
-        self.embedding_dim = embedding_dim
-        self.fill_none_with_mean = fill_none_with_mean
-        self.clip_embeddings = clip_embeddings
         self.allowed_movement_types = allowed_movement_types or []
         self.normalize = normalize
         if target_frame_count < 2:
@@ -72,8 +66,6 @@ class SimulationDataset(Dataset):
             self.reference_frame_count is not None and self.reference_frame_count < 2
         ):
             raise ValueError("Normalization and reference frame counts must be at least 2")
-
-        self.embedding_means = load_clip_means() if self.fill_none_with_mean else None
 
         self.manifest = load_dataset_manifest(self.data_path)
         self.model_observation_policy = ModelObservationPolicy.from_manifest(self.manifest)
@@ -435,20 +427,7 @@ class SimulationDataset(Dataset):
             )
             observed_motion_text = self.model_observation_policy.observed_motion_text(prompt)
 
-        (
-            simulation_instruction_tensor,
-            cinematography_prompt_tensor,
-            prompt_none_mask,
-            simulation_instruction_parameters,
-            cinematography_prompt_parameters,
-        ) = fix_prompts_and_instructions(
-            visible_instruction,
-            visible_prompt,
-            self.clip_embeddings,
-            self.fill_none_with_mean,
-            self.embedding_means,
-            embedding_dim=self.embedding_dim,
-        )
+        conditioning = metadata_from_prompt(visible_prompt, visible_instruction)
 
         if self.normalize:
             (
@@ -474,17 +453,13 @@ class SimulationDataset(Dataset):
                 self.target_frame_count, dtype=torch.bool
             ),
             "original_frame_count": original_frame_count,
-            "simulation_instruction": simulation_instruction_tensor,
-            "cinematography_prompt": cinematography_prompt_tensor,
-            "simulation_instruction_parameters": simulation_instruction_parameters,
-            "cinematography_prompt_parameters": cinematography_prompt_parameters,
+            **conditioning,
             "raw_prompt": prompt,
             "raw_instruction": instruction,
             "text_prompt": (
                 observed_motion_text if observed_motion_text is not None
                 else extract_text_prompt(visible_prompt, movement_type)
             ),
-            "prompt_none_mask": prompt_none_mask,
         }
         if reference is not None:
             item["simulation_reference"] = reference
@@ -497,6 +472,8 @@ class SimulationDataset(Dataset):
 
 
 def collate_fn(batch):
+    conditioning = collate_structured_conditioning(batch)
+
     def collate_intrinsics(items):
         values = [item.get("camera_intrinsics") for item in items]
         if all(value is None for value in values):
@@ -524,11 +501,10 @@ def collate_fn(batch):
         "original_frame_count": torch.tensor(
             [item["original_frame_count"] for item in batch], dtype=torch.long
         ),
-        **collate_structured_conditioning(batch),
+        **conditioning,
         "raw_prompt": [item["raw_prompt"] for item in batch],
         "raw_instruction": [item["raw_instruction"] for item in batch],
         "text_prompts": [item["text_prompt"] for item in batch],
-        "prompt_none_mask": torch.stack([item["prompt_none_mask"] for item in batch]),
     }
     if "simulation_reference" in batch[0]:
         references = [item["simulation_reference"] for item in batch]

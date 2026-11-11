@@ -3,7 +3,9 @@ import torch
 
 from training.base_trainer import BaseTrainer, NoiseConfig, MaskConfig, TeacherForcingConfig
 from data.convertor.convertor import convert_to_target
-from data.simulation.utils import structured_conditioning_from_batch
+from data.categorical_conditioning import (
+    conditioning_from_batch, conditioning_presence_from_batch,
+)
 
 
 class MultiDatasetTrainer(BaseTrainer):
@@ -19,7 +21,6 @@ class MultiDatasetTrainer(BaseTrainer):
         compile_mode: str = "default",
         compile_enabled: bool = True,
         dataset_mode: str = 'simulation',
-        use_merged_memory: bool = True,
         sim_weight: float = 0.6,
         ccdm_weight: float = 0.4,
         decode_mode: str = 'single_step'
@@ -34,7 +35,6 @@ class MultiDatasetTrainer(BaseTrainer):
             teacher_forcing_schedule,
             compile_mode,
             compile_enabled,
-            use_merged_memory
         )
 
         self.sim_weight = sim_weight
@@ -44,20 +44,8 @@ class MultiDatasetTrainer(BaseTrainer):
         self.validation_sim_outputs = []
         self.validation_ccdm_outputs = []
 
-    def _prepare_sim_clip_embeddings(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        caption = structured_conditioning_from_batch(batch)
-        if caption is None:
-            raise ValueError("Simulation batches require structured conditioning")
-        return caption
-
-    @staticmethod
-    def _prepare_caption_embedding(batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        caption = batch.get("caption_feat")
-        if caption is None:
-            raise ValueError("CCDM batches require caption_feat")
-        if caption.dim() == 2:
-            caption = caption.unsqueeze(0)
-        return caption
+    def _prepare_conditioning(self, batch):
+        return conditioning_from_batch(batch)
 
     def _process_sim_batch(self, batch: Dict[str, Any], stage: str) -> Tuple[torch.Tensor, Dict[str, Any]]:
         camera_trajectory = batch['camera_trajectory']
@@ -65,7 +53,8 @@ class MultiDatasetTrainer(BaseTrainer):
         subject_volume = batch['subject_volume']
         tgt_key_padding_mask = batch.get("padding_mask", None)
 
-        caption_embedding = self._prepare_sim_clip_embeddings(batch)
+        caption_embedding = self._prepare_conditioning(batch)
+        caption_presence = conditioning_presence_from_batch(batch)
 
         output = self._forward_step(
             camera_trajectory,
@@ -76,14 +65,15 @@ class MultiDatasetTrainer(BaseTrainer):
             is_training=(stage == "train"),
             decode_mode=self.decode_mode,
             compute_cycle_embeddings=True,
-            caption_presence_mask=batch.get('prompt_none_mask'),
+            caption_presence_mask=caption_presence,
         )
 
+        loss_batch = dict(batch, prompt_none_mask=caption_presence)
         loss, loss_dict = self.loss_module(
             output,
             camera_trajectory,
             caption_embedding,
-            batch,
+            loss_batch,
             tgt_key_padding_mask
         )
 
@@ -116,7 +106,8 @@ class MultiDatasetTrainer(BaseTrainer):
             subject_volume=subject_volume,
             padding_mask=tgt_key_padding_mask,
         )
-        caption_embedding = self._prepare_caption_embedding(converted_batch)
+        caption_embedding = self._prepare_conditioning(converted_batch)
+        caption_presence = conditioning_presence_from_batch(converted_batch)
 
         output = self._forward_step(
             converted_batch["camera_trajectory"],
@@ -125,29 +116,16 @@ class MultiDatasetTrainer(BaseTrainer):
             caption_embedding=caption_embedding,
             tgt_key_padding_mask=converted_batch["padding_mask"],
             is_training=(stage == "train"),
-            decode_mode=self.decode_mode
+            decode_mode=self.decode_mode,
+            caption_presence_mask=caption_presence,
+            compute_cycle_embeddings=True,
         )
 
-        trajectory_losses = self.loss_module.compute_trajectory_losses(
-            output['reconstructed_raw_matrix'],
-            self.loss_module._euler_traj_to_matrix(
-                converted_batch["camera_trajectory"]
-            ),
-            tgt_key_padding_mask=converted_batch["padding_mask"],
-            projected_pred=output['reconstructed_rot_matrix'],
+        return self.loss_module(
+            output, converted_batch['camera_trajectory'], caption_embedding,
+            dict(converted_batch, prompt_none_mask=caption_presence),
+            converted_batch['padding_mask'],
         )
-        trajectory_loss = sum(
-            self.loss_module.losses_list.get(name, 0) * value
-            for name, value in trajectory_losses.items()
-        )
-
-        loss_dict = {
-            **trajectory_losses,
-            "trajectory": trajectory_loss.item(),
-            "total": trajectory_loss.item()
-        }
-
-        return trajectory_loss, loss_dict
 
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         sim_batch = batch['simulation']

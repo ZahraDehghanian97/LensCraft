@@ -1,7 +1,7 @@
 from torch.nn.functional import cosine_similarity
 from torchmetrics import Metric
 
-from data.simulation.utils import CLIP_PARAMETERS_DICT
+from data.simulation.utils import STRUCTURED_PARAMETERS_DICT
 from data.simulation.constants import NumericFeature
 
 
@@ -26,7 +26,7 @@ class CaptionTop1(Metric):
                     if value_idx == -1:
                         continue
 
-                    value_type = CLIP_PARAMETERS_DICT[prefix]
+                    value_type = STRUCTURED_PARAMETERS_DICT[prefix]
                     if isinstance(value_type, NumericFeature):
                         # Continuous features are supervised directly; top-1
                         # classification has no finite candidate vocabulary.

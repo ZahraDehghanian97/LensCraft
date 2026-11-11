@@ -420,7 +420,7 @@ class VisualizationRepository:
     def generate(self, sample, models=("lens_craft",), mode="prompt_generation", keyframes=None, *, seed=None, device=None):
         import torch
         from data.sim_format import MEMORY_TEACHER_FORCING_BY_MODE, to_simulation_format
-        from data.simulation.utils import structured_conditioning_from_batch
+        from data.categorical_conditioning import conditioning_from_batch, conditioning_presence_from_batch
         from inferencing.process import inference_batch
         from models.factory import load_model
         from utils.device import move_batch_to_device
@@ -468,6 +468,7 @@ class VisualizationRepository:
                         if padding is None:
                             padding = torch.zeros(sim_camera.shape[:2], dtype=torch.bool, device=torch_device)
                         source_mask = padding.clone()
+                        keyframe_kwargs = {}
                         if mode in ("key_framing", "key_framing+prompt"):
                             selected = _validate_keyframes(keyframes if keyframes is not None else [0, sample.frame_count - 1], sample.frame_count)
                             if not selected:
@@ -480,6 +481,7 @@ class VisualizationRepository:
                             source_mask[:] = True
                             source_mask[:, source_indices] = False
                             source_mask |= padding
+                            keyframe_kwargs["known_camera_mask"] = ~source_mask
                             if source_mask.all():
                                 raise ValueError("The selected keyframes are all padded; choose valid frames.")
                             camera_standard = _sim_standard(sim_camera, normalized=True)[0][0]
@@ -488,13 +490,13 @@ class VisualizationRepository:
                             constraints = {"keyframe_poses": camera_standard[valid_indices].tolist(),
                                            "keyframe_model_indices": valid_indices,
                                            "keyframe_sequence_length": seq_length}
-                        caption = structured_conditioning_from_batch(batch) if sample.dataset in ("simulation", "et") else None
+                        caption = conditioning_from_batch(batch, model)
                         if mode in ("prompt_generation", "key_framing+prompt") and caption is None:
                             raise ValueError("LensCraft prompt conditioning needs structured cinematography annotations; this dataset sample has none.")
                         generated = model.generate_camera_trajectory(subject_trajectory=sim_subject, subject_volume=sim_volume,
                             camera_trajectory=sim_camera, src_key_mask=source_mask, padding_mask=padding,
                             memory_teacher_forcing_ratio=MEMORY_TEACHER_FORCING_BY_MODE[mode], caption_embedding=caption,
-                            caption_presence_mask=batch.get('prompt_none_mask'))["reconstructed"]
+                            caption_presence_mask=conditioning_presence_from_batch(batch, model), **keyframe_kwargs)["reconstructed"]
                         poses = _sim_standard(generated, normalized=True)[0][0]
                         poses = poses[~_array(padding[0]).astype(bool)]
                         name = f"lens_craft:{mode}"

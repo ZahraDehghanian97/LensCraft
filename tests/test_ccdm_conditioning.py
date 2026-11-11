@@ -17,22 +17,6 @@ def null_struct(struct):
 
 @pytest.fixture
 def native_data(tmp_path, monkeypatch):
-    from models import clip_embeddings
-    from data.simulation import init_embeddings
-
-    class FakeEmbedder:
-        def __init__(self, **kwargs):
-            pass
-
-        def extract_clip_embeddings(self, texts):
-            return torch.tensor([[len(text)] * 8 for text in texts], dtype=torch.float32)
-
-    monkeypatch.setattr(clip_embeddings, "CLIPEmbedder", FakeEmbedder)
-    monkeypatch.setattr(init_embeddings, "initialize_all_clip_embeddings", lambda **kw: {
-        "CameraMovementType": {"static": torch.ones(8), "dollyIn": torch.full((8,), 2.),
-                               "craneUp": torch.full((8,), 3.), "arcLeft": torch.full((8,), 4.)},
-        "DynamicMode": {"interpolation": torch.full((8,), 5.)},
-    })
     monkeypatch.setattr(CCDMDataset, "_normalization_parameters", None)
     np.save(tmp_path / "Mean_Std.npy", {"Mean": np.zeros(5), "Std": np.ones(5)})
     np.save(tmp_path / "data.npy", {"cam": [np.ones((i + 2, 5)) * i for i in range(3)],
@@ -50,10 +34,9 @@ def native_data(tmp_path, monkeypatch):
 
 
 def dataset(path, annotated=True):
-    return CCDMDataset(str(path / "data.npy"), device="cpu", embedding_dim=8,
+    return CCDMDataset(str(path / "data.npy"), device="cpu",
                        original_seq_len=6, sample_indices_path=str(path / "indices.json"),
-                       annotations_path=str(path / "annotations.json") if annotated else None,
-                       fill_none_with_mean=False)
+                       annotations_path=str(path / "annotations.json") if annotated else None)
 
 
 def test_selected_ids_caption_tokens_and_padding_remain_aligned(native_data):
@@ -62,11 +45,17 @@ def test_selected_ids_caption_tokens_and_padding_remain_aligned(native_data):
     assert batch["item_ids"] == ["ccdm-000002", "ccdm-000000"]
     assert batch["text_prompts"] == ["dolly", "static"]
     assert (~batch["padding_mask"]).sum(1).tolist() == [4, 2]
+    assert batch["cinematography_ids"].shape == (2, 10)
+    assert batch["cinematography_ids"].dtype == torch.long
     assert batch["prompt_none_mask"].sum(1).tolist() == [1, 1]
+    assert batch["structured_presence_mask"].shape == (2, 46)
+    assert batch["structured_presence_mask"].sum(1).tolist() == [1, 1]
     tokens = structured_conditioning_from_batch(batch)
-    assert tokens.shape == (46, 2, 8)
-    assert torch.equal(tokens[4, 0], torch.full((8,), 2.))
-    assert torch.equal(tokens[4, 1], torch.ones(8))
+    assert tokens.shape == (10, 2, 21)
+    assert batch["cinematography_ids"][:, 4].tolist() == [3, 0]
+    assert tokens[4, 0, 3] == tokens[4, 1, 0] == 1
+    assert torch.equal(tokens.sum(-1).T, batch["prompt_none_mask"].float())
+    assert "caption_feat" not in batch
     assert torch.equal(batch["camera_trajectory"][0, -1], batch["camera_trajectory"][0, 3])
 
 
@@ -89,12 +78,20 @@ def test_legacy_annotations_keep_original_fields_bytes_and_conditioning(native_d
     assert item["raw_instruction"] == row["simulationInstructions"][0]
     dynamic = next(parameter for parameter in item["simulation_instruction_parameters"]
                    if parameter[0] == "dynamic_type")
-    assert dynamic[1] == "interpolation"
-    assert torch.equal(dynamic[3], torch.full((8,), 5.))
+    assert dynamic[1] == "interpolation" and dynamic[2] >= 0 and dynamic[3] is None
+    assert len(item["cinematography_prompt_parameters"]) == 10
+    assert len(item["simulation_instruction_parameters"]) == 36
+    assert all(parameter[3] is None for parameter in (
+        item["cinematography_prompt_parameters"] + item["simulation_instruction_parameters"]
+    ))
     assert batch["item_ids"] == ["ccdm-000002", "ccdm-000000"]
     assert batch["text_prompts"] == ["dolly", "static"]
     assert (~batch["padding_mask"]).sum(1).tolist() == [4, 2]
-    assert batch["prompt_none_mask"].sum(1).tolist() == [2, 1]
+    assert batch["prompt_none_mask"].sum(1).tolist() == [1, 1]
+    assert batch["structured_presence_mask"].sum(1).tolist() == [2, 1]
+    tokens = structured_conditioning_from_batch(batch)
+    assert tokens.shape == (10, 2, 21)
+    assert tokens.sum().item() == 2
     assert torch.equal(batch["camera_trajectory"][0, -1], batch["camera_trajectory"][0, 3])
 
 
@@ -134,7 +131,16 @@ def test_invalid_cohort_indices_rejected(native_data, indices):
 def test_original_unannotated_dataset_still_works(native_data):
     ds = dataset(native_data, annotated=False)
     batch = collate_fn([ds[0], ds[1]])
-    assert structured_conditioning_from_batch(batch) is None
+    assert batch["cinematography_ids"].shape == (2, 10)
+    assert torch.all(batch["cinematography_ids"] == -1)
+    assert batch["prompt_none_mask"].shape == (2, 10)
+    assert not batch["prompt_none_mask"].any()
+    assert batch["structured_presence_mask"].shape == (2, 46)
+    assert not batch["structured_presence_mask"].any()
+    tokens = structured_conditioning_from_batch(batch)
+    assert tokens.shape == (10, 2, 21)
+    assert torch.count_nonzero(tokens) == 0
+    assert "caption_feat" not in batch
     assert len(batch["text_prompts"]) == 2
 
 
@@ -167,19 +173,18 @@ def test_ccdm_inference_preserves_structured_caption_and_presence(native_data, m
     )
     prompt = model.calls[0]
     assert prompt["memory_teacher_forcing_ratio"] == 1.
-    if annotated:
-        expected = structured_conditioning_from_batch(batch)
-        torch.testing.assert_close(prompt["caption_embedding"], expected)
-        torch.testing.assert_close(prompt["caption_presence_mask"], batch["prompt_none_mask"])
-        # The different-prompt control must shuffle the annotation mask too.
-        control = model.calls[-1]
-        torch.testing.assert_close(control["caption_embedding"], expected[:, [1, 0]])
-        torch.testing.assert_close(control["caption_presence_mask"], batch["prompt_none_mask"][[1, 0]])
-        assert "source_trajectory" in results
-    else:
-        assert all(call["caption_embedding"] is None for call in model.calls)
-        assert all(call["caption_presence_mask"] is None for call in model.calls)
-        assert "source_trajectory" not in results
+    expected = structured_conditioning_from_batch(batch)
+    assert expected.shape == (10, 2, 21)
+    torch.testing.assert_close(prompt["caption_embedding"], expected)
+    torch.testing.assert_close(prompt["caption_presence_mask"], batch["prompt_none_mask"])
+    # The different-prompt control must shuffle the annotation mask too.
+    control = model.calls[-1]
+    torch.testing.assert_close(control["caption_embedding"], expected[:, [1, 0]])
+    torch.testing.assert_close(control["caption_presence_mask"], batch["prompt_none_mask"][[1, 0]])
+    assert "source_trajectory" in results
+    if not annotated:
+        assert all(torch.count_nonzero(call["caption_embedding"]) == 0 for call in model.calls)
+        assert all(not call["caption_presence_mask"].any() for call in model.calls)
 
 
 def test_caption_modes_enabled_only_with_structured_annotations():

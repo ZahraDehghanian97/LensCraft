@@ -24,13 +24,14 @@ torch.set_float32_matmul_precision("high")
 
 
 def _compact_batches_enabled(cfg: DictConfig) -> bool:
-    enabled = bool(getattr(cfg.data, "compact_batches", False))
-    if enabled and OmegaConf.select(
-        cfg, "training.loss_module.losses_list.contrastive", default=0
-    ):
-        logger.info("Keeping full batches because contrastive loss requires metadata")
-        return False
-    return enabled
+    return bool(getattr(cfg.data, "compact_batches", False))
+
+
+def _validate_multi_config(cfg: DictConfig) -> None:
+    if (OmegaConf.select(cfg, "data.use_multi_dataset", default=False)
+            and OmegaConf.select(cfg, "training._target_", default="")
+            != "training.multi_dataset_trainer.MultiDatasetTrainer"):
+        raise ValueError("Mixed-dataset training requires MultiDatasetTrainer")
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
@@ -40,6 +41,7 @@ def main(cfg: DictConfig):
         OmegaConf.register_new_resolver("eval", eval)
 
     L.seed_everything(cfg.seed)
+    _validate_multi_config(cfg)
 
     monitor = checkpoint_monitor(cfg.get('checkpoint_monitor', 'auto'), cfg.training)
     with open_dict(cfg):

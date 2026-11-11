@@ -2,7 +2,6 @@
 
 import copy
 import json
-from enum import Enum
 
 import msgpack
 import pytest
@@ -12,7 +11,9 @@ from data.simulation.caption import extract_text_prompt
 from data.simulation.constants import NumericFeature, cinematography_struct, simulation_struct
 from data.simulation.dataset import SimulationDataset, collate_fn
 from data.simulation.observation import ModelObservationPolicy
-from data.simulation.utils import CLIP_PARAMETERS, cinematography_struct_parameters
+from data.simulation.utils import (
+    STRUCTURED_PARAMETERS, cinematography_struct_parameters, structured_conditioning_from_batch,
+)
 
 
 DECLARATION = {
@@ -59,17 +60,6 @@ def export_factory(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(SimulationDataset, "get_normalization_parameters",
                         staticmethod(lambda *args, **kwargs: parameters))
-    vocabulary = {}
-    for _, kind in CLIP_PARAMETERS:
-        if isinstance(kind, NumericFeature):
-            continue
-        if kind is bool:
-            vocabulary["boolean"] = {False: torch.ones(4), True: torch.ones(4) * 2}
-        elif isinstance(kind, type) and issubclass(kind, Enum):
-            vocabulary[kind.__name__] = {
-                entry.value: torch.ones(4) * (index + 1) for index, entry in enumerate(kind)
-            }
-
     prompt = complete_annotation(cinematography_struct)
     prompt["movement"] = {"type": "truckRight", "speed": "constant"}
     instruction = complete_annotation(simulation_struct)
@@ -114,8 +104,8 @@ def export_factory(tmp_path, monkeypatch):
         (directory / "parameter_dictionary.msgpack").write_bytes(msgpack.packb(dictionary, use_bin_type=True))
         (directory / "simulation_observation-test_000.msgpack").write_bytes(msgpack.packb(payload, use_bin_type=True))
         dataset = SimulationDataset(
-            str(directory), embedding_dim=4, fill_none_with_mean=False, clip_embeddings=vocabulary,
-            normalize=normalize, target_frame_count=4, reference_frame_count=reference_frames,
+            str(directory), normalize=normalize, target_frame_count=4,
+            reference_frame_count=reference_frames,
         )
         return dataset, {
             "camera": actual_camera, "subject": subject, "volume": volume,
@@ -134,7 +124,19 @@ def test_regular_export_keeps_existing_values_and_caption(export_factory, normal
         expected = SimulationDataset._normalize_item_with_parameters(*expected, physical["parameters"])
     for key, value in zip(("camera_trajectory", "subject_trajectory", "subject_volume"), expected):
         assert torch.equal(item[key], value)
+    assert item["cinematography_ids"].shape == (10,)
+    assert item["cinematography_ids"].dtype == torch.long
+    assert item["prompt_none_mask"].shape == (10,)
     assert item["prompt_none_mask"].all()
+    assert item["structured_presence_mask"].shape == (46,)
+    assert item["structured_presence_mask"].all()
+    entries = item["cinematography_prompt_parameters"] + item["simulation_instruction_parameters"]
+    assert len(item["cinematography_prompt_parameters"]) == 10
+    assert len(item["simulation_instruction_parameters"]) == 36
+    assert all(entry[3] is None for entry in entries)
+    tokens = structured_conditioning_from_batch(collate_fn([item]))
+    assert tokens.shape == (10, 1, 21)
+    assert torch.equal(tokens.sum(-1), torch.ones(10, 1))
     assert item["raw_prompt"] == physical["prompt"]
     assert item["text_prompt"] == extract_text_prompt(physical["prompt"], "idle")
     assert "geometry_reference" not in item
@@ -175,15 +177,22 @@ def test_profile_separates_condition_from_full_physical_truth(export_factory, no
 def test_profile_masks_endpoints_and_every_simulator_token(export_factory):
     dataset, _ = export_factory(policy=DECLARATION)
     item = dataset[0]
-    fields = [name for name, _ in CLIP_PARAMETERS]
+    fields = [name for name, _ in STRUCTURED_PARAMETERS]
     kept = {fields.index("movement_type"), fields.index("movement_speed")}
+    assert item["prompt_none_mask"].shape == (10,)
     assert item["prompt_none_mask"].nonzero().flatten().tolist() == sorted(kept)
+    assert item["structured_presence_mask"].shape == (46,)
+    assert item["structured_presence_mask"].nonzero().flatten().tolist() == sorted(kept)
     assert len(item["simulation_instruction_parameters"]) == 36
     entries = item["cinematography_prompt_parameters"] + item["simulation_instruction_parameters"]
-    for index, (_, _, value_index, _) in enumerate(entries):
+    for index, (_, _, value_index, vector) in enumerate(entries):
         assert (value_index >= 0) == (index in kept)
+        assert vector is None
     high_level_count = len(cinematography_struct_parameters)
-    assert not item["prompt_none_mask"][high_level_count:].any()
+    assert not item["structured_presence_mask"][high_level_count:].any()
+    tokens = structured_conditioning_from_batch(collate_fn([item]))
+    assert tokens.shape == (10, 1, 21)
+    assert tokens.sum().item() == 2
 
 
 def test_profile_can_mark_diagnostic_speed_as_unavailable(export_factory):
@@ -192,8 +201,9 @@ def test_profile_can_mark_diagnostic_speed_as_unavailable(export_factory):
         policy={**DECLARATION, "movementSpeed": "unavailable"}, observed_text=text,
     )
     item = dataset[0]
-    fields = [name for name, _ in CLIP_PARAMETERS]
+    fields = [name for name, _ in STRUCTURED_PARAMETERS]
     assert item["prompt_none_mask"].nonzero().flatten().tolist() == [fields.index("movement_type")]
+    assert item["structured_presence_mask"].nonzero().flatten().tolist() == [fields.index("movement_type")]
     speed = item["cinematography_prompt_parameters"][fields.index("movement_speed")]
     assert speed[1] is None and speed[2] == -1
     assert item["raw_prompt"]["movement"]["speed"] == physical["prompt"]["movement"]["speed"] == "constant"
@@ -207,8 +217,11 @@ def test_profile_condition_and_authored_caption_do_not_depend_on_target_camera(e
     first, _ = export_factory(policy=DECLARATION, observed_text=text)
     second, _ = export_factory(policy=DECLARATION, observed_text=text, camera_offset=7.)
     left, right = first[0], second[0]
-    for key in ("subject_trajectory", "subject_volume", "cinematography_prompt", "simulation_instruction", "prompt_none_mask"):
+    for key in ("subject_trajectory", "subject_volume", "cinematography_ids",
+                "prompt_none_mask", "structured_presence_mask"):
         assert torch.equal(left[key], right[key])
+    assert left["cinematography_prompt_parameters"] == right["cinematography_prompt_parameters"]
+    assert left["simulation_instruction_parameters"] == right["simulation_instruction_parameters"]
     assert not torch.equal(left["camera_trajectory"], right["camera_trajectory"])
     assert left["text_prompt"] == right["text_prompt"] == text
     assert "front" not in left["text_prompt"]

@@ -4,11 +4,9 @@ from enum import Enum
 
 @dataclass(frozen=True)
 class NumericFeature:
-    """Description of a bounded scalar conditioning token.
+    """Bounds and metric scaling for a raw simulator scalar.
 
-    Values outside the declared range are clipped before encoding. Optional
-    non-negative limits use logarithmic scaling so useful low values retain
-    more resolution while pathological input cannot produce NaN/inf features.
+    These fields remain metadata and do not enter categorical model semantics.
     """
 
     minimum: float

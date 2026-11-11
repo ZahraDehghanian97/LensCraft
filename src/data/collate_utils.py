@@ -18,18 +18,29 @@ def collate_trajectories(batch):
 
 
 def collate_structured_conditioning(batch):
-    """Stack structured tokens in [tokens, batch, features] order."""
-    return {
-        "simulation_instruction": torch.stack(
-            [item["simulation_instruction"] for item in batch]
-        ).transpose(0, 1),
-        "cinematography_prompt": torch.stack(
-            [item["cinematography_prompt"] for item in batch]
-        ).transpose(0, 1),
-        "simulation_instruction_parameters": [
-            item["simulation_instruction_parameters"] for item in batch
-        ],
-        "cinematography_prompt_parameters": [
-            item["cinematography_prompt_parameters"] for item in batch
-        ],
-    }
+    """Stack ten categorical IDs and retain raw annotation metadata separately."""
+    from data.categorical_conditioning import cinematography_ids_from_batch
+
+    if not batch:
+        raise ValueError("Cannot collate an empty annotation batch")
+    if all("cinematography_ids" in item for item in batch):
+        ids = cinematography_ids_from_batch({
+            "cinematography_ids": torch.stack([item["cinematography_ids"] for item in batch]),
+        })
+    else:
+        ids = cinematography_ids_from_batch({
+            "cinematography_prompt_parameters": [item["cinematography_prompt_parameters"] for item in batch],
+        })
+    presence = ids >= 0
+    if all("prompt_none_mask" in item for item in batch):
+        declared = torch.stack([item["prompt_none_mask"] for item in batch])
+        if declared.dtype != torch.bool or declared.shape != presence.shape:
+            raise ValueError("Model annotation presence must be boolean [batch,10]")
+        presence &= declared
+    result = {"cinematography_ids": ids, "prompt_none_mask": presence}
+    for name in ("cinematography_prompt_parameters", "simulation_instruction_parameters"):
+        if all(name in item for item in batch):
+            result[name] = [item[name] for item in batch]
+    if all("structured_presence_mask" in item for item in batch):
+        result["structured_presence_mask"] = torch.stack([item["structured_presence_mask"] for item in batch])
+    return result

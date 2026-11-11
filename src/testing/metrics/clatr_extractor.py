@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from hydra.utils import instantiate
 
 from data.convertor.convertor import convert_to_target
-from data.et.caption_encoder import CaptionEncoder
+from models.baselines.text_encoder import CaptionEncoder
 from data.et.load import load_et_config
 from utils.importing import ModuleImporter
 
